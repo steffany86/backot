@@ -3,9 +3,14 @@ package com.example.TigoStarSystem.ot.repository;
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
+import java.math.BigDecimal;
 import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
@@ -115,6 +120,162 @@ public class OtRepository {
         return template(idSucursal).queryForList(
                 "EXEC spx_ValidarCuadreRuta ?, ?",
                 idRuta,
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> existeCierreAlmacenHoy(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_ExisteCierreAlmacenHoy ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> existeCierreAlmacenHoyPrPd(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_ExisteCierreAlmacenHoyPR_PD ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> validaMovimientos(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_ValidaMovimientos ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> validarEstadoSerie(
+            String serie,
+            String chipId,
+            Integer idProducto,
+            Integer idTipoMaterial,
+            Integer idRuta,
+            Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_VerificarEstadoSerie ?, ?, ?, 3, ?, ?",
+                serie,
+                chipId,
+                idProducto,
+                idTipoMaterial,
+                idRuta
+        );
+    }
+
+    public Integer insertarCodigoVenta(
+            Long idVenta,
+            Integer idProducto,
+            Integer idTipoMaterial,
+            String codInicio,
+            String chipId,
+            BigDecimal cantidad,
+            Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        target.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(
+                    "INSERT INTO dbo.tbl_CodigoVenta " +
+                            "(Id_Venta, Id_Producto, Id_TipoMaterial, Cod_Inicio, ChipID, Cantidad, Precio, TotalParcial, E_Eliminado) " +
+                            "VALUES (?, ?, ?, ?, ?, ?, 0, 0, 0)",
+                    Statement.RETURN_GENERATED_KEYS
+            );
+            ps.setLong(1, idVenta);
+            ps.setInt(2, idProducto);
+            ps.setInt(3, idTipoMaterial);
+            ps.setString(4, codInicio);
+            ps.setString(5, chipId);
+            ps.setBigDecimal(6, cantidad);
+            return ps;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        return key == null ? null : key.intValue();
+    }
+
+    public Integer insertarDevolucion(
+            Integer idUsuario,
+            Integer idRuta,
+            Integer idVendedor,
+            String nroOrdenTrabajo,
+            LocalDate fecha,
+            String observacion,
+            Long idVenta,
+            Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        target.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(
+                    "INSERT INTO dbo.tbl_Devolucion " +
+                            "(Id_Usuario, Id_Ruta, Id_Vendedor, Id_TipoDevolucion, NroOrdenTrabajo, Fecha, Observacion, E_Eliminado, Estado, Fecha_Registro, Archivo, nombreArchivo, Id_Venta) " +
+                            "VALUES (?, ?, ?, 2, ?, ?, ?, 0, 0, ?, ?, '', ?)",
+                    Statement.RETURN_GENERATED_KEYS
+            );
+            ps.setInt(1, idUsuario);
+            ps.setInt(2, idRuta);
+            ps.setInt(3, idVendedor);
+            ps.setString(4, nroOrdenTrabajo);
+            ps.setDate(5, sqlDate(fecha));
+            ps.setString(6, observacion);
+            ps.setDate(7, sqlDate(fecha));
+            ps.setString(8, "");
+            ps.setLong(9, idVenta);
+            return ps;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        return key == null ? null : key.intValue();
+    }
+
+    public Integer insertarDetalleDevolucion(
+            Integer idDevolucion,
+            Integer idProducto,
+            String codInicio,
+            String chipId,
+            BigDecimal cantidad,
+            Boolean entregado,
+            Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        target.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(
+                    "INSERT INTO dbo.tbl_DetalleDevolucion " +
+                            "(Id_Devolucion, Id_Producto, Cod_Inicio, ChipID, Cantidad, E_Eliminado, Entregado, PendienteRecojo) " +
+                            "VALUES (?, ?, ?, ?, ?, 0, ?, ?)",
+                    Statement.RETURN_GENERATED_KEYS
+            );
+            boolean entregadoValue = entregado != null && entregado;
+            ps.setInt(1, idDevolucion);
+            ps.setInt(2, idProducto);
+            ps.setString(3, codInicio);
+            ps.setString(4, chipId);
+            ps.setBigDecimal(5, cantidad);
+            ps.setBoolean(6, entregadoValue);
+            ps.setBoolean(7, !entregadoValue);
+            return ps;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        return key == null ? null : key.intValue();
+    }
+
+    public int ejecutarRegModProducto(
+            String serie,
+            String chipId,
+            Integer idRuta,
+            Integer idProducto,
+            Integer accion,
+            Long idReferencia,
+            Integer idUsuario,
+            Integer idTipoMaterial,
+            LocalDate fecha,
+            Integer idSucursal) {
+        return template(idSucursal).update(
+                "EXEC spx_RegMod_Productos ?, ?, ?, ?, ?, ?, ?, ?, ?",
+                serie,
+                chipId,
+                idRuta,
+                idProducto,
+                accion,
+                idReferencia,
+                idUsuario,
+                idTipoMaterial,
                 sqlDate(fecha)
         );
     }

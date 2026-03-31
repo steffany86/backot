@@ -1,11 +1,16 @@
 package com.example.TigoStarSystem.ot.service;
 
+import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.ot.dto.OtCrearRequest;
 import com.example.TigoStarSystem.ot.dto.OtCrearResponse;
 import com.example.TigoStarSystem.ot.dto.OtModificarDatosRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaResponse;
+import com.example.TigoStarSystem.ot.dto.OtDetalleMaterialRequest;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaRequest;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaResponse;
+import com.example.TigoStarSystem.ot.dto.OtRegistroAgendaValidacionResponse;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaResponse;
 import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
@@ -20,6 +25,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.BadSqlGrammarException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.sql.SQLException;
@@ -33,17 +39,20 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Collections;
 
 @Service
 public class OtService {
     private static final Logger logger = LoggerFactory.getLogger(OtService.class);
     private final OtRepository otRepository;
+    private final SucursalRepository sucursalRepository;
 
     /**
      * Inicializa el servicio principal de Ordenes de Trabajo.
      */
-    public OtService(OtRepository otRepository) {
+    public OtService(OtRepository otRepository, SucursalRepository sucursalRepository) {
         this.otRepository = otRepository;
+        this.sucursalRepository = sucursalRepository;
     }
 
     /**
@@ -325,6 +334,227 @@ public class OtService {
         } catch (DataAccessException ex) {
             throw traducirErrorValidarVentaDetalle(ex, fecha, nroOT, numeroCliente);
         }
+    }
+
+    /**
+     * Ejecuta las validaciones previas al registro de OT en agenda:
+     * cierre de almacen/PR_PD y movimientos pendientes.
+     */
+    public OtRegistroAgendaValidacionResponse validarRegistroAgenda(LocalDate fecha, Integer idSucursal) {
+        LocalDate fechaEvaluada = fecha == null ? LocalDate.now() : fecha;
+
+        List<Map<String, Object>> cierreRows = otRepository.existeCierreAlmacenHoy(fechaEvaluada, idSucursal);
+        Integer cierreCodigo = obtenerCodigoResultado(cierreRows);
+        LocalDate fechaCierre = obtenerFechaResultado(cierreRows, fechaEvaluada);
+        String cierreMensaje = construirMensajeCierreAlmacen(cierreCodigo, fechaCierre, cierreRows);
+        boolean cierreBloqueado = cierreCodigo != null && cierreCodigo != 0;
+
+        List<Map<String, Object>> cierrePrPdRows = otRepository.existeCierreAlmacenHoyPrPd(fechaEvaluada, idSucursal);
+        Integer cierrePrPdCodigo = obtenerCodigoResultado(cierrePrPdRows);
+        LocalDate fechaPrPd = obtenerFechaResultado(cierrePrPdRows, fechaEvaluada);
+        String cierrePrPdMensaje = construirMensajeCierrePrPd(cierrePrPdCodigo, fechaPrPd);
+        boolean cierrePrPdBloqueado = cierrePrPdCodigo != null && cierrePrPdCodigo != 0;
+
+        if (cierreBloqueado) {
+            return new OtRegistroAgendaValidacionResponse(
+                    true,
+                    "CIERRE_ALMACEN",
+                    cierreMensaje,
+                    fechaEvaluada,
+                    false,
+                    true,
+                    cierreCodigo,
+                    cierreMensaje,
+                    cierrePrPdBloqueado,
+                    cierrePrPdCodigo,
+                    cierrePrPdMensaje,
+                    false,
+                    null,
+                    Collections.emptyList()
+            );
+        }
+
+        if (cierrePrPdBloqueado) {
+            return new OtRegistroAgendaValidacionResponse(
+                    true,
+                    "CIERRE_ALMACEN_PR_PD",
+                    cierrePrPdMensaje,
+                    fechaEvaluada,
+                    false,
+                    false,
+                    cierreCodigo,
+                    cierreMensaje,
+                    true,
+                    cierrePrPdCodigo,
+                    cierrePrPdMensaje,
+                    false,
+                    null,
+                    Collections.emptyList()
+            );
+        }
+
+        List<Map<String, Object>> movimientosRows = otRepository.validaMovimientos(fechaEvaluada, idSucursal);
+        List<String> movimientosDetalle = construirDetallesMovimientos(movimientosRows);
+        boolean movimientosBloqueados = !movimientosDetalle.isEmpty();
+        String movimientosMensaje = movimientosBloqueados
+                ? "Hay movimientos pendientes y/o registros antes y/o despues : Fecha "
+                + fechaEvaluada.format(DateTimeFormatter.ISO_LOCAL_DATE)
+                + "\n"
+                + String.join("\n", movimientosDetalle)
+                : null;
+
+        return new OtRegistroAgendaValidacionResponse(
+                movimientosBloqueados,
+                movimientosBloqueados ? "MOVIMIENTOS_PENDIENTES" : "OK",
+                movimientosBloqueados ? movimientosMensaje : "Validacion ejecutada sin bloqueos.",
+                fechaEvaluada,
+                true,
+                false,
+                cierreCodigo,
+                cierreMensaje,
+                false,
+                cierrePrPdCodigo,
+                cierrePrPdMensaje,
+                movimientosBloqueados,
+                movimientosMensaje,
+                movimientosDetalle
+        );
+    }
+
+    @Transactional
+    public OtRegistrarDetalleAgendaResponse registrarDetalleAgenda(
+            OtRegistrarDetalleAgendaRequest request,
+            Integer idSucursal) {
+        if (request == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El cuerpo de la solicitud es requerido.");
+        }
+        String numeroOrden = request.getNumeroOrden() == null ? "" : request.getNumeroOrden().trim();
+        if (numeroOrden.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "numeroOrden es requerido.");
+        }
+        if (request.getMateriales() == null || request.getMateriales().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Debe enviar al menos un material.");
+        }
+
+        Map<String, Object> venta = obtenerPorNumero(numeroOrden, idSucursal);
+        Long idVenta = toLong(findValue(venta, "Id_Venta", "id_venta", "idventa", "id"));
+        Integer idRuta = toInteger(findValue(venta, "Id_Ruta", "id_ruta", "idruta"));
+        Integer idUsuario = toInteger(findValue(venta, "Id_Usuario", "id_usuario", "idusuario"));
+        Integer idVendedor = toInteger(findValue(venta, "Id_Vendedor", "id_vendedor", "idvendedor"));
+        Integer codigoCliente = toInteger(findValue(venta, "CodigoCliente", "codigo_cliente", "cliente_nro", "clientenro"));
+        Integer ordenTrabajo = toInteger(findValue(venta, "OrdenTrabajo", "orden_trabajo", "ot"));
+        LocalDate fechaEjecucion = toLocalDate(findValue(venta, "Fecha_Ejecucion", "fecha_ejecucion", "fecha"));
+
+        if (idVenta == null || idVenta <= 0 || idRuta == null || idRuta <= 0 || idUsuario == null || idUsuario <= 0) {
+            throw new ApiException(HttpStatus.CONFLICT, "VENTA_INVALIDA", "La venta encontrada no tiene datos suficientes para registrar detalle.");
+        }
+
+        LocalDate fechaTrabajo = fechaEjecucion == null ? LocalDate.now() : fechaEjecucion;
+        OtRegistroAgendaValidacionResponse bloqueo = validarRegistroAgenda(fechaTrabajo, idSucursal);
+        if (bloqueo.isBloqueado()) {
+            throw new ApiException(HttpStatus.CONFLICT, "REGISTRO_BLOQUEADO", bloqueo.getMensaje());
+        }
+
+        List<Map<String, Object>> cuadreRows = otRepository.validarCuadreRuta(idRuta, fechaTrabajo, idSucursal);
+        Boolean existeCuadre = coerceFirstBoolean(cuadreRows);
+        if (Boolean.TRUE.equals(existeCuadre)) {
+            throw new ApiException(HttpStatus.CONFLICT, "CUADRE_REGISTRADO", "No se puede registrar el detalle porque la ruta ya realizo cuadre.");
+        }
+
+        if (codigoCliente != null && ordenTrabajo != null) {
+            OtValidarVentaDetalleResponse ventaDetalle = validarVentaYDetalleWb(
+                    fechaTrabajo.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                    ordenTrabajo,
+                    codigoCliente,
+                    idSucursal
+            );
+            if (Boolean.TRUE.equals(ventaDetalle.getTieneDetalleEnCodigoVenta())) {
+                throw new ApiException(HttpStatus.CONFLICT, "DETALLE_YA_REGISTRADO", "La OT ya tiene detalle registrado en codigo venta.");
+            }
+        }
+
+        validarMaterialesDetalle(request.getMateriales(), idRuta, idSucursal);
+
+        int inserted = 0;
+        List<OtDetalleMaterialRequest> devoluciones = new ArrayList<>();
+        for (OtDetalleMaterialRequest material : request.getMateriales()) {
+            otRepository.insertarCodigoVenta(
+                    idVenta,
+                    material.getIdProducto(),
+                    material.getIdTipoMaterial(),
+                    clean(material.getSerie()),
+                    clean(material.getChipId()),
+                    material.getCantidad(),
+                    idSucursal
+            );
+            inserted++;
+            otRepository.ejecutarRegModProducto(
+                    clean(material.getSerie()),
+                    clean(material.getChipId()),
+                    idRuta,
+                    material.getIdProducto(),
+                    3,
+                    idVenta,
+                    idUsuario,
+                    material.getIdTipoMaterial(),
+                    fechaTrabajo,
+                    idSucursal
+            );
+            if (material.getIdTipoMaterial() != null && (material.getIdTipoMaterial() == 2 || material.getIdTipoMaterial() == 5)) {
+                devoluciones.add(material);
+            }
+        }
+
+        int devolucionCount = 0;
+        if (!devoluciones.isEmpty() && idVendedor != null && codigoCliente != null && ordenTrabajo != null) {
+            Integer idDevolucion = otRepository.insertarDevolucion(
+                    idUsuario,
+                    idRuta,
+                    idVendedor,
+                    ordenTrabajo + " - " + codigoCliente,
+                    fechaTrabajo,
+                    request.getObservacion(),
+                    idVenta,
+                    idSucursal
+            );
+            if (idDevolucion != null) {
+                for (OtDetalleMaterialRequest material : devoluciones) {
+                    otRepository.insertarDetalleDevolucion(
+                            idDevolucion,
+                            material.getIdProducto(),
+                            clean(material.getSerie()),
+                            clean(material.getChipId()),
+                            material.getCantidad(),
+                            material.getEntregado(),
+                            idSucursal
+                    );
+                    otRepository.ejecutarRegModProducto(
+                            clean(material.getSerie()),
+                            clean(material.getChipId()),
+                            idRuta,
+                            material.getIdProducto(),
+                            Boolean.TRUE.equals(material.getEntregado()) ? 4 : 35,
+                            idDevolucion.longValue(),
+                            idUsuario,
+                            material.getIdTipoMaterial(),
+                            fechaTrabajo,
+                            idSucursal
+                    );
+                    devolucionCount++;
+                }
+            }
+        }
+
+        if (request.getIdEstado() != null && request.getIdEstado() > 0) {
+            otRepository.modificarOtRealizada(
+                    request.getObservacion() == null ? "" : request.getObservacion().trim(),
+                    request.getIdEstado(),
+                    numeroOrden,
+                    idSucursal
+            );
+        }
+
+        return new OtRegistrarDetalleAgendaResponse(idVenta, ordenTrabajo, inserted, devolucionCount);
     }
 
     /**
@@ -706,6 +936,190 @@ public class OtService {
         return value == null ? null : String.valueOf(value);
     }
 
+    private String clean(String value) {
+        return value == null ? "" : value.trim();
+    }
+
+    private void validarMaterialesDetalle(List<OtDetalleMaterialRequest> materiales, Integer idRuta, Integer idSucursal) {
+        List<String> repetidos = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < materiales.size(); i++) {
+            OtDetalleMaterialRequest material = materiales.get(i);
+            if (material.getIdProducto() == null || material.getIdProducto() <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir idProducto valido.");
+            }
+            if (material.getIdTipoMaterial() == null || material.getIdTipoMaterial() <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir idTipoMaterial valido.");
+            }
+            if (material.getCantidad() == null || material.getCantidad().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir cantidad mayor a 0.");
+            }
+            String serie = clean(material.getSerie());
+            String chipId = clean(material.getChipId());
+            if (serie.isEmpty() && chipId.isEmpty()) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir serie o chipId.");
+            }
+            if (!serie.isEmpty()) {
+                String keySerie = "S|" + serie.toLowerCase(Locale.ROOT);
+                if (!seen.add(keySerie)) {
+                    repetidos.add("Serie repetida: " + serie);
+                }
+            }
+            if (!chipId.isEmpty()) {
+                String keyChip = "C|" + chipId.toLowerCase(Locale.ROOT);
+                if (!seen.add(keyChip)) {
+                    repetidos.add("ChipId repetido: " + chipId);
+                }
+            }
+
+            List<Map<String, Object>> estadoRows = otRepository.validarEstadoSerie(
+                    serie,
+                    chipId,
+                    material.getIdProducto(),
+                    material.getIdTipoMaterial(),
+                    idRuta,
+                    idSucursal
+            );
+            if (isNoSePuedeRegistrar(estadoRows)) {
+                String detalle = asString(valueByIndex(estadoRows.get(0), 1));
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "ESTADO_SERIE_INVALIDO",
+                        (serie.isEmpty() ? chipId : serie) + " - " + (detalle == null ? "NoSePuedeRegistrar" : detalle)
+                );
+            }
+        }
+        if (!repetidos.isEmpty()) {
+            throw new ApiException(HttpStatus.CONFLICT, "SERIE_REPETIDA", String.join(" | ", repetidos));
+        }
+    }
+
+    private boolean isNoSePuedeRegistrar(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return false;
+        }
+        String result = asString(valueByIndex(rows.get(0), 0));
+        return result != null && result.trim().equalsIgnoreCase("NoSePuedeRegistrar");
+    }
+
+    private Boolean coerceFirstBoolean(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+        Map<String, Object> first = rows.get(0);
+        for (Object value : first.values()) {
+            Boolean parsed = toBoolean(value);
+            if (parsed != null) {
+                return parsed;
+            }
+        }
+        return null;
+    }
+
+    private Long toLong(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        try {
+            return Long.parseLong(value.toString().trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private Integer obtenerCodigoResultado(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+        return toInteger(valueByIndex(rows.get(0), 0));
+    }
+
+    private LocalDate obtenerFechaResultado(List<Map<String, Object>> rows, LocalDate fallback) {
+        if (rows == null || rows.isEmpty()) {
+            return fallback;
+        }
+        LocalDate fecha = toLocalDate(valueByIndex(rows.get(0), 1));
+        return fecha == null ? fallback : fecha;
+    }
+
+    private Object valueByIndex(Map<String, Object> row, int index) {
+        if (row == null || index < 0 || index >= row.size()) {
+            return null;
+        }
+        int current = 0;
+        for (Object value : row.values()) {
+            if (current == index) {
+                return value;
+            }
+            current++;
+        }
+        return null;
+    }
+
+    private String construirMensajeCierreAlmacen(
+            Integer codigo,
+            LocalDate fechaResultado,
+            List<Map<String, Object>> rows) {
+        if (codigo == null || codigo == 0) {
+            return null;
+        }
+        String mensajeExtra = null;
+        if (rows != null && !rows.isEmpty()) {
+            mensajeExtra = asString(valueByIndex(rows.get(0), 2));
+        }
+        if (codigo == -1) {
+            String mensaje = "Verificar Fecha Servidor. Fecha_Registro " + fechaResultado;
+            if (mensajeExtra != null && !mensajeExtra.trim().isEmpty()) {
+                mensaje += "\n" + mensajeExtra.trim();
+            }
+            return mensaje;
+        }
+        if (codigo == 1) {
+            return "Ya hay un registro de Cierre de Almacen.";
+        }
+        return "Validacion de cierre de almacen bloqueada.";
+    }
+
+    private String construirMensajeCierrePrPd(Integer codigo, LocalDate fechaResultado) {
+        if (codigo == null || codigo == 0) {
+            return null;
+        }
+        if (codigo == -1) {
+            return "Verificar Fecha Servidor. Fecha_Registro " + fechaResultado;
+        }
+        if (codigo == 1) {
+            return "Ya hay un registro de Cierre de Almacen.";
+        }
+        return "Validacion de cierre de almacen PR/PD bloqueada.";
+    }
+
+    private List<String> construirDetallesMovimientos(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<String> detalles = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            String parte1 = asString(valueByIndex(row, 0));
+            String parte2 = asString(valueByIndex(row, 1));
+            if (parte1 == null && parte2 == null) {
+                continue;
+            }
+            if (parte2 == null || parte2.trim().isEmpty()) {
+                detalles.add(parte1 == null ? "" : parte1.trim());
+                continue;
+            }
+            if (parte1 == null || parte1.trim().isEmpty()) {
+                detalles.add(parte2.trim());
+                continue;
+            }
+            detalles.add(parte1.trim() + " - " + parte2.trim());
+        }
+        return detalles;
+    }
+
     private LocalDate parseFechaFlexible(String fecha) {
         if (fecha == null || fecha.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "fecha es requerida.");
@@ -913,6 +1327,7 @@ public class OtService {
         if (rows == null || rows.isEmpty()) {
             return rows;
         }
+        Map<Integer, String> sucursalesPorId = cargarSucursalesPorId();
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             Map<String, Object> normalized = new LinkedHashMap<>();
@@ -942,8 +1357,67 @@ public class OtService {
                 normalized.put("nombreGrupo", nombreRuta);
             }
 
+            Integer idSucursal = toInteger(findValue(row,
+                    "IdSucursal",
+                    "idSucursal",
+                    "Id_Sucursal",
+                    "id_sucursal",
+                    "idsucursal"));
+            if (idSucursal != null) {
+                normalized.put("idSucursal", idSucursal);
+                normalized.put("IdSucursal", idSucursal);
+                normalized.put("id_sucursal", idSucursal);
+                normalized.put("idsucursal", idSucursal);
+            }
+
+            String nombreSucursal = trimToNull(asString(findValue(row,
+                    "Sucursal",
+                    "sucursal",
+                    "NombreSucursal",
+                    "nombreSucursal",
+                    "nombre_sucursal")));
+            if (nombreSucursal == null && idSucursal != null) {
+                nombreSucursal = trimToNull(sucursalesPorId.get(idSucursal));
+            }
+            if (nombreSucursal != null) {
+                normalized.put("Sucursal", nombreSucursal);
+                normalized.put("sucursal", nombreSucursal);
+                normalized.put("NombreSucursal", nombreSucursal);
+                normalized.put("nombreSucursal", nombreSucursal);
+                normalized.put("nombre_sucursal", nombreSucursal);
+            }
+
             out.add(normalized);
         }
         return out;
+    }
+
+    private Map<Integer, String> cargarSucursalesPorId() {
+        try {
+            List<Map<String, Object>> rows = sucursalRepository.obtenerSucursales();
+            if (rows == null || rows.isEmpty()) {
+                return Collections.emptyMap();
+            }
+            Map<Integer, String> out = new HashMap<>();
+            for (Map<String, Object> row : rows) {
+                Integer id = toInteger(findValue(row, "IdSucursal", "idSucursal", "Id_Sucursal", "id_sucursal", "idsucursal"));
+                String nombre = trimToNull(asString(findValue(row, "Sucursal", "sucursal", "NombreSucursal", "nombreSucursal")));
+                if (id != null && nombre != null) {
+                    out.put(id, nombre);
+                }
+            }
+            return out;
+        } catch (Exception ex) {
+            logger.warn("No se pudo resolver catalogo de sucursales para normalizar cabecera OT.", ex);
+            return Collections.emptyMap();
+        }
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

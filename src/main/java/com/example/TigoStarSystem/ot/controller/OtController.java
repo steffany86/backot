@@ -6,9 +6,12 @@ import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.ot.dto.OtCrearRequest;
 import com.example.TigoStarSystem.ot.dto.OtCrearResponse;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaRequest;
+import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaResponse;
 import com.example.TigoStarSystem.ot.dto.OtModificarDatosRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaRequest;
 import com.example.TigoStarSystem.ot.dto.OtModificarFechaResponse;
+import com.example.TigoStarSystem.ot.dto.OtRegistroAgendaValidacionResponse;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaResponse;
 import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
@@ -52,6 +55,14 @@ public class OtController {
             @Valid @RequestBody OtRegistrarVentaRequest request) {
         OtRegistrarVentaResponse response = otService.registrarVentaParaRegistroOtWb(request, resolveIdSucursal(token));
         return ResponseEntity.ok(ApiResponse.of(response, "Venta registrada correctamente."));
+    }
+
+    @PostMapping("/detalle-materiales")
+    public ResponseEntity<ApiResponse<OtRegistrarDetalleAgendaResponse>> registrarDetalleMateriales(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestBody OtRegistrarDetalleAgendaRequest request) {
+        OtRegistrarDetalleAgendaResponse response = otService.registrarDetalleAgenda(request, resolveIdSucursal(token));
+        return ResponseEntity.ok(ApiResponse.of(response, "Detalle de OT registrado correctamente."));
     }
 
     @PostMapping
@@ -240,7 +251,8 @@ public class OtController {
             @RequestParam("ot") Integer ot,
             @RequestParam("tor") @NotBlank String tor,
             @RequestParam("grupo") @NotBlank String grupo,
-            @RequestParam("tecnicoNombre") @NotBlank String tecnicoNombre) {
+            @RequestParam("tecnicoNombre") @NotBlank String tecnicoNombre,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
         return ResponseEntity.ok(ApiResponse.of(
                 otService.obtenerCabeceraVentaParaRegistroOtWb(
                         clienteNro,
@@ -248,7 +260,7 @@ public class OtController {
                         tor,
                         grupo,
                         tecnicoNombre,
-                        resolveIdSucursal(token)
+                        resolveIdSucursal(token, idSucursal)
                 ),
                 "Cabecera de venta obtenida correctamente."
         ));
@@ -259,20 +271,47 @@ public class OtController {
             @RequestHeader(value = "X-Session-Token", required = false) String token,
             @RequestParam("fecha") String fecha,
             @RequestParam("nroOT") Integer nroOT,
-            @RequestParam("numeroCliente") Integer numeroCliente) {
+            @RequestParam("numeroCliente") Integer numeroCliente,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
         return ResponseEntity.ok(ApiResponse.of(
                 otService.validarVentaYDetalleWb(
                         fecha,
                         nroOT,
                         numeroCliente,
-                        resolveIdSucursal(token)
+                        resolveIdSucursal(token, idSucursal)
                 ),
                 "Validacion de venta y detalle ejecutada correctamente."
         ));
     }
 
+    @GetMapping({"/spx_ExisteCierreAlmacen", "/validaciones/registro-agenda", "/spx_ValidarRegistroAgenda"})
+    public ResponseEntity<ApiResponse<OtRegistroAgendaValidacionResponse>> validarRegistroAgenda(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.validarRegistroAgenda(fecha, resolveIdSucursal(token)),
+                "Validacion de registro de agenda ejecutada correctamente."
+        ));
+    }
+
     private Integer resolveIdSucursal(String token) {
         return extractIdSucursal(resolveSession(token));
+    }
+
+    private Integer resolveIdSucursal(String token, Integer idSucursalFallback) {
+        Integer idSucursalSesion = resolveIdSucursal(token);
+        if (idSucursalSesion != null) {
+            return idSucursalSesion;
+        }
+        if (idSucursalFallback != null) {
+            return idSucursalFallback;
+        }
+        throw new ApiException(
+                HttpStatus.BAD_REQUEST,
+                "VALIDATION_ERROR",
+                "Debes enviar X-Session-Token o idSucursal para resolver la base de datos de la sucursal."
+        );
     }
 
     private Integer extractIdSucursal(AuthMeResponse me) {

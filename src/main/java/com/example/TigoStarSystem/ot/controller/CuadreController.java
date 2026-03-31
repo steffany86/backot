@@ -7,6 +7,7 @@ import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -24,6 +25,27 @@ public class CuadreController {
 
     public CuadreController(CuadreService cuadreService) {
         this.cuadreService = cuadreService;
+    }
+
+    @GetMapping({"/spx_ValidarCuadreRuta", "/validar-hoy"})
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> validarCuadreHoy(
+            @RequestParam(value = "ruta", required = false) Integer ruta,
+            @RequestParam(value = "idRuta", required = false) Integer idRuta,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        Integer rutaFinal = idRuta != null ? idRuta : ruta;
+        if (rutaFinal == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "ruta o idRuta es requerido."
+            );
+        }
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreService.validarCuadreRuta(rutaFinal, fechaFinal),
+                "Validacion de cuadre ejecutada correctamente."
+        ));
     }
 
     @PostMapping("/validar")
