@@ -9,6 +9,7 @@ public class OtDetalleMaterialRequest {
     private String chipId;
     private BigDecimal cantidad;
     private Boolean entregado;
+    private Boolean requiereIdentificacion;
 
     public Integer getIdProducto() {
         return idProducto;
@@ -56,5 +57,13 @@ public class OtDetalleMaterialRequest {
 
     public void setEntregado(Boolean entregado) {
         this.entregado = entregado;
+    }
+
+    public Boolean getRequiereIdentificacion() {
+        return requiereIdentificacion;
+    }
+
+    public void setRequiereIdentificacion(Boolean requiereIdentificacion) {
+        this.requiereIdentificacion = requiereIdentificacion;
     }
 }

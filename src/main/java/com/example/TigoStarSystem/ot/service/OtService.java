@@ -943,6 +943,7 @@ public class OtService {
     private void validarMaterialesDetalle(List<OtDetalleMaterialRequest> materiales, Integer idRuta, Integer idSucursal) {
         List<String> repetidos = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
+        Map<Integer, ProductoDigitos> digitosPorProducto = cargarDigitosPorProducto(materiales, idSucursal);
         for (int i = 0; i < materiales.size(); i++) {
             OtDetalleMaterialRequest material = materiales.get(i);
             if (material.getIdProducto() == null || material.getIdProducto() <= 0) {
@@ -956,7 +957,12 @@ public class OtService {
             }
             String serie = clean(material.getSerie());
             String chipId = clean(material.getChipId());
-            if (serie.isEmpty() && chipId.isEmpty()) {
+            boolean requiereIdentificacion = material.getRequiereIdentificacion() == null
+                    ? true
+                    : material.getRequiereIdentificacion();
+            ProductoDigitos caracteristicas = digitosPorProducto.get(material.getIdProducto());
+            boolean omitirIdentificacion = requiereOmitirIdentificacion(caracteristicas);
+            if (requiereIdentificacion && !omitirIdentificacion && serie.isEmpty() && chipId.isEmpty()) {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir serie o chipId.");
             }
             if (!serie.isEmpty()) {
@@ -972,6 +978,19 @@ public class OtService {
                 }
             }
 
+            if (!serie.isEmpty() && !chipId.isEmpty()) {
+                Map<String, Object> unicidad = otRepository.validarSerieChipIdUnicos(serie, chipId);
+                if (!Boolean.TRUE.equals(unicidad.get("sePuede"))) {
+                    throw new ApiException(
+                            HttpStatus.CONFLICT,
+                            "SERIE_CHIP_INVALIDOS",
+                            asString(unicidad.get("observacion")) == null
+                                    ? "La serie y el ChipID no corresponden al mismo registro."
+                                    : asString(unicidad.get("observacion"))
+                    );
+                }
+            }
+
             List<Map<String, Object>> estadoRows = otRepository.validarEstadoSerie(
                     serie,
                     chipId,
@@ -982,16 +1001,58 @@ public class OtService {
             );
             if (isNoSePuedeRegistrar(estadoRows)) {
                 String detalle = asString(valueByIndex(estadoRows.get(0), 1));
-                throw new ApiException(
-                        HttpStatus.CONFLICT,
-                        "ESTADO_SERIE_INVALIDO",
-                        (serie.isEmpty() ? chipId : serie) + " - " + (detalle == null ? "NoSePuedeRegistrar" : detalle)
-                );
+                if (!permiteRegistrarProductoRetiradoInexistente(material, detalle)) {
+                    throw new ApiException(
+                            HttpStatus.CONFLICT,
+                            "ESTADO_SERIE_INVALIDO",
+                            (serie.isEmpty() ? chipId : serie) + " - " + (detalle == null ? "NoSePuedeRegistrar" : detalle)
+                    );
+                }
+                logger.debug("El material retirado {} se registra aun cuando no existe en el saldo: {}",
+                        serie.isEmpty() ? chipId : serie,
+                        detalle);
             }
         }
         if (!repetidos.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "SERIE_REPETIDA", String.join(" | ", repetidos));
         }
+    }
+
+    private Map<Integer, ProductoDigitos> cargarDigitosPorProducto(List<OtDetalleMaterialRequest> materiales, Integer idSucursal) {
+        Map<Integer, ProductoDigitos> out = new HashMap<>();
+        if (materiales == null || materiales.isEmpty()) {
+            return out;
+        }
+        for (OtDetalleMaterialRequest material : materiales) {
+            if (material == null) {
+                continue;
+            }
+            Integer idProducto = material.getIdProducto();
+            if (idProducto == null || idProducto <= 0 || out.containsKey(idProducto)) {
+                continue;
+            }
+            Map<String, Object> row = otRepository.obtenerDigitosProducto(idProducto, idSucursal);
+            if (row == null || row.isEmpty()) {
+                logger.debug("No se encontraron digitos para producto {} (sucursal {}).", idProducto, idSucursal);
+                out.put(idProducto, null);
+                continue;
+            }
+            ProductoDigitos digitos = new ProductoDigitos(
+                    toInteger(findValue(row, "DigitosImei", "digitosimei")),
+                    toInteger(findValue(row, "DigitosChipId", "digitoschipid"))
+            );
+            out.put(idProducto, digitos);
+            logger.debug("Producto {} - Digitos Imei={}, ChipId={} (sucursal {}).",
+                    idProducto,
+                    digitos.digitosImei,
+                    digitos.digitosChipId,
+                    idSucursal);
+        }
+        return out;
+    }
+
+    private boolean requiereOmitirIdentificacion(ProductoDigitos caracteristicas) {
+        return caracteristicas != null && !caracteristicas.requiereIdentificacion();
     }
 
     private boolean isNoSePuedeRegistrar(List<Map<String, Object>> rows) {
@@ -1000,6 +1061,31 @@ public class OtService {
         }
         String result = asString(valueByIndex(rows.get(0), 0));
         return result != null && result.trim().equalsIgnoreCase("NoSePuedeRegistrar");
+    }
+
+    private boolean permiteRegistrarProductoRetiradoInexistente(OtDetalleMaterialRequest material, String detalle) {
+        if (!esMaterialRetirado(material) || detalle == null) {
+            return false;
+        }
+        return mensajeSerieInexistente(detalle);
+    }
+
+    private boolean esMaterialRetirado(OtDetalleMaterialRequest material) {
+        if (material == null) {
+            return false;
+        }
+        Integer tipo = material.getIdTipoMaterial();
+        return Integer.valueOf(2).equals(tipo) || Integer.valueOf(5).equals(tipo);
+    }
+
+    private boolean mensajeSerieInexistente(String detalle) {
+        String normalized = detalle.trim().toLowerCase(Locale.ROOT);
+        return normalized.contains("no se pudo validar")
+                || normalized.contains("no existe")
+                || normalized.contains("no se encontro")
+                || normalized.contains("no se pudo encontrar")
+                || normalized.contains("sin saldo")
+                || normalized.contains("no existe saldo");
     }
 
     private Boolean coerceFirstBoolean(List<Map<String, Object>> rows) {
@@ -1321,6 +1407,28 @@ public class OtService {
             current = current.getCause();
         }
         return null;
+    }
+
+    private static final class ProductoDigitos {
+        private final Integer digitosImei;
+        private final Integer digitosChipId;
+
+        private ProductoDigitos(Integer digitosImei, Integer digitosChipId) {
+            this.digitosImei = digitosImei;
+            this.digitosChipId = digitosChipId;
+        }
+
+        private boolean requiereSerie() {
+            return digitosImei != null && digitosImei > 0;
+        }
+
+        private boolean requiereChip() {
+            return digitosChipId != null && digitosChipId > 0;
+        }
+
+        private boolean requiereIdentificacion() {
+            return requiereSerie() || requiereChip();
+        }
     }
 
     private List<Map<String, Object>> normalizarCabeceraVentaRows(List<Map<String, Object>> rows) {

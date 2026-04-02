@@ -73,6 +73,34 @@ public class CatalogoController {
                 "Listado de mascaras de productos."));
     }
 
+    @GetMapping("/chip-id/spx_TraerChipID2")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> traerChipIdSpxTraerChipID2(
+            @RequestParam("serie") String serie) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.traerChipIdSpxTraerChipID2(serie),
+                "ChipId asociado a la serie solicitada (spx_TraerChipID2)."));
+    }
+
+    @GetMapping("/spx_TraerDatoSerieChipIdCU_OT")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> traerDatoSerieChipIdCuOt(
+            @RequestParam("serie") String serie,
+            @RequestParam("idProducto") Integer idProducto,
+            @RequestParam("tipoMaterial") Integer tipoMaterial,
+            @RequestParam("idRuta") Integer idRuta) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.traerDatoSerieChipIdCuOt(serie, idProducto, tipoMaterial, idRuta),
+                "Información retornada por spx_TraerDatoSerieChipIdCU_OT."));
+    }
+
+    @GetMapping("/validar-serie-chip")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> validarSerieChipIdUnicos(
+            @RequestParam("serie") String serie,
+            @RequestParam("chipId") String chipId) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.validarSerieChipIdUnicos(serie, chipId),
+                "Validación de unicidad de serie y ChipID."));
+    }
+
     @GetMapping("/kits-decodificadores")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarKitsDecodificadores() {
         return ResponseEntity.ok(ApiResponse.of(

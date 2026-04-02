@@ -82,6 +82,49 @@ public class CatalogoService {
     }
 
     /**
+     * Busca chipId asociado a una serie usando spx_TraerChipID2.
+     */
+    public List<Map<String, Object>> traerChipIdSpxTraerChipID2(String serie) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "serie es requerida."
+            );
+        }
+        return catalogoRepository.traerChipIdSpxTraerChipID2(serie);
+    }
+
+    /**
+     * Ejecuta spx_TraerDatoSerieChipIdCU_OT para obtener información del producto/serie.
+     */
+    public List<Map<String, Object>> traerDatoSerieChipIdCuOt(
+            String serie, Integer idProducto, Integer tipoMaterial, Integer idRuta) {
+        if (serie == null || serie.trim().isEmpty() || idProducto == null || tipoMaterial == null || idRuta == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "serie, idProducto, tipoMaterial e idRuta son requeridos."
+            );
+        }
+        return catalogoRepository.traerDatoSerieChipIdCuOt(serie, idProducto, tipoMaterial, idRuta);
+    }
+
+    /**
+     * Valida que serie y ChipID correspondan al mismo registro y sean unicos.
+     */
+    public Map<String, Object> validarSerieChipIdUnicos(String serie, String chipId) {
+        if (serie == null || serie.trim().isEmpty() || chipId == null || chipId.trim().isEmpty()) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "serie y chipId son requeridos."
+            );
+        }
+        return catalogoRepository.validarSerieChipIdUnicos(serie, chipId);
+    }
+
+    /**
      * Lista kits de decodificadores.
      */
     public List<Map<String, Object>> listarKitsDecodificadores() {

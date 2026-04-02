@@ -162,6 +162,72 @@ public class OtRepository {
         );
     }
 
+    public Map<String, Object> validarSerieChipIdUnicos(String serie, String chipId) {
+        List<Map<String, Object>> rows = template(null).queryForList(
+                "SELECT TOP 1 serial, chipid, id_producto, e_eliminado " +
+                        "FROM dbo.tbl_productos " +
+                        "WHERE (serial = ? OR chipid = ?) AND e_eliminado = 0",
+                serie,
+                chipId
+        );
+        if (rows.isEmpty()) {
+            return buildSerieChipResult(false, false, false, serie, chipId);
+        }
+
+        Map<String, Object> row = rows.get(0);
+        String serieDb = normalizeText(asString(row.get("serial")));
+        String chipDb = normalizeText(asString(row.get("chipid")));
+        String serieInput = normalizeText(serie);
+        String chipInput = normalizeText(chipId);
+        boolean serieExiste = !serieDb.isEmpty() && serieDb.equals(serieInput);
+        boolean chipExiste = !chipDb.isEmpty() && chipDb.equals(chipInput);
+        boolean mismoRegistro = serieExiste && chipExiste;
+        return buildSerieChipResult(serieExiste, chipExiste, mismoRegistro, serie, chipId);
+    }
+
+    private Map<String, Object> buildSerieChipResult(
+            boolean serieExiste,
+            boolean chipExiste,
+            boolean mismoRegistro,
+            String serie,
+            String chipId) {
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("serie", serie);
+        result.put("chipId", chipId);
+        result.put("serieExiste", serieExiste);
+        result.put("chipExiste", chipExiste);
+        result.put("mismoRegistro", mismoRegistro);
+        result.put("sePuede", mismoRegistro);
+        if (mismoRegistro) {
+            result.put("observacion", "Serie y ChipID coinciden correctamente.");
+        } else if (!serieExiste && chipExiste) {
+            result.put("observacion", "La serie no existe, pero el ChipID ya esta registrado.");
+        } else if (serieExiste && !chipExiste) {
+            result.put("observacion", "La serie ya existe, pero el ChipID no coincide o no existe.");
+        } else if (serieExiste) {
+            result.put("observacion", "La serie y el ChipID existen, pero no corresponden al mismo registro.");
+        } else {
+            result.put("observacion", "La serie y el ChipID no existen en saldo.");
+        }
+        return result;
+    }
+
+    public Map<String, Object> obtenerDigitosProducto(Integer idProducto, Integer idSucursal) {
+        List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                "SELECT DigitosImei, DigitosChipId FROM dbo.tbl_Producto " +
+                        "WHERE Id_Producto = ? AND E_Eliminado = 0",
+                idProducto
+        );
+        if (rows.isEmpty() && idSucursal != null) {
+            rows = template(null).queryForList(
+                    "SELECT DigitosImei, DigitosChipId FROM dbo.tbl_Producto " +
+                            "WHERE Id_Producto = ? AND E_Eliminado = 0",
+                    idProducto
+            );
+        }
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     public Integer insertarCodigoVenta(
             Long idVenta,
             Integer idProducto,
@@ -414,5 +480,16 @@ public class OtRepository {
 
     private Date sqlDate(LocalDate date) {
         return Date.valueOf(date);
+    }
+
+    private String asString(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private String normalizeText(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.trim().toLowerCase(java.util.Locale.ROOT);
     }
 }
