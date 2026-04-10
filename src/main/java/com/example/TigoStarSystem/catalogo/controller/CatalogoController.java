@@ -127,6 +127,14 @@ public class CatalogoController {
                 "Validacion de serie contra saldo."));
     }
 
+    @GetMapping("/spx_TraerDatoSerieChipIdCU")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> traerDatoSerieChipIdCU(
+            @RequestParam("serie") String serie) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.traerDatoSerieChipIdCU(serie),
+                "Validacion de serie contra saldo."));
+    }
+
     @GetMapping("/productos/mascara")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarProductosMascara() {
         return ResponseEntity.ok(ApiResponse.of(

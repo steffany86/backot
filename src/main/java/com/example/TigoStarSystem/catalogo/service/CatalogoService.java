@@ -155,6 +155,13 @@ public class CatalogoService {
         return catalogoRepository.validarSerieSaldo(serie.trim(), idProducto, tipoMaterial, idRuta);
     }
 
+    public List<Map<String, Object>> traerDatoSerieChipIdCU(String serie) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
+        }
+        return catalogoRepository.traerDatoSerieChipIdCU(serie.trim());
+    }
+
     /**
      * Lista mascaras/configuraciones de productos.
      */
