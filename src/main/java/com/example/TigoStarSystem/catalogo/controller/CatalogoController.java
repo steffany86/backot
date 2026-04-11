@@ -135,6 +135,15 @@ public class CatalogoController {
                 "Validacion de serie contra saldo."));
     }
 
+    @GetMapping("/spx_TraerDatoSerieChipIdCU_CUNR2")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> traerDatoSerieChipIdCUCUNR2(
+            @RequestParam("serie") String serie,
+            @RequestParam("chipId") String chipId) {
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.traerDatoSerieChipIdCUCUNR2(serie, chipId),
+                "Validacion de serie y chipId contra saldo."));
+    }
+
     @GetMapping("/productos/mascara")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarProductosMascara() {
         return ResponseEntity.ok(ApiResponse.of(

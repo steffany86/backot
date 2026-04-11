@@ -105,6 +105,10 @@ public class CatalogoRepository {
         return jdbcTemplate.queryForList("EXEC spx_TraerDatoSerieChipIdCU ?", serie);
     }
 
+    public List<Map<String, Object>> traerDatoSerieChipIdCUCUNR2(String serie, String chipId) {
+        return jdbcTemplate.queryForList("EXEC spx_TraerDatoSerieChipIdCU_CUNR2 ?, ?", serie, chipId);
+    }
+
     public List<Map<String, Object>> listarProductosMascara() {
         return jdbcTemplate.queryForList("EXEC sp_TraerTodosLosProductosMascara");
     }

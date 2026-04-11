@@ -162,6 +162,16 @@ public class CatalogoService {
         return catalogoRepository.traerDatoSerieChipIdCU(serie.trim());
     }
 
+    public List<Map<String, Object>> traerDatoSerieChipIdCUCUNR2(String serie, String chipId) {
+        if (serie == null || serie.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
+        }
+        if (chipId == null || chipId.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "chipId es requerido.");
+        }
+        return catalogoRepository.traerDatoSerieChipIdCUCUNR2(serie.trim(), chipId.trim());
+    }
+
     /**
      * Lista mascaras/configuraciones de productos.
      */

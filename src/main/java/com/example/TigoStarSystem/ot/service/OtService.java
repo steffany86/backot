@@ -150,6 +150,17 @@ public class OtService {
         if (idVenta == null || idVenta <= 0) {
             throw new ApiException(HttpStatus.CONFLICT, "VALIDATION_ERROR", "No se pudo resolver la venta asociada a la OT.");
         }
+        Integer idRuta = toInteger(findValue(ventaRow, "Id_Ruta", "id_ruta", "idruta"));
+        Integer idUsuario = toInteger(findValue(ventaRow, "Id_Usuario", "id_usuario", "idusuario"));
+        LocalDate fechaEjecucion = toLocalDate(findValue(ventaRow, "Fecha_Ejecucion", "fecha_ejecucion", "fecha"));
+        LocalDate fechaTrabajo = fechaEjecucion == null ? LocalDate.now() : fechaEjecucion;
+        if (idRuta == null || idRuta <= 0 || idUsuario == null || idUsuario <= 0) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "VALIDATION_ERROR",
+                    "No se pudo resolver ruta/usuario de la venta para actualizar estados de cargo usuario."
+            );
+        }
 
         int guardados = 0;
         for (OtCargoUsuarioItemRequest item : request.getItems()) {
@@ -185,6 +196,20 @@ public class OtService {
                     safeTrim(item.getExiste()),
                     idSucursal
             );
+            if (!serie.isEmpty() || !chipId.isEmpty()) {
+                otRepository.ejecutarRegModProducto(
+                        serie,
+                        chipId,
+                        idRuta,
+                        idProducto,
+                        41,
+                        idVenta,
+                        idUsuario,
+                        0,
+                        fechaTrabajo,
+                        idSucursal
+                );
+            }
             guardados += 1;
         }
 
