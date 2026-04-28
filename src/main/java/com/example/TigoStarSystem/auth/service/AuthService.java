@@ -43,13 +43,6 @@ public class AuthService {
     private final Map<String, AuthSession> sessions = new ConcurrentHashMap<>();
     private final String dbUsername;
     private final String dbPassword;
-    private final String uTecnicosHost;
-    private final String uTecnicosDatabase;
-    private final String centralHost;
-    private final String sucreLoginHost;
-    private final String sucreLoginDatabase;
-    private final String sucreLoginUsername;
-    private final String sucreLoginPassword;
     private final boolean validarSucursal;
 
     /**
@@ -61,28 +54,12 @@ public class AuthService {
             DbConnectionManager dbConnectionManager,
             @Value("${spring.datasource.username}") String dbUsername,
             @Value("${spring.datasource.password}") String dbPassword,
-            @Value("${spring.datasource.url}") String mainDatasourceUrl,
-            @Value("${app.central.datasource.url:}") String centralDatasourceUrl,
-            @Value("${app.sucre.datasource.url:}") String sucreDatasourceUrl,
-            @Value("${auth.login.sucre.database:SucrePrueba}") String sucreLoginDatabase,
-            @Value("${app.sucre.datasource.username:${spring.datasource.username}}") String sucreLoginUsername,
-            @Value("${app.sucre.datasource.password:${spring.datasource.password}}") String sucreLoginPassword,
             @Value("${auth.login.validar-sucursal:true}") boolean validarSucursal) {
         this.authRepository = authRepository;
         this.sucursalRepository = sucursalRepository;
         this.dbConnectionManager = dbConnectionManager;
         this.dbUsername = dbUsername;
         this.dbPassword = dbPassword;
-        this.uTecnicosHost = parseHostFromJdbcUrl(mainDatasourceUrl);
-        this.uTecnicosDatabase = parseDatabaseFromJdbcUrl(mainDatasourceUrl);
-        String parsedCentralHost = parseHostFromJdbcUrl(centralDatasourceUrl);
-        this.centralHost = isBlank(parsedCentralHost) ? this.uTecnicosHost : parsedCentralHost;
-        String parsedSucreHost = parseHostFromJdbcUrl(sucreDatasourceUrl);
-        String parsedSucreDatabase = parseDatabaseFromJdbcUrl(sucreDatasourceUrl);
-        this.sucreLoginHost = firstNonBlank(parsedSucreHost, this.centralHost);
-        this.sucreLoginDatabase = firstNonBlank(parsedSucreDatabase, sucreLoginDatabase);
-        this.sucreLoginUsername = firstNonBlank(sucreLoginUsername, dbUsername);
-        this.sucreLoginPassword = firstNonBlank(sucreLoginPassword, dbPassword);
         this.validarSucursal = validarSucursal;
     }
 
@@ -103,45 +80,52 @@ public class AuthService {
                 sucursal.host,
                 sucursal.baseDeDatos
         );
-        SucursalInfo sucursalLogin = resolverDestinoLogin(sucursal);
-        boolean esSucre = isSucre(normalizeText(sucursal == null ? null : sucursal.sucursal));
-        logger.debug(
-                "Login target resolved idSucursal={}, sucursal={}, host={}, baseDeDatos={}",
-                sucursalLogin.idSucursal,
-                sucursalLogin.sucursal,
-                sucursalLogin.host,
-                sucursalLogin.baseDeDatos
-        );
-        String loginUsername = esSucre ? sucreLoginUsername : dbUsername;
-        String loginPassword = esSucre ? sucreLoginPassword : dbPassword;
-        JdbcTemplate jdbcTemplate = crearJdbcTemplateSucursal(sucursalLogin, loginUsername, loginPassword);
+        List<SucursalInfo> destinosLogin = resolverDestinosLogin(sucursal);
         String passwordHash = hashMd5Base64(request.getPassword());
-
-        List<Map<String, Object>> rows;
-        try {
-            rows = ejecutarValidacionConSpAlternativo(jdbcTemplate, request, passwordHash, validarSucursal);
-        } catch (DataAccessException ex) {
-            logger.error(
-                    "Login SP failed usuario={}, idSucursal={}, host={}, baseDeDatos={}, validarSucursal={}",
-                    safe(request.getUsuario()),
-                    request.getIdSucursal(),
+        List<Map<String, Object>> rows = null;
+        Exception lastError = null;
+        for (int i = 0; i < destinosLogin.size(); i++) {
+            SucursalInfo sucursalLogin = destinosLogin.get(i);
+            logger.debug(
+                    "Login target attempt={} idSucursal={}, sucursal={}, host={}, baseDeDatos={}",
+                    i + 1,
+                    sucursalLogin.idSucursal,
+                    sucursalLogin.sucursal,
                     sucursalLogin.host,
-                    sucursalLogin.baseDeDatos,
-                    validarSucursal,
-                    ex
+                    sucursalLogin.baseDeDatos
             );
-            throw ex;
-        } catch (Exception ex) {
-            logger.error(
-                    "Login SP failed usuario={}, idSucursal={}, host={}, baseDeDatos={}, validarSucursal={}",
-                    safe(request.getUsuario()),
-                    request.getIdSucursal(),
-                    sucursalLogin.host,
-                    sucursalLogin.baseDeDatos,
-                    validarSucursal,
-                    ex
-            );
-            throw ex;
+            JdbcTemplate jdbcTemplate = crearJdbcTemplateSucursal(sucursalLogin, dbUsername, dbPassword);
+            try {
+                rows = ejecutarValidacionConSpAlternativo(jdbcTemplate, request, passwordHash, validarSucursal);
+                if (rows != null && !rows.isEmpty()) {
+                    break;
+                }
+            } catch (DataAccessException ex) {
+                lastError = ex;
+                logger.warn(
+                        "Login SP failed on attempt {} usuario={}, idSucursal={}, host={}, baseDeDatos={}",
+                        i + 1,
+                        safe(request.getUsuario()),
+                        request.getIdSucursal(),
+                        sucursalLogin.host,
+                        sucursalLogin.baseDeDatos,
+                        ex
+                );
+            } catch (Exception ex) {
+                lastError = ex;
+                logger.warn(
+                        "Login failed on attempt {} usuario={}, idSucursal={}, host={}, baseDeDatos={}",
+                        i + 1,
+                        safe(request.getUsuario()),
+                        request.getIdSucursal(),
+                        sucursalLogin.host,
+                        sucursalLogin.baseDeDatos,
+                        ex
+                );
+            }
+        }
+        if ((rows == null || rows.isEmpty()) && lastError instanceof RuntimeException) {
+            throw (RuntimeException) lastError;
         }
         logger.debug("Login SP returned {} rows", rows == null ? 0 : rows.size());
         if (rows == null || rows.isEmpty()) {
@@ -295,11 +279,14 @@ public class AuthService {
     private SucursalInfo mapToSucursal(Map<String, Object> row) {
         Integer idSucursal = toInteger(findValue(row, "idsucursal", "id_sucursal"));
         String sucursal = canonicalizarSucursal(toString(findValue(row, "sucursal")));
-        String ip = toString(findValue(row, "ip"));
-        String ip2 = toString(findValue(row, "ip2"));
+        String ip = trimToNull(toString(findValue(row, "ip")));
+        String ip2 = trimToNull(toString(findValue(row, "ip2")));
         String baseDeDatos = toString(findValue(row, "basededatos", "base_de_datos"));
-
-        String host = (ip != null && !isBlank(ip)) ? ip : ip2;
+        String host = firstNonBlank(ip, ip2);
+        String hostAlterno = null;
+        if (!isBlank(ip) && !isBlank(ip2) && !ip.equalsIgnoreCase(ip2)) {
+            hostAlterno = ip2;
+        }
         if (idSucursal == null) {
             Map<String, Object> details = new HashMap<>();
             details.put("rowKeys", row.keySet());
@@ -310,7 +297,7 @@ public class AuthService {
                     details
             );
         }
-        return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos));
+        return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos), trimToNull(hostAlterno));
     }
 
     /**
@@ -332,20 +319,18 @@ public class AuthService {
     }
 
     /**
-     * Resuelve host/base de datos final para autenticar segun sucursal (Sucre u operativa).
+     * Resuelve el/los destinos de login para la sucursal seleccionada.
      */
-    private SucursalInfo resolverDestinoLogin(SucursalInfo sucursalOriginal) {
+    private List<SucursalInfo> resolverDestinosLogin(SucursalInfo sucursalOriginal) {
         if (sucursalOriginal == null) {
-            return sucursalOriginal;
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "SUCURSAL_DB_NOT_RESOLVED",
+                    "No se pudo resolver host/base de datos para la sucursal seleccionada."
+            );
         }
-
-        boolean sucursalEsSucre = isSucre(normalizeText(sucursalOriginal.sucursal));
-        String host = sucursalEsSucre
-                ? firstNonBlank(sucreLoginHost, sucursalOriginal.host)
-                : firstNonBlank(uTecnicosHost, sucursalOriginal.host);
-        String database = sucursalEsSucre
-                ? firstNonBlank(sucreLoginDatabase, sucursalOriginal.baseDeDatos)
-                : firstNonBlank(uTecnicosDatabase, sucursalOriginal.baseDeDatos);
+        String host = trimToNull(sucursalOriginal.host);
+        String database = trimToNull(sucursalOriginal.baseDeDatos);
 
         if (isBlank(host) || isBlank(database)) {
             throw new ApiException(
@@ -354,12 +339,24 @@ public class AuthService {
                     "No se pudo resolver host/base de datos para la sucursal seleccionada."
             );
         }
-        return new SucursalInfo(
+        List<SucursalInfo> destinos = new ArrayList<>();
+        destinos.add(new SucursalInfo(
                 sucursalOriginal.idSucursal,
                 sucursalOriginal.sucursal,
                 host.trim(),
-                database.trim()
-        );
+                database.trim(),
+                null
+        ));
+        if (!isBlank(sucursalOriginal.hostAlterno) && !host.equalsIgnoreCase(sucursalOriginal.hostAlterno)) {
+            destinos.add(new SucursalInfo(
+                    sucursalOriginal.idSucursal,
+                    sucursalOriginal.sucursal,
+                    sucursalOriginal.hostAlterno.trim(),
+                    database.trim(),
+                    null
+            ));
+        }
+        return destinos;
     }
 
     /**
@@ -526,13 +523,6 @@ public class AuthService {
     }
 
     /**
-     * Identifica si el nombre normalizado corresponde a la sucursal Sucre.
-     */
-    private boolean isSucre(String value) {
-        return value != null && value.contains("sucre");
-    }
-
-    /**
      * Retorna null cuando el texto llega vacio; en otro caso retorna trim.
      */
     private String trimToNull(String value) {
@@ -541,74 +531,6 @@ public class AuthService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    /**
-     * Extrae host desde un JDBC URL soportando formatos jtds y sqlserver.
-     */
-    private String parseHostFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-        String rest = url.substring(idx + 3);
-        int sepSlash = rest.indexOf('/');
-        int sepSemicolon = rest.indexOf(';');
-        int end = -1;
-        if (sepSlash >= 0 && sepSemicolon >= 0) {
-            end = Math.min(sepSlash, sepSemicolon);
-        } else if (sepSlash >= 0) {
-            end = sepSlash;
-        } else if (sepSemicolon >= 0) {
-            end = sepSemicolon;
-        }
-        String hostPort = end >= 0 ? rest.substring(0, end) : rest;
-        int comma = hostPort.indexOf(',');
-        if (comma >= 0) {
-            hostPort = hostPort.substring(0, comma);
-        }
-        int colon = hostPort.indexOf(':');
-        if (colon >= 0) {
-            hostPort = hostPort.substring(0, colon);
-        }
-        String host = hostPort.trim();
-        return host.isEmpty() ? null : host;
-    }
-
-    /**
-     * Extrae nombre de base desde un JDBC URL.
-     */
-    private String parseDatabaseFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        String lower = url.toLowerCase(Locale.ROOT);
-        String token = "databasename=";
-        int idxDbName = lower.indexOf(token);
-        if (idxDbName >= 0) {
-            int start = idxDbName + token.length();
-            int end = url.indexOf(';', start);
-            String db = (end >= 0 ? url.substring(start, end) : url.substring(start)).trim();
-            return db.isEmpty() ? null : db;
-        }
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-        String rest = url.substring(idx + 3);
-        int slash = rest.indexOf('/');
-        if (slash < 0 || slash + 1 >= rest.length()) {
-            return null;
-        }
-        String afterSlash = rest.substring(slash + 1);
-        int end = afterSlash.indexOf(';');
-        String db = (end >= 0 ? afterSlash.substring(0, end) : afterSlash).trim();
-        return db.isEmpty() ? null : db;
     }
 
     /**
@@ -648,15 +570,17 @@ public class AuthService {
         private final String sucursal;
         private final String host;
         private final String baseDeDatos;
+        private final String hostAlterno;
 
         /**
          * Estructura interna para transportar datos de sucursal ya resueltos.
          */
-        private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos) {
+        private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos, String hostAlterno) {
             this.idSucursal = idSucursal;
             this.sucursal = sucursal;
             this.host = host;
             this.baseDeDatos = baseDeDatos;
+            this.hostAlterno = hostAlterno;
         }
     }
 }
