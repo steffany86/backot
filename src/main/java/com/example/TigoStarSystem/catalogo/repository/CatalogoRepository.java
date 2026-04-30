@@ -1,5 +1,7 @@
 package com.example.TigoStarSystem.catalogo.repository;
 
+import com.example.TigoStarSystem.auth.repository.SucursalRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ColumnMapRowMapper;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -18,27 +20,56 @@ import java.util.Map;
 @Repository
 public class CatalogoRepository {
     private final JdbcTemplate jdbcTemplate;
+    private final CatalogoDbSupport dbSupport;
 
-    public CatalogoRepository(JdbcTemplate jdbcTemplate) {
+    public CatalogoRepository(
+            JdbcTemplate jdbcTemplate,
+            SucursalRepository sucursalRepository,
+            @Value("${spring.datasource.driver-class-name}") String dbDriver,
+            @Value("${spring.datasource.url}") String mainDatasourceUrl,
+            @Value("${app.sucre.datasource.url:}") String sucreDatasourceUrl,
+            @Value("${auth.login.sucre.database:SucrePrueba}") String sucreDatabase,
+            @Value("${app.sucre.datasource.username:${spring.datasource.username}}") String sucreUsername,
+            @Value("${app.sucre.datasource.password:${spring.datasource.password}}") String sucrePassword,
+            @Value("${app.datasource.params:encrypt=false;trustServerCertificate=true}") String dbParams) {
         this.jdbcTemplate = jdbcTemplate;
+        this.dbSupport = new CatalogoDbSupport(
+                sucursalRepository,
+                dbDriver,
+                mainDatasourceUrl,
+                sucreDatasourceUrl,
+                sucreDatabase,
+                sucreUsername,
+                sucrePassword,
+                dbParams
+        );
     }
 
     public List<Map<String, Object>> listarTecnicos() {
-        return jdbcTemplate.queryForList("EXEC spx_ObtenerTecnicosEnRuta");
+        return listarTecnicos(null);
+    }
+
+    public List<Map<String, Object>> listarTecnicos(Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC spx_ObtenerTecnicosEnRuta");
     }
 
     public List<Map<String, Object>> listarRutasPorTecnico(Integer idTecnico) {
+        return listarRutasPorTecnico(idTecnico, null);
+    }
+
+    public List<Map<String, Object>> listarRutasPorTecnico(Integer idTecnico, Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
         Integer tecnico = idTecnico != null && idTecnico > 0 ? idTecnico : null;
 
         if (tecnico != null) {
             // Flujo requerido:
             // 1) obtener id_vendedor en tbl_usuariotecnico por id_usuario
             // 2) buscar rutas activas en tbl_ruta por id_vendedor (e_eliminado = 0)
-            List<Integer> vendedores = listarVendedoresPorUsuario(tecnico);
+            List<Integer> vendedores = listarVendedoresPorUsuario(target, tecnico);
             if (!vendedores.isEmpty()) {
                 List<Map<String, Object>> rutasPorVendedor = new ArrayList<>();
                 for (Integer idVendedor : vendedores) {
-                    rutasPorVendedor.addAll(listarRutasActivasPorVendedor(idVendedor));
+                    rutasPorVendedor.addAll(listarRutasActivasPorVendedor(target, idVendedor));
                 }
                 List<Map<String, Object>> filtradas = filtrarRutasNoEliminadas(rutasPorVendedor);
                 if (!filtradas.isEmpty()) {
@@ -47,30 +78,30 @@ public class CatalogoRepository {
             }
 
             // Compatibilidad: en algunas instalaciones el id recibido puede corresponder directamente al vendedor.
-            List<Map<String, Object>> vendedorRows = listarRutasActivasPorVendedor(tecnico);
+            List<Map<String, Object>> vendedorRows = listarRutasActivasPorVendedor(target, tecnico);
             if (!vendedorRows.isEmpty()) {
                 return vendedorRows;
             }
             try {
-                return filtrarRutasNoEliminadas(jdbcTemplate.queryForList("EXEC spx_ObtenerRutaXIdTecnico ?", tecnico));
+                return filtrarRutasNoEliminadas(target.queryForList("EXEC spx_ObtenerRutaXIdTecnico ?", tecnico));
             } catch (DataAccessException ex) {
                 return new ArrayList<>();
             }
         }
 
-        List<Map<String, Object>> activeRows = listarRutasActivas();
+        List<Map<String, Object>> activeRows = listarRutasActivas(target);
         if (!activeRows.isEmpty()) {
             return activeRows;
         }
 
         try {
-            return filtrarRutasNoEliminadas(jdbcTemplate.queryForList("EXEC spx_ObtenerRutaXIdTecnico ?", (Object) null));
+            return filtrarRutasNoEliminadas(target.queryForList("EXEC spx_ObtenerRutaXIdTecnico ?", (Object) null));
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
     }
 
-    private List<Map<String, Object>> listarRutasActivasPorUsuario(Integer idUsuario) {
+    private List<Map<String, Object>> listarRutasActivasPorUsuario(JdbcTemplate target, Integer idUsuario) {
         String[] statements = new String[] {
                 "SELECT DISTINCT " +
                         "r.id_ruta AS idRuta, " +
@@ -120,7 +151,7 @@ public class CatalogoRepository {
 
         for (String sql : statements) {
             try {
-                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, idUsuario, idUsuario);
+                List<Map<String, Object>> rows = target.queryForList(sql, idUsuario, idUsuario);
                 List<Map<String, Object>> filtered = filtrarRutasNoEliminadas(rows);
                 if (!filtered.isEmpty()) {
                     return filtered;
@@ -132,7 +163,7 @@ public class CatalogoRepository {
         return new ArrayList<>();
     }
 
-    private List<Integer> listarVendedoresPorUsuario(Integer idUsuario) {
+    private List<Integer> listarVendedoresPorUsuario(JdbcTemplate target, Integer idUsuario) {
         String[] statements = new String[] {
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
@@ -314,7 +345,7 @@ public class CatalogoRepository {
 
         for (String sql : statements) {
             try {
-                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, idUsuario);
+                List<Map<String, Object>> rows = target.queryForList(sql, idUsuario);
                 List<Integer> vendedores = extraerIdsVendedor(rows);
                 if (!vendedores.isEmpty()) {
                     return vendedores;
@@ -358,7 +389,7 @@ public class CatalogoRepository {
         }
     }
 
-    private List<Map<String, Object>> listarRutasActivasPorVendedor(Integer idVendedorOTecnico) {
+    private List<Map<String, Object>> listarRutasActivasPorVendedor(JdbcTemplate target, Integer idVendedorOTecnico) {
         String[] statements = new String[] {
                 "SELECT DISTINCT " +
                         "r.id_ruta AS idRuta, " +
@@ -400,7 +431,7 @@ public class CatalogoRepository {
 
         for (String sql : statements) {
             try {
-                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, idVendedorOTecnico);
+                List<Map<String, Object>> rows = target.queryForList(sql, idVendedorOTecnico);
                 List<Map<String, Object>> filtered = filtrarRutasNoEliminadas(rows);
                 if (!filtered.isEmpty()) {
                     return filtered;
@@ -412,7 +443,7 @@ public class CatalogoRepository {
         return new ArrayList<>();
     }
 
-    private List<Map<String, Object>> listarRutasActivas() {
+    private List<Map<String, Object>> listarRutasActivas(JdbcTemplate target) {
         String[] statements = new String[] {
                 "SELECT DISTINCT " +
                         "CAST(r.id_ruta AS INT) AS idRuta, " +
@@ -434,7 +465,7 @@ public class CatalogoRepository {
 
         for (String sql : statements) {
             try {
-                List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+                List<Map<String, Object>> rows = target.queryForList(sql);
                 List<Map<String, Object>> filtered = filtrarRutasNoEliminadas(rows);
                 if (!filtered.isEmpty()) {
                     return filtered;
@@ -479,8 +510,13 @@ public class CatalogoRepository {
     }
 
     public List<Map<String, Object>> listarTiposServicio() {
+        return listarTiposServicio(null);
+    }
+
+    public List<Map<String, Object>> listarTiposServicio(Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
         try {
-            return jdbcTemplate.queryForList(
+            return target.queryForList(
                     "SELECT " +
                             "Id_TipoServicio AS idTipoServicio, " +
                             "Nombre AS tipoServicio, " +
@@ -491,49 +527,83 @@ public class CatalogoRepository {
                             "ORDER BY Nombre"
             );
         } catch (DataAccessException ex) {
-            return jdbcTemplate.queryForList("EXEC spx_ObtenerTipoServicio");
+            return target.queryForList("EXEC spx_ObtenerTipoServicio");
         }
     }
 
     public List<Map<String, Object>> listarNomencladores() {
+        return listarNomencladores(null);
+    }
+
+    public List<Map<String, Object>> listarNomencladores(Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
         try {
-            return jdbcTemplate.queryForList("EXEC spx_ObtenerNomencladores");
+            return target.queryForList("EXEC spx_ObtenerNomencladores");
         } catch (DataAccessException ex) {
             return Collections.emptyList();
         }
     }
 
     public List<Map<String, Object>> listarEstados() {
-        return jdbcTemplate.queryForList("EXEC sp_ObtenerEstado");
+        return listarEstados(null);
+    }
+
+    public List<Map<String, Object>> listarEstados(Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC sp_ObtenerEstado");
     }
 
     public List<Map<String, Object>> listarTipoMaterial(Integer idTipoServicio) {
-        return jdbcTemplate.queryForList("EXEC sp_ObtenerTipoMaterial ?", idTipoServicio);
+        return listarTipoMaterial(idTipoServicio, null);
+    }
+
+    public List<Map<String, Object>> listarTipoMaterial(Integer idTipoServicio, Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC sp_ObtenerTipoMaterial ?", idTipoServicio);
     }
 
     public List<Map<String, Object>> listarProductos() {
-        return jdbcTemplate.queryForList("EXEC TraerTodosLosProductos");
+        return listarProductos(null);
+    }
+
+    public List<Map<String, Object>> listarProductos(Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC TraerTodosLosProductos");
     }
 
     public List<Map<String, Object>> listarProductosSinFungibleWeb() {
-        return jdbcTemplate.queryForList("EXEC TraerTodosLosProductos_SinFungibleWeb");
+        return listarProductosSinFungibleWeb(null);
+    }
+
+    public List<Map<String, Object>> listarProductosSinFungibleWeb(Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC TraerTodosLosProductos_SinFungibleWeb");
     }
 
     public List<Map<String, Object>> listarProductosPorRuta(Integer idRuta) {
-        return jdbcTemplate.queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", idRuta);
+        return listarProductosPorRuta(idRuta, null);
+    }
+
+    public List<Map<String, Object>> listarProductosPorRuta(Integer idRuta, Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", idRuta);
     }
 
     public List<Map<String, Object>> listarProductosCargoUsuarioWeb() {
+        return listarProductosCargoUsuarioWeb(null);
+    }
+
+    public List<Map<String, Object>> listarProductosCargoUsuarioWeb(Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
         try {
-            return jdbcTemplate.queryForList("EXEC TraerTodosLosProductos_SinFungibleWeb");
+            return target.queryForList("EXEC TraerTodosLosProductos_SinFungibleWeb");
         } catch (DataAccessException ex) {
             // Compatibilidad: si el SP nuevo no existe en alguna sucursal, usar el anterior.
-            return jdbcTemplate.queryForList("EXEC spx_ObtenerProductosPCargoUsuario");
+            return target.queryForList("EXEC spx_ObtenerProductosPCargoUsuario");
         }
     }
 
     public List<Map<String, Object>> buscarSerialCargoUsuario(String serial, String chipId, Integer tipoCodigo) {
-        return jdbcTemplate.queryForList(
+        return buscarSerialCargoUsuario(serial, chipId, tipoCodigo, null);
+    }
+
+    public List<Map<String, Object>> buscarSerialCargoUsuario(String serial, String chipId, Integer tipoCodigo, Integer idSucursal) {
+        return template(idSucursal).queryForList(
                 "EXEC spx_BuscarSerialCargoUsuario ?, ?, ?",
                 serial,
                 chipId,
@@ -542,11 +612,19 @@ public class CatalogoRepository {
     }
 
     public List<Map<String, Object>> traerChipIdPorSerie(String serie) {
-        return jdbcTemplate.queryForList("EXEC spx_TraerChipID2 ?", serie);
+        return traerChipIdPorSerie(serie, null);
+    }
+
+    public List<Map<String, Object>> traerChipIdPorSerie(String serie, Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC spx_TraerChipID2 ?", serie);
     }
 
     public Map<String, Object> validarSerieChipUnico(String serie, String chipId) {
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+        return validarSerieChipUnico(serie, chipId, null);
+    }
+
+    public Map<String, Object> validarSerieChipUnico(String serie, String chipId, Integer idSucursal) {
+        List<Map<String, Object>> rows = template(idSucursal).queryForList(
                 "SELECT TOP 1 serial, chipid, id_producto, e_eliminado " +
                         "FROM dbo.tbl_productos " +
                         "WHERE (serial = ? OR chipid = ?) AND e_eliminado = 0",
@@ -569,7 +647,11 @@ public class CatalogoRepository {
     }
 
     public List<Map<String, Object>> validarSerieSaldo(String serie, Integer idProducto, Integer tipoMaterial, Integer idRuta) {
-        return jdbcTemplate.execute((ConnectionCallback<List<Map<String, Object>>>) connection -> {
+        return validarSerieSaldo(serie, idProducto, tipoMaterial, idRuta, null);
+    }
+
+    public List<Map<String, Object>> validarSerieSaldo(String serie, Integer idProducto, Integer tipoMaterial, Integer idRuta, Integer idSucursal) {
+        return template(idSucursal).execute((ConnectionCallback<List<Map<String, Object>>>) connection -> {
             try (CallableStatement statement = connection.prepareCall("{call spx_TraerDatoSerieChipIdCU_OT(?, ?, ?, ?)}")) {
                 statement.setString(1, serie);
                 statement.setInt(2, idProducto);
@@ -581,19 +663,39 @@ public class CatalogoRepository {
     }
 
     public List<Map<String, Object>> traerDatoSerieChipIdCU(String serie) {
-        return jdbcTemplate.queryForList("EXEC spx_TraerDatoSerieChipIdCU ?", serie);
+        return traerDatoSerieChipIdCU(serie, null);
+    }
+
+    public List<Map<String, Object>> traerDatoSerieChipIdCU(String serie, Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC spx_TraerDatoSerieChipIdCU ?", serie);
     }
 
     public List<Map<String, Object>> traerDatoSerieChipIdCUCUNR2(String serie, String chipId) {
-        return jdbcTemplate.queryForList("EXEC spx_TraerDatoSerieChipIdCU_CUNR2 ?, ?", serie, chipId);
+        return traerDatoSerieChipIdCUCUNR2(serie, chipId, null);
+    }
+
+    public List<Map<String, Object>> traerDatoSerieChipIdCUCUNR2(String serie, String chipId, Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC spx_TraerDatoSerieChipIdCU_CUNR2 ?, ?", serie, chipId);
     }
 
     public List<Map<String, Object>> listarProductosMascara() {
-        return jdbcTemplate.queryForList("EXEC sp_TraerTodosLosProductosMascara");
+        return listarProductosMascara(null);
+    }
+
+    public List<Map<String, Object>> listarProductosMascara(Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC sp_TraerTodosLosProductosMascara");
     }
 
     public List<Map<String, Object>> listarKitsDecodificadores() {
-        return jdbcTemplate.queryForList("EXEC sp_ObtenerKitDecodificadores");
+        return listarKitsDecodificadores(null);
+    }
+
+    public List<Map<String, Object>> listarKitsDecodificadores(Integer idSucursal) {
+        return template(idSucursal).queryForList("EXEC sp_ObtenerKitDecodificadores");
+    }
+
+    private JdbcTemplate template(Integer idSucursal) {
+        return dbSupport.resolveTemplate(idSucursal, jdbcTemplate);
     }
 
     private Map<String, Object> buildSerieChipResult(

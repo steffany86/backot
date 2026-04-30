@@ -106,7 +106,7 @@ public class ConformacionCuadrillaRepository {
     }
 
     /**
-     * Obtiene un registro por id, priorizando la base central.
+     * Obtiene un registro por id desde la base de la sucursal seleccionada.
      */
     public Map<String, Object> obtenerPorId(Long id) {
         return obtenerPorId(id, null);
@@ -119,33 +119,10 @@ public class ConformacionCuadrillaRepository {
         String sucursalParam = normalizarSucursal(sucursal);
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
 
-        // 1) Sucursal seleccionada (uTecnicos o SucrePrueba)
-        if (dbInfo != null) {
-            Map<String, Object> rowSucursal = obtenerPorIdEnTemplate(crearJdbcTemplateSucursal(dbInfo), id);
-            if (rowSucursal != null) {
-                return rowSucursal;
-            }
+        if (dbInfo == null) {
+            return null;
         }
-
-        // 2) BD operativa por defecto (uTecnicos)
-        Map<String, Object> rowOperativa = obtenerPorIdEnTemplate(jdbcTemplate, id);
-        if (rowOperativa != null) {
-            return rowOperativa;
-        }
-
-        // 3) Sucre explicito como fallback cuando corresponda
-        if (dbSupport.isSucre(dbSupport.normalizeText(sucursalParam))) {
-            Map<String, Object> rowSucre = obtenerPorIdEnTemplate(
-                    crearSucreJdbcTemplate(),
-                    id
-            );
-            if (rowSucre != null) {
-                return rowSucre;
-            }
-        }
-
-        // 4) Central como ultimo fallback
-        return obtenerPorIdEnTemplate(centralJdbcTemplate, id);
+        return obtenerPorIdEnTemplate(crearJdbcTemplateSucursal(dbInfo), id);
     }
 
     /**
@@ -160,7 +137,7 @@ public class ConformacionCuadrillaRepository {
     }
 
     /**
-     * Ejecuta listado con fallback entre sucursal seleccionada, operativa y central.
+     * Ejecuta listado solo sobre la base de la sucursal seleccionada.
      */
     private List<Map<String, Object>> listarConFallback(
             LocalDate fecha,
@@ -170,12 +147,12 @@ public class ConformacionCuadrillaRepository {
             boolean incluirEliminados) {
         Object fechaParam = fecha == null ? null : Date.valueOf(fecha);
         String sucursalParam = normalizarSucursal(sucursal);
-        String sucursalFiltro = resolverSucursalNombreParaConsulta(sucursalParam);
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
-        Set<String> filtrosConsulta = dbSupport.construirFiltrosConsulta(sucursalFiltro, dbInfo);
-
-        // 1) Sucursal logueada (uTecnicos o SucrePrueba segun sucursal)
-        List<Map<String, Object>> rowsSucursal = listarEnSucursalSeleccionada(
+        if (dbInfo == null) {
+            return new ArrayList<>();
+        }
+        String sucursalFiltro = resolverSucursalNombreParaConsulta(sucursalParam);
+        return listarEnSucursalSeleccionada(
                 sucursalFiltro,
                 fechaParam,
                 limite,
@@ -183,36 +160,10 @@ public class ConformacionCuadrillaRepository {
                 dbInfo,
                 incluirEliminados
         );
-        if (tieneDatos(rowsSucursal)) {
-            return rowsSucursal;
-        }
-
-        // 2) BD operativa por defecto (uTecnicos)
-        List<Map<String, Object>> rowsOperativa = listarEnTemplatesConFiltros(
-                jdbcTemplate,
-                filtrosConsulta,
-                fechaParam,
-                limite,
-                idTecnico,
-                incluirEliminados
-        );
-        if (tieneDatos(rowsOperativa)) {
-            return rowsOperativa;
-        }
-
-        // 3) Central como ultimo fallback
-        return listarEnTemplatesConFiltros(
-                centralJdbcTemplate,
-                filtrosConsulta,
-                fechaParam,
-                limite,
-                idTecnico,
-                incluirEliminados
-        );
     }
 
     /**
-     * Lista registros (incluyendo eliminados) exclusivamente desde la base central.
+     * Lista registros (incluyendo eliminados) desde la base de la sucursal seleccionada.
      */
     public List<Map<String, Object>> listarConEliminadosCentral(
             LocalDate fecha,
@@ -223,8 +174,7 @@ public class ConformacionCuadrillaRepository {
             return new ArrayList<>();
         }
         Object fechaParam = fecha == null ? null : Date.valueOf(fecha);
-        String sucursalParam = normalizarSucursal(sucursal);
-        String sucursalFiltro = resolverSucursalNombreParaConsulta(sucursalParam);
+        String sucursalFiltro = resolverSucursalNombreParaConsulta(normalizarSucursal(sucursal));
         try {
             List<Map<String, Object>> rows = listarConEliminadosEnTemplate(
                     centralJdbcTemplate,
@@ -355,59 +305,42 @@ public class ConformacionCuadrillaRepository {
         if (centralJdbcTemplate == null) {
             throw new IllegalStateException("No hay datasource central configurado para guardar confirmaciones.");
         }
+        // Regla principal: la confirmacion debe persistirse siempre en BDControlOrdenes.
+        int affectedCentral = ejecutarRegistrar(centralJdbcTemplate, fila);
+        if (affectedCentral <= 0) {
+            throw new IllegalStateException("No se pudo guardar la confirmacion en BDControlOrdenes.");
+        }
+
+        // Replica obligatoria en base local de la sucursal seleccionada.
         List<JdbcTemplate> templates = construirTemplatesEscritura(
                 fila == null ? null : fila.getSucursal(),
                 null
         );
-        if (templates == null || templates.isEmpty()) {
-            throw new IllegalStateException("No hay templates disponibles para guardar confirmaciones.");
-        }
-
         boolean guardadoLocal = false;
-        boolean guardadoCentral = false;
         RuntimeException errorLocal = null;
-        RuntimeException errorCentral = null;
-
-        for (JdbcTemplate template : templates) {
-            boolean esCentral = template == centralJdbcTemplate;
-            if ((esCentral && guardadoCentral) || (!esCentral && guardadoLocal)) {
-                continue;
-            }
-            try {
-                int affected = ejecutarRegistrar(template, fila);
-                if (affected <= 0) {
+        if (templates != null && !templates.isEmpty()) {
+            for (JdbcTemplate template : templates) {
+                if (template == null || template == centralJdbcTemplate) {
                     continue;
                 }
-                if (esCentral) {
-                    guardadoCentral = true;
-                } else {
-                    guardadoLocal = true;
-                }
-                if (guardadoLocal && guardadoCentral) {
-                    break;
-                }
-            } catch (RuntimeException ex) {
-                if (esCentral) {
-                    errorCentral = ex;
-                } else {
+                try {
+                    int affectedLocal = ejecutarRegistrar(template, fila);
+                    if (affectedLocal > 0) {
+                        guardadoLocal = true;
+                        break;
+                    }
+                } catch (RuntimeException ex) {
                     errorLocal = ex;
                 }
             }
         }
-
         if (!guardadoLocal) {
             if (errorLocal != null) {
                 throw errorLocal;
             }
-            throw new IllegalStateException("No se pudo guardar la confirmacion en la BD local.");
+            throw new IllegalStateException("No se pudo guardar la confirmacion en la BD local de la sucursal.");
         }
-        if (!guardadoCentral) {
-            if (errorCentral != null) {
-                throw errorCentral;
-            }
-            throw new IllegalStateException("No se pudo guardar la confirmacion en BDControlOrdenes.");
-        }
-        return 1;
+        return affectedCentral;
     }
 
     /**
@@ -483,41 +416,12 @@ public class ConformacionCuadrillaRepository {
     public List<Map<String, Object>> listarSalesforce(String sucursal) {
         String sql = "SELECT * FROM dbo.tbl_SalesForce";
         String sucursalParam = normalizarSucursal(sucursal);
-        Map<String, Map<String, Object>> merged = new LinkedHashMap<>();
-
-        // 1) Operativa por defecto (uTecnicos): suele contener el catalogo activo.
-        mergeSalesforceRows(
-                merged,
-                queryForListSafe(jdbcTemplate, sql)
-        );
-
-        // 2) Sucursal resuelta (cuando difiere de operativa por defecto).
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
-        if (dbInfo != null) {
-            mergeSalesforceRows(
-                    merged,
-                    queryForListSafe(crearJdbcTemplateSucursal(dbInfo), sql)
-            );
+        if (dbInfo == null) {
+            return new ArrayList<>();
         }
-
-        // 3) Central (BDControlOrdenes) para completar faltantes.
-        mergeSalesforceRows(
-                merged,
-                queryForListSafe(centralJdbcTemplate, sql)
-        );
-
-        // 4) Sucre explicito cuando aplica.
-        if (dbSupport.isSucre(dbSupport.normalizeText(sucursalParam))) {
-            mergeSalesforceRows(
-                    merged,
-                    queryForListSafe(crearSucreJdbcTemplate(), sql)
-            );
-        }
-
-        if (!merged.isEmpty()) {
-            return new ArrayList<>(merged.values());
-        }
-        return normalizarCatalogoSalesforce(queryForListFallback(sql));
+        JdbcTemplate target = crearJdbcTemplateSucursal(dbInfo);
+        return normalizarCatalogoSalesforce(queryForListSafe(target, sql));
     }
 
     /**
@@ -607,7 +511,6 @@ public class ConformacionCuadrillaRepository {
         String sucursalParam = normalizarSucursal(sucursal);
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
 
-        // 1) Sucursal seleccionada (uTecnicos o SucrePrueba)
         if (dbInfo != null) {
             try {
                 JdbcTemplate sucursalTemplate = crearJdbcTemplateSucursal(dbInfo);
@@ -619,30 +522,6 @@ public class ConformacionCuadrillaRepository {
                 // fallback below
             }
         }
-
-        // 2) Sucre explicito cuando no se pudo resolver sucursal
-        if (dbSupport.isSucre(dbSupport.normalizeText(sucursalParam))) {
-            try {
-                JdbcTemplate sucreTemplate = crearSucreJdbcTemplate();
-                List<Map<String, Object>> rowsSucre = queryForList(sucreTemplate, sql);
-                if (rowsSucre != null && !rowsSucre.isEmpty()) {
-                    return rowsSucre;
-                }
-            } catch (DataAccessException ex) {
-                // fallback below
-            }
-        }
-
-        // 3) BD operativa por defecto (uTecnicos)
-        try {
-            List<Map<String, Object>> operativa = queryForList(jdbcTemplate, sql);
-            if (operativa != null && !operativa.isEmpty()) {
-                return operativa;
-            }
-        } catch (DataAccessException ex) {
-            // sin fallback adicional
-        }
-
         return new ArrayList<>();
     }
 
@@ -653,34 +532,15 @@ public class ConformacionCuadrillaRepository {
         String sucursalParam = normalizarSucursal(sucursal);
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
 
-        if (dbInfo != null) {
-            try {
-                List<Map<String, Object>> rows = listarRelacionesEnTemplate(crearJdbcTemplateSucursal(dbInfo));
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            } catch (DataAccessException ex) {
-                // fallback below
-            }
+        if (dbInfo == null) {
+            return new ArrayList<>();
         }
-
-        if (dbSupport.isSucre(dbSupport.normalizeText(sucursalParam))) {
-            try {
-                List<Map<String, Object>> rowsSucre = listarRelacionesEnTemplate(crearSucreJdbcTemplate());
-                if (rowsSucre != null && !rowsSucre.isEmpty()) {
-                    return rowsSucre;
-                }
-            } catch (DataAccessException ex) {
-                // fallback below
-            }
+        try {
+            List<Map<String, Object>> rows = listarRelacionesEnTemplate(crearJdbcTemplateSucursal(dbInfo));
+            return rows == null ? new ArrayList<>() : rows;
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
         }
-
-        List<Map<String, Object>> operativa = listarRelacionesEnTemplate(jdbcTemplate);
-        if (operativa != null && !operativa.isEmpty()) {
-            return operativa;
-        }
-
-        return listarRelacionesEnTemplate(centralJdbcTemplate);
     }
 
     /**
@@ -1249,7 +1109,8 @@ public class ConformacionCuadrillaRepository {
         };
 
         try {
-            int affected = template.update(
+            int affected = ejecutarSpEscritura(
+                    template,
                     "EXEC dbo.spx_RegistrarConformacionCuadrillaBackOffice " +
                             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                     args
@@ -1257,7 +1118,8 @@ public class ConformacionCuadrillaRepository {
             return normalizeInsertOutcome(template, fila, affected);
         } catch (DataAccessException backofficeEx) {
             try {
-                int affected = template.update(
+                int affected = ejecutarSpEscritura(
+                        template,
                         "EXEC dbo.spx_RegistrarConformacionCuadrillaWeb " +
                                 "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                         args
@@ -1300,7 +1162,8 @@ public class ConformacionCuadrillaRepository {
         };
 
         try {
-            int affected = template.update(
+            int affected = ejecutarSpEscritura(
+                    template,
                     "EXEC dbo.spx_ActualizarConformacionCuadrillaBackOffice " +
                             "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                     args
@@ -1309,7 +1172,8 @@ public class ConformacionCuadrillaRepository {
             return normalizeAffectedRows(affected);
         } catch (DataAccessException backofficeEx) {
             try {
-                int affected = template.update(
+                int affected = ejecutarSpEscritura(
+                        template,
                         "EXEC dbo.spx_ActualizarConformacionCuadrillaWeb " +
                                 "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                         args
@@ -1320,6 +1184,36 @@ public class ConformacionCuadrillaRepository {
                 throw webEx;
             }
         }
+    }
+
+    /**
+     * Ejecuta un SP de escritura tolerando casos donde el SP devuelve un result set.
+     */
+    private int ejecutarSpEscritura(JdbcTemplate template, String sql, Object[] args) {
+        try {
+            return template.update(sql, args);
+        } catch (DataAccessException ex) {
+            if (!isExecuteUpdateWithResultSetError(ex)) {
+                throw ex;
+            }
+            List<Map<String, Object>> rows = queryForList(template, sql, args);
+            return (rows == null || rows.isEmpty()) ? 0 : 1;
+        }
+    }
+
+    private boolean isExecuteUpdateWithResultSetError(DataAccessException ex) {
+        Throwable cursor = ex;
+        while (cursor != null) {
+            String message = cursor.getMessage();
+            if (message != null) {
+                String lower = message.toLowerCase(Locale.ROOT);
+                if (lower.contains("executeupdate") && lower.contains("result set")) {
+                    return true;
+                }
+            }
+            cursor = cursor.getCause();
+        }
+        return false;
     }
 
     private int normalizeAffectedRows(int affected) {
@@ -1366,7 +1260,7 @@ public class ConformacionCuadrillaRepository {
 
     /**
      * Define templates candidatos para operaciones de escritura.
-     * Prioriza la sucursal activa, luego operativa por defecto y finalmente central.
+     * Usa exclusivamente la sucursal activa.
      * Cuando hay id (edicion), prioriza templates donde el id ya existe.
      */
     private List<JdbcTemplate> construirTemplatesEscritura(String sucursal, Long id) {
@@ -1385,20 +1279,6 @@ public class ConformacionCuadrillaRepository {
                 // continua con siguientes candidatos
             }
         }
-        if (jdbcTemplate != null) {
-            candidatos.add(jdbcTemplate);
-        }
-        if (isSucre(normalizeText(sucursalParam))) {
-            try {
-                candidatos.add(crearSucreJdbcTemplate());
-            } catch (RuntimeException ignored) {
-                // continua con siguientes candidatos
-            }
-        }
-        if (centralJdbcTemplate != null) {
-            candidatos.add(centralJdbcTemplate);
-        }
-
         List<JdbcTemplate> unicos = dedupeTemplates(candidatos);
         if (id == null) {
             return unicos;

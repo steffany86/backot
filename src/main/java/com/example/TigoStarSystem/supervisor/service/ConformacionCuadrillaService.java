@@ -220,52 +220,20 @@ public class ConformacionCuadrillaService {
             String q,
             Integer limit) {
         LocalDate fechaConsulta = resolverFecha(fecha);
-        List<Map<String, Object>> catalogo = repository.listarGruposFiltroEdicion(sucursal);
-        List<Map<String, Object>> confirmadas = repository.listar(fechaConsulta, sucursal, null, null);
-        Map<Integer, Map<String, Object>> historicoByTecnico = indexUltimaConfirmacionPorTecnico(fechaConsulta, sucursal);
-        Map<Integer, Map<String, Object>> tecnicosById = rowMapper.indexTecnicosById(repository.listarTecnicos(sucursal));
-        Map<Integer, Map<String, Object>> relacionesByRuta = indexRelacionesByRuta(sucursal);
-        Map<Integer, String> auxiliaresById = indexAuxiliaresById();
-        Map<Integer, String> digitadoresById = indexDigitadoresById();
-
-        Set<String> clavesConfirmadas = obtenerClavesConfirmadas(confirmadas);
+        Integer limiteConsulta = (limit == null || limit <= 0) ? 100 : Math.min(limit, 1000);
+        List<Map<String, Object>> rowsBackoffice = repository.listar(fechaConsulta, sucursal, limiteConsulta, null);
+        List<Map<String, Object>> rowsConfirmadas = repository.listarConEliminadosCentral(fechaConsulta, sucursal, null, null);
+        Set<String> clavesConfirmadas = obtenerClavesConfirmadas(rowsConfirmadas);
         List<Map<String, Object>> pendientes = new ArrayList<>();
-
-        for (Map<String, Object> row : catalogo) {
-            String key = rowMapper.claveCuadrillaDesdeCatalogo(row);
-            if (key == null || clavesConfirmadas.contains(key)) {
+        for (Map<String, Object> row : rowsBackoffice) {
+            if (rowMapper.isEliminado(row)) {
                 continue;
             }
-            Map<String, Object> pendiente = rowMapper.mapPendiente(row, sucursal, fechaConsulta, tecnicosById);
-            Integer idTecnico = valueAsInteger(getCaseInsensitive(
-                    pendiente,
-                    "idTecnico",
-                    "id_tecnico",
-                    "idtecnico",
-                    "id_vendedor",
-                    "idvendedor"
-            ));
-            if (idTecnico != null) {
-                Map<String, Object> historico = historicoByTecnico.get(idTecnico);
-                if (historico != null) {
-                    aplicarSugerenciasDesdeHistorico(pendiente, historico);
-                }
+            String key = rowMapper.claveCuadrillaDesdeCatalogo(row);
+            if (key != null && clavesConfirmadas.contains(key)) {
+                continue;
             }
-            Integer idRuta = valueAsInteger(getCaseInsensitive(
-                    pendiente,
-                    "idRuta",
-                    "id_ruta",
-                    "idruta",
-                    "Id_Ruta"
-            ));
-            if (idRuta != null) {
-                Map<String, Object> relacion = relacionesByRuta.get(idRuta);
-                if (relacion != null) {
-                    aplicarRelacionCuadrilla(pendiente, relacion);
-                }
-            }
-            completarAsignacionesPendiente(pendiente, auxiliaresById, digitadoresById);
-            pendientes.add(pendiente);
+            pendientes.add(rowMapper.mapConfirmada(row, sucursal, fechaConsulta));
         }
 
         return rowMapper.filtrarPorTextoYLimite(

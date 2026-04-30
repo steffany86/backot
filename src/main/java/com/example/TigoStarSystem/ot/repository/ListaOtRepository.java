@@ -9,6 +9,7 @@ import org.springframework.stereotype.Repository;
 
 import java.sql.Date;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -21,8 +22,10 @@ import java.util.Set;
 
 @Repository
 public class ListaOtRepository {
+    private static final DateTimeFormatter LEGACY_DATE_FORMAT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private final JdbcTemplate centralJdbcTemplate;
     private final JdbcTemplate localJdbcTemplate;
+    private final SucursalRepository sucursalRepository;
     private final OtDbSupport dbSupport;
 
     public ListaOtRepository(
@@ -38,6 +41,7 @@ public class ListaOtRepository {
             @Value("${app.datasource.params:encrypt=false;trustServerCertificate=true}") String dbParams) {
         this.centralJdbcTemplate = centralJdbcTemplate;
         this.localJdbcTemplate = jdbcTemplate;
+        this.sucursalRepository = sucursalRepository;
         this.dbSupport = new OtDbSupport(
                 sucursalRepository,
                 dbDriver,
@@ -51,10 +55,13 @@ public class ListaOtRepository {
     }
 
     public List<Map<String, Object>> listarPorFecha(LocalDate fecha, String tecnico, Integer idSucursal) {
-        // El listado de agenda (SP BO CITA) se obtiene siempre desde la BD central.
-        // No debe depender de la sucursal de sesion.
-        JdbcTemplate template = this.centralJdbcTemplate;
+        return listarPorFecha(fecha, tecnico, idSucursal, null);
+    }
+
+    public List<Map<String, Object>> listarPorFecha(LocalDate fecha, String tecnico, Integer idSucursal, Integer idUsuario) {
+        JdbcTemplate template = template(idSucursal);
         Date fechaSql = Date.valueOf(fecha);
+        String fechaLegacy = fecha.format(LEGACY_DATE_FORMAT);
         String tecnicoParam = isBlank(tecnico) ? null : tecnico.trim();
         LinkedHashMap<String, Map<String, Object>> mergedRows = new LinkedHashMap<>();
 
@@ -65,6 +72,18 @@ public class ListaOtRepository {
                     List<Map<String, Object>> rows = template.queryForList(
                             "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
                             fechaSql,
+                            tecnicoVariante
+                    );
+                    mergeRows(mergedRows, rows);
+                } catch (DataAccessException ex) {
+                    if (!shouldFallback(ex)) {
+                        throw ex;
+                    }
+                }
+                try {
+                    List<Map<String, Object>> rows = template.queryForList(
+                            "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
+                            fechaLegacy,
                             tecnicoVariante
                     );
                     mergeRows(mergedRows, rows);
@@ -87,7 +106,25 @@ public class ListaOtRepository {
                 throw ex;
             }
         }
+        try {
+            List<Map<String, Object>> rows = template.queryForList(
+                    "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?",
+                    fechaLegacy
+            );
+            mergeRows(mergedRows, rows);
+        } catch (DataAccessException ex) {
+            if (!shouldFallback(ex)) {
+                throw ex;
+            }
+        }
 
+        if (!mergedRows.isEmpty()) {
+            return new ArrayList<>(mergedRows.values());
+        }
+
+        // Fallback de negocio: cuando la sucursal no devuelve filas, buscar tecnico/salesforce
+        // en BDControlOrdenes por id_vendedor (desde id_usuario local) y ejecutar el SP central.
+        mergeRows(mergedRows, listarDesdeCentralConTecnico(fechaSql, fechaLegacy, tecnicoParam, idSucursal, idUsuario));
         if (!mergedRows.isEmpty()) {
             return new ArrayList<>(mergedRows.values());
         }
@@ -112,6 +149,135 @@ public class ListaOtRepository {
                 fechaSql
         ));
         return new ArrayList<>(mergedRows.values());
+    }
+
+    private List<Map<String, Object>> listarDesdeCentralConTecnico(
+            Date fechaSql,
+            String fechaLegacy,
+            String tecnicoParam,
+            Integer idSucursal,
+            Integer idUsuario) {
+        if (centralJdbcTemplate == null || fechaSql == null) {
+            return Collections.emptyList();
+        }
+
+        LinkedHashMap<String, Map<String, Object>> merged = new LinkedHashMap<>();
+        List<String> candidatosTecnico = new ArrayList<>();
+
+        if (!isBlank(tecnicoParam)) {
+            candidatosTecnico.addAll(buildTecnicoVariantes(tecnicoParam));
+        }
+
+        String sucursalNombre = resolveSucursalNombre(idSucursal);
+        if (idUsuario != null && idUsuario > 0 && !isBlank(sucursalNombre)) {
+            List<Integer> idsVendedor = obtenerIdsVendedorPorIdUsuario(idUsuario, idSucursal);
+            for (Integer idVendedor : idsVendedor) {
+                if (idVendedor == null || idVendedor <= 0) {
+                    continue;
+                }
+                try {
+                    List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
+                            "SELECT TOP 5 salesforce, tecnico " +
+                                    "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                                    "WHERE id_tecnico = ? " +
+                                    "AND CONVERT(date, fecha) = CONVERT(date, ?) " +
+                                    "AND LOWER(LTRIM(RTRIM(ISNULL(sucursal, '')))) = LOWER(LTRIM(RTRIM(?))) " +
+                                    "AND ISNULL(e_eliminado, 0) = 0 " +
+                                    "ORDER BY id DESC",
+                            idVendedor,
+                            fechaSql,
+                            sucursalNombre
+                    );
+                    for (Map<String, Object> row : rows) {
+                        String salesforce = asTrimmedString(row.get("salesforce"));
+                        if (!isBlank(salesforce)) {
+                            candidatosTecnico.addAll(buildTecnicoVariantes(salesforce));
+                        }
+                        String tecnico = asTrimmedString(row.get("tecnico"));
+                        if (!isBlank(tecnico)) {
+                            candidatosTecnico.addAll(buildTecnicoVariantes(tecnico));
+                        }
+                    }
+                } catch (DataAccessException ignored) {
+                    // Continuar con siguientes candidatos.
+                }
+            }
+        }
+
+        LinkedHashSet<String> candidatosUnicos = new LinkedHashSet<>();
+        for (String candidato : candidatosTecnico) {
+            if (!isBlank(candidato)) {
+                candidatosUnicos.add(candidato.trim());
+            }
+        }
+
+        for (String candidato : candidatosUnicos) {
+            try {
+                mergeRows(merged, centralJdbcTemplate.queryForList(
+                        "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
+                        fechaSql,
+                        candidato
+                ));
+            } catch (DataAccessException ex) {
+                if (!shouldFallback(ex)) {
+                    throw ex;
+                }
+            }
+            try {
+                mergeRows(merged, centralJdbcTemplate.queryForList(
+                        "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
+                        fechaLegacy,
+                        candidato
+                ));
+            } catch (DataAccessException ex) {
+                if (!shouldFallback(ex)) {
+                    throw ex;
+                }
+            }
+        }
+
+        return new ArrayList<>(merged.values());
+    }
+
+    private String resolveSucursalNombre(Integer idSucursal) {
+        if (idSucursal == null || idSucursal <= 0 || sucursalRepository == null) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = sucursalRepository.obtenerSucursales();
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            for (Map<String, Object> row : rows) {
+                Integer id = parsePositiveInt(firstNonNull(row, "id_sucursal", "idsucursal", "Id_Sucursal", "idSucursal", "IdSucursal"));
+                if (id != null && id.equals(idSucursal)) {
+                    return asTrimmedString(firstNonNull(row, "sucursal", "Sucursal", "nombre", "Nombre"));
+                }
+            }
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+        return null;
+    }
+
+    private Object firstNonNull(Map<String, Object> row, String... keys) {
+        if (row == null || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            if (row.containsKey(key) && row.get(key) != null) {
+                return row.get(key);
+            }
+        }
+        return null;
+    }
+
+    private String asTrimmedString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
     }
 
     public List<Integer> obtenerIdsVendedorPorIdUsuario(Integer idUsuario, Integer idSucursal) {

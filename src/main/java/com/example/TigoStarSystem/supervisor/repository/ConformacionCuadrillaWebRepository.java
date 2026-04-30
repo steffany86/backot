@@ -105,11 +105,6 @@ public class ConformacionCuadrillaWebRepository {
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = dbSupport.resolverSucursalDbInfo(sucursalParam);
 
         Map<String, Object> row = queryForSingleInSucursal(dbInfo, SP_OBTENER_POR_ID, id);
-        if (row != null) {
-            return mapRow(row);
-        }
-
-        row = queryForSingle(centralJdbcTemplate, SP_OBTENER_POR_ID, id);
         return row == null ? null : mapRow(row);
     }
 
@@ -296,17 +291,11 @@ public class ConformacionCuadrillaWebRepository {
             ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
             String sql,
             Object... args) {
-        if (dbInfo != null) {
-            try {
-                List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
-                return rows == null ? new ArrayList<>() : rows;
-            } catch (DataAccessException ex) {
-                // fallback below
-            }
+        if (dbInfo == null) {
+            return new ArrayList<>();
         }
-
         try {
-            List<Map<String, Object>> rows = queryForList(jdbcTemplate, sql, args);
+            List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
             return rows == null ? new ArrayList<>() : rows;
         } catch (DataAccessException ex) {
             return new ArrayList<>();
@@ -317,16 +306,11 @@ public class ConformacionCuadrillaWebRepository {
             ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
             String sql,
             Object... args) {
-        if (dbInfo != null) {
-            try {
-                List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
-                return rows == null ? new ArrayList<>() : rows;
-            } catch (DataAccessException ex) {
-                return new ArrayList<>();
-            }
+        if (dbInfo == null) {
+            return new ArrayList<>();
         }
         try {
-            List<Map<String, Object>> rows = queryForList(jdbcTemplate, sql, args);
+            List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
             return rows == null ? new ArrayList<>() : rows;
         } catch (DataAccessException ex) {
             return new ArrayList<>();
@@ -372,32 +356,11 @@ public class ConformacionCuadrillaWebRepository {
                 // fallback below
             }
         }
-        if (jdbcTemplate != null) {
-            out.add(jdbcTemplate);
-        }
-        if (centralJdbcTemplate != null) {
-            out.add(centralJdbcTemplate);
-        }
         return dedupeTemplates(out);
     }
 
     private List<JdbcTemplate> construirTemplatesEliminacion() {
-        List<JdbcTemplate> out = new ArrayList<>();
-        if (jdbcTemplate != null) {
-            out.add(jdbcTemplate);
-        }
-        try {
-            JdbcTemplate sucreTemplate = dbSupport.crearJdbcTemplateSucre();
-            if (sucreTemplate != null) {
-                out.add(sucreTemplate);
-            }
-        } catch (RuntimeException ignored) {
-            // fallback below
-        }
-        if (centralJdbcTemplate != null) {
-            out.add(centralJdbcTemplate);
-        }
-        return dedupeTemplates(out);
+        return new ArrayList<>();
     }
 
     private List<JdbcTemplate> dedupeTemplates(List<JdbcTemplate> templates) {

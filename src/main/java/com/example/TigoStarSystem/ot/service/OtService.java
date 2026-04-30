@@ -250,7 +250,7 @@ public class OtService {
                 throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La cantidad debe ser mayor a cero.");
             }
 
-            List<Map<String, Object>> duplicados = otRepository.obtenerCargoUsuarioExistente(serie, chipId);
+            List<Map<String, Object>> duplicados = otRepository.obtenerCargoUsuarioExistente(serie, chipId, idSucursal);
             if (!duplicados.isEmpty()) {
                 throw new ApiException(
                         HttpStatus.CONFLICT,

@@ -377,13 +377,13 @@ public class OtRepository {
         }
     }
 
-    public List<Map<String, Object>> obtenerCargoUsuarioExistente(String serie, String chipId) {
+    public List<Map<String, Object>> obtenerCargoUsuarioExistente(String serie, String chipId, Integer idSucursal) {
         boolean serieVacia = serie == null || serie.trim().isEmpty();
         boolean chipVacio = chipId == null || chipId.trim().isEmpty();
         if (serieVacia && chipVacio) {
             return java.util.Collections.emptyList();
         }
-        return jdbcTemplate.queryForList(
+        return template(idSucursal).queryForList(
                 "SELECT TOP 1 Id FROM dbo.tbl_CodigoVentaCargoUsuario " +
                         "WHERE E_Eliminado = 0 AND ((? <> '' AND Serial = ?) OR (? <> '' AND ChipId = ?))",
                 serie == null ? "" : serie,

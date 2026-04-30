@@ -18,13 +18,6 @@ final class ConformacionCuadrillaDbSupport {
     private final String dbPassword;
     private final String dbDriver;
     private final String dbParams;
-    private final String uTecnicosHost;
-    private final String uTecnicosDatabase;
-    private final String centralHost;
-    private final String sucreHost;
-    private final String sucreDatabase;
-    private final String sucreUsername;
-    private final String sucrePassword;
 
     ConformacionCuadrillaDbSupport(
             SucursalRepository sucursalRepository,
@@ -42,16 +35,6 @@ final class ConformacionCuadrillaDbSupport {
         this.dbUsername = dbUsername;
         this.dbPassword = dbPassword;
         this.dbDriver = dbDriver;
-        this.uTecnicosHost = parseHostFromJdbcUrl(mainDatasourceUrl);
-        this.uTecnicosDatabase = parseDatabaseFromJdbcUrl(mainDatasourceUrl);
-        String parsedCentralHost = parseHostFromJdbcUrl(centralDatasourceUrl);
-        this.centralHost = isBlank(parsedCentralHost) ? this.uTecnicosHost : parsedCentralHost;
-        String parsedSucreHost = parseHostFromJdbcUrl(sucreDatasourceUrl);
-        String parsedSucreDatabase = parseDatabaseFromJdbcUrl(sucreDatasourceUrl);
-        this.sucreHost = firstNonBlank(parsedSucreHost, this.centralHost);
-        this.sucreDatabase = firstNonBlank(parsedSucreDatabase, sucreDatabase);
-        this.sucreUsername = firstNonBlank(sucreUsername, this.dbUsername);
-        this.sucrePassword = firstNonBlank(sucrePassword, this.dbPassword);
         this.dbParams = dbParams;
     }
 
@@ -84,36 +67,20 @@ final class ConformacionCuadrillaDbSupport {
         String nombreSucursalRaw = asString(
                 sucursalMatch == null ? null : firstNonNull(sucursalMatch, "sucursal", "Sucursal")
         );
-        String nombreSucursal = normalizeText(nombreSucursalRaw);
-        String hostSucursal = asString(
-                sucursalMatch == null ? null : firstNonNull(sucursalMatch, "ip", "IP", "ip2", "IP2")
-        );
+        String ip = asString(sucursalMatch == null ? null : firstNonNull(sucursalMatch, "ip", "IP"));
+        String ip2 = asString(sucursalMatch == null ? null : firstNonNull(sucursalMatch, "ip2", "IP2"));
+        String hostSucursal = firstNonBlank(ip, ip2);
         String baseSucursal = asString(
                 sucursalMatch == null ? null : firstNonNull(sucursalMatch, "basededatos", "base_de_datos", "BaseDeDatos")
         );
 
-        if (isSucre(nombreSucursal) || isSucre(nombreBuscado)) {
-            return buildDbInfo(
-                    sucreHost,
-                    sucreDatabase,
-                    hostSucursal,
-                    baseSucursal,
-                    sucreUsername,
-                    sucrePassword,
-                    dbUsername,
-                    dbPassword,
-                    firstNonNull(idSucursal, idBuscado),
-                    firstNonBlank(nombreSucursalRaw, sucursalParam)
-            );
+        if (isBlank(hostSucursal) || isBlank(baseSucursal)) {
+            return null;
         }
 
         return buildDbInfo(
                 hostSucursal,
                 baseSucursal,
-                uTecnicosHost,
-                uTecnicosDatabase,
-                dbUsername,
-                dbPassword,
                 dbUsername,
                 dbPassword,
                 firstNonNull(idSucursal, idBuscado),
@@ -149,6 +116,9 @@ final class ConformacionCuadrillaDbSupport {
     }
 
     JdbcTemplate crearJdbcTemplateSucursal(String host, String baseDeDatos, String username, String password) {
+        if (isBlank(host) || isBlank(baseDeDatos) || isBlank(username) || isBlank(password)) {
+            return null;
+        }
         String url;
         if (dbDriver != null && dbDriver.toLowerCase(Locale.ROOT).contains("jtds")) {
             url = "jdbc:jtds:sqlserver://" + host + "/" + baseDeDatos;
@@ -168,11 +138,11 @@ final class ConformacionCuadrillaDbSupport {
     }
 
     JdbcTemplate crearJdbcTemplateSucre() {
-        return crearJdbcTemplateSucursal(sucreHost, sucreDatabase, sucreUsername, sucrePassword);
+        return null;
     }
 
     boolean isSucre(String value) {
-        return value != null && value.contains("sucre");
+        return false;
     }
 
     boolean isBlank(String value) {
@@ -238,20 +208,12 @@ final class ConformacionCuadrillaDbSupport {
     }
 
     private SucursalDbInfo buildDbInfo(
-            String preferredHost,
-            String preferredDatabase,
-            String fallbackHost,
-            String fallbackDatabase,
-            String preferredUsername,
-            String preferredPassword,
-            String fallbackUsername,
-            String fallbackPassword,
+            String host,
+            String database,
+            String username,
+            String password,
             Integer idSucursal,
             String nombreSucursal) {
-        String host = firstNonBlank(preferredHost, fallbackHost);
-        String database = firstNonBlank(preferredDatabase, fallbackDatabase);
-        String username = firstNonBlank(preferredUsername, fallbackUsername);
-        String password = firstNonBlank(preferredPassword, fallbackPassword);
         if (isBlank(host) || isBlank(database) || isBlank(username) || isBlank(password)) {
             return null;
         }
@@ -274,73 +236,6 @@ final class ConformacionCuadrillaDbSupport {
             return preferred.trim();
         }
         return fallback;
-    }
-
-    private String parseHostFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-
-        String rest = url.substring(idx + 3);
-        int sepSlash = rest.indexOf('/');
-        int sepSemicolon = rest.indexOf(';');
-        int end = -1;
-        if (sepSlash >= 0 && sepSemicolon >= 0) {
-            end = Math.min(sepSlash, sepSemicolon);
-        } else if (sepSlash >= 0) {
-            end = sepSlash;
-        } else if (sepSemicolon >= 0) {
-            end = sepSemicolon;
-        }
-
-        String hostPort = end >= 0 ? rest.substring(0, end) : rest;
-        int comma = hostPort.indexOf(',');
-        if (comma >= 0) {
-            hostPort = hostPort.substring(0, comma);
-        }
-        int colon = hostPort.indexOf(':');
-        if (colon >= 0) {
-            hostPort = hostPort.substring(0, colon);
-        }
-
-        String host = hostPort.trim();
-        return host.isEmpty() ? null : host;
-    }
-
-    private String parseDatabaseFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        String lower = url.toLowerCase(Locale.ROOT);
-        String token = "databasename=";
-        int idxDbName = lower.indexOf(token);
-        if (idxDbName >= 0) {
-            int start = idxDbName + token.length();
-            int end = url.indexOf(';', start);
-            String db = (end >= 0 ? url.substring(start, end) : url.substring(start)).trim();
-            return db.isEmpty() ? null : db;
-        }
-
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-        String rest = url.substring(idx + 3);
-        int slash = rest.indexOf('/');
-        if (slash < 0 || slash + 1 >= rest.length()) {
-            return null;
-        }
-
-        String afterSlash = rest.substring(slash + 1);
-        int end = afterSlash.indexOf(';');
-        String db = (end >= 0 ? afterSlash.substring(0, end) : afterSlash).trim();
-        return db.isEmpty() ? null : db;
     }
 
     static final class SucursalDbInfo {

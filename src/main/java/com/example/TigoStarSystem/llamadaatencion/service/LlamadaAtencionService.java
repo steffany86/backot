@@ -92,7 +92,7 @@ public class LlamadaAtencionService {
             String sucursal,
             String token) {
         String sucursalResuelta = resolveSucursalNombre(sucursal, token);
-        JdbcTemplate template = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
+        JdbcTemplate template = resolveSucursalTemplate(sucursalResuelta);
         String filtro = trimToNull(q);
 
         List<Map<String, Object>> rows;
@@ -110,12 +110,34 @@ public class LlamadaAtencionService {
         return new ArrayList<>(normalizadas.subList(0, max));
     }
 
-    private String resolveTecnicosDb(String sucursal) {
-        String normalized = normalizeText(sucursal);
-        if (normalized.contains("sucre")) {
-            return "sucre";
+    private JdbcTemplate resolveSucursalTemplate(String sucursal) {
+        if (isBlank(sucursal)) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Sucursal es requerida para listar tecnicos."
+            );
         }
-        return "operativa";
+        List<SucursalResponse> sucursales = authService.listarSucursales();
+        for (SucursalResponse item : sucursales) {
+            if (item == null || isBlank(item.getSucursal())) {
+                continue;
+            }
+            if (normalizeText(item.getSucursal()).equals(normalizeText(sucursal))) {
+                return dbConnectionManager.connDb(
+                        item.getSucursal(),
+                        item.getIp(),
+                        item.getBaseDeDatos(),
+                        "sistemas",
+                        "sametsis"
+                );
+            }
+        }
+        throw new ApiException(
+                HttpStatus.BAD_REQUEST,
+                "SUCURSAL_DB_NOT_RESOLVED",
+                "No se pudo resolver la base de datos de la sucursal seleccionada."
+        );
     }
 
     private String resolveSucursalNombre(String sucursal, String token) {

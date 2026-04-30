@@ -5,6 +5,7 @@ import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
 import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.repository.AuthRepository;
+import com.example.TigoStarSystem.auth.repository.AuthSessionRepository;
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import com.example.TigoStarSystem.config.DbConnectionManager;
 import com.example.TigoStarSystem.common.ApiException;
@@ -38,6 +39,7 @@ public class AuthService {
     private static final Duration SESSION_TTL = Duration.ofHours(8);
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
     private final AuthRepository authRepository;
+    private final AuthSessionRepository authSessionRepository;
     private final SucursalRepository sucursalRepository;
     private final DbConnectionManager dbConnectionManager;
     private final Map<String, AuthSession> sessions = new ConcurrentHashMap<>();
@@ -50,12 +52,14 @@ public class AuthService {
      */
     public AuthService(
             AuthRepository authRepository,
+            AuthSessionRepository authSessionRepository,
             SucursalRepository sucursalRepository,
             DbConnectionManager dbConnectionManager,
             @Value("${spring.datasource.username}") String dbUsername,
             @Value("${spring.datasource.password}") String dbPassword,
             @Value("${auth.login.validar-sucursal:true}") boolean validarSucursal) {
         this.authRepository = authRepository;
+        this.authSessionRepository = authSessionRepository;
         this.sucursalRepository = sucursalRepository;
         this.dbConnectionManager = dbConnectionManager;
         this.dbUsername = dbUsername;
@@ -160,6 +164,8 @@ public class AuthService {
         OffsetDateTime expira = OffsetDateTime.now().plus(SESSION_TTL);
         AuthSession session = new AuthSession(token, user, expira);
         sessions.put(token, session);
+        authSessionRepository.save(session);
+        authSessionRepository.deleteExpired();
         return session;
     }
 
@@ -185,10 +191,17 @@ public class AuthService {
         }
         AuthSession session = sessions.get(token);
         if (session == null) {
+            session = authSessionRepository.findByToken(token);
+            if (session != null) {
+                sessions.put(token, session);
+            }
+        }
+        if (session == null) {
             throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "SesiÃ³n invÃ¡lida.");
         }
         if (session.getExpira().isBefore(OffsetDateTime.now())) {
             sessions.remove(token);
+            authSessionRepository.deleteByToken(token);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "SesiÃ³n expirada.");
         }
         return new AuthMeResponse(session.getUsuario(), session.getExpira(), resolveHostName());
@@ -584,3 +597,4 @@ public class AuthService {
         }
     }
 }
+

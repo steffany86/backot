@@ -28,15 +28,23 @@ public class CatalogoService {
      * Lista tecnicos disponibles para formularios de OT/cuadrillas.
      */
     public List<Map<String, Object>> listarTecnicos() {
-        return catalogoRepository.listarTecnicos();
+        return listarTecnicos(null);
+    }
+
+    public List<Map<String, Object>> listarTecnicos(Integer idSucursal) {
+        return catalogoRepository.listarTecnicos(idSucursal);
     }
 
     /**
      * Lista rutas; si no llega tecnico, devuelve todas.
      */
     public List<Map<String, Object>> listarRutas(Integer idTecnico) {
+        return listarRutas(idTecnico, null);
+    }
+
+    public List<Map<String, Object>> listarRutas(Integer idTecnico, Integer idSucursal) {
         Integer tecnico = idTecnico != null && idTecnico > 0 ? idTecnico : null;
-        List<Map<String, Object>> rows = catalogoRepository.listarRutasPorTecnico(tecnico);
+        List<Map<String, Object>> rows = catalogoRepository.listarRutasPorTecnico(tecnico, idSucursal);
         return normalizarRutas(rows);
     }
 
@@ -44,27 +52,43 @@ public class CatalogoService {
      * Lista tipos de servicio.
      */
     public List<Map<String, Object>> listarTiposServicio() {
-        return catalogoRepository.listarTiposServicio();
+        return listarTiposServicio(null);
+    }
+
+    public List<Map<String, Object>> listarTiposServicio(Integer idSucursal) {
+        return catalogoRepository.listarTiposServicio(idSucursal);
     }
 
     /**
      * Lista productos nomencladores (sufijo -> producto).
      */
     public List<Map<String, Object>> listarNomencladores() {
-        return catalogoRepository.listarNomencladores();
+        return listarNomencladores(null);
+    }
+
+    public List<Map<String, Object>> listarNomencladores(Integer idSucursal) {
+        return catalogoRepository.listarNomencladores(idSucursal);
     }
 
     /**
      * Lista estados de OT.
      */
     public List<Map<String, Object>> listarEstados() {
-        return catalogoRepository.listarEstados();
+        return listarEstados(null);
+    }
+
+    public List<Map<String, Object>> listarEstados(Integer idSucursal) {
+        return catalogoRepository.listarEstados(idSucursal);
     }
 
     /**
      * Lista tipos de material segun tipo de servicio.
      */
     public List<Map<String, Object>> listarTipoMaterial(Integer idTipoServicio) {
+        return listarTipoMaterial(idTipoServicio, null);
+    }
+
+    public List<Map<String, Object>> listarTipoMaterial(Integer idTipoServicio, Integer idSucursal) {
         if (idTipoServicio == null) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
@@ -72,24 +96,36 @@ public class CatalogoService {
                     "tipoServicioId es requerido."
             );
         }
-        return catalogoRepository.listarTipoMaterial(idTipoServicio);
+        return catalogoRepository.listarTipoMaterial(idTipoServicio, idSucursal);
     }
 
     /**
      * Lista catalogo de productos.
      */
     public List<Map<String, Object>> listarProductos() {
-        return catalogoRepository.listarProductos();
+        return listarProductos(null);
+    }
+
+    public List<Map<String, Object>> listarProductos(Integer idSucursal) {
+        return catalogoRepository.listarProductos(idSucursal);
     }
 
     /**
      * Lista catalogo de productos sin fungible web.
      */
     public List<Map<String, Object>> listarProductosSinFungibleWeb() {
-        return catalogoRepository.listarProductosSinFungibleWeb();
+        return listarProductosSinFungibleWeb(null);
+    }
+
+    public List<Map<String, Object>> listarProductosSinFungibleWeb(Integer idSucursal) {
+        return catalogoRepository.listarProductosSinFungibleWeb(idSucursal);
     }
 
     public List<Map<String, Object>> listarProductosPorRuta(Integer idRuta) {
+        return listarProductosPorRuta(idRuta, null);
+    }
+
+    public List<Map<String, Object>> listarProductosPorRuta(Integer idRuta, Integer idSucursal) {
         if (idRuta == null) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
@@ -97,27 +133,36 @@ public class CatalogoService {
                     "rutaId es requerido."
             );
         }
-        return catalogoRepository.listarProductosPorRuta(idRuta);
+        return catalogoRepository.listarProductosPorRuta(idRuta, idSucursal);
     }
 
     /**
      * Lista productos disponibles para cargo usuario.
      */
     public List<Map<String, Object>> listarProductosCargoUsuarioWeb() {
-        return catalogoRepository.listarProductosCargoUsuarioWeb();
+        return listarProductosCargoUsuarioWeb(null);
+    }
+
+    public List<Map<String, Object>> listarProductosCargoUsuarioWeb(Integer idSucursal) {
+        return catalogoRepository.listarProductosCargoUsuarioWeb(idSucursal);
     }
 
     /**
      * Busca existencia de serial/chip para cargo usuario.
      */
     public List<Map<String, Object>> buscarSerialCargoUsuario(String serial, String chipId, Integer tipoCodigo) {
+        return buscarSerialCargoUsuario(serial, chipId, tipoCodigo, null);
+    }
+
+    public List<Map<String, Object>> buscarSerialCargoUsuario(String serial, String chipId, Integer tipoCodigo, Integer idSucursal) {
         if (tipoCodigo == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tipoCodigo es requerido.");
         }
         return catalogoRepository.buscarSerialCargoUsuario(
                 serial == null ? "" : serial.trim(),
                 chipId == null ? "" : chipId.trim(),
-                tipoCodigo
+                tipoCodigo,
+                idSucursal
         );
     }
 
@@ -125,29 +170,41 @@ public class CatalogoService {
      * Obtiene chipId e idProducto desde la serie.
      */
     public List<Map<String, Object>> traerChipIdPorSerie(String serie) {
+        return traerChipIdPorSerie(serie, null);
+    }
+
+    public List<Map<String, Object>> traerChipIdPorSerie(String serie, Integer idSucursal) {
         if (serie == null || serie.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
         }
-        return catalogoRepository.traerChipIdPorSerie(serie.trim());
+        return catalogoRepository.traerChipIdPorSerie(serie.trim(), idSucursal);
     }
 
     /**
      * Valida que serie y chipId correspondan al mismo registro.
      */
     public Map<String, Object> validarSerieChipUnico(String serie, String chipId) {
+        return validarSerieChipUnico(serie, chipId, null);
+    }
+
+    public Map<String, Object> validarSerieChipUnico(String serie, String chipId, Integer idSucursal) {
         if (serie == null || serie.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
         }
         if (chipId == null || chipId.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "chipId es requerido.");
         }
-        return catalogoRepository.validarSerieChipUnico(serie.trim(), chipId.trim());
+        return catalogoRepository.validarSerieChipUnico(serie.trim(), chipId.trim(), idSucursal);
     }
 
     /**
      * Valida la serie contra el saldo usando el procedimiento de OT.
      */
     public List<Map<String, Object>> validarSerieSaldo(String serie, Integer idProducto, Integer tipoMaterial, Integer idRuta) {
+        return validarSerieSaldo(serie, idProducto, tipoMaterial, idRuta, null);
+    }
+
+    public List<Map<String, Object>> validarSerieSaldo(String serie, Integer idProducto, Integer tipoMaterial, Integer idRuta, Integer idSucursal) {
         if (serie == null || serie.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
         }
@@ -160,38 +217,54 @@ public class CatalogoService {
         if (idRuta == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idRuta es requerido.");
         }
-        return catalogoRepository.validarSerieSaldo(serie.trim(), idProducto, tipoMaterial, idRuta);
+        return catalogoRepository.validarSerieSaldo(serie.trim(), idProducto, tipoMaterial, idRuta, idSucursal);
     }
 
     public List<Map<String, Object>> traerDatoSerieChipIdCU(String serie) {
+        return traerDatoSerieChipIdCU(serie, null);
+    }
+
+    public List<Map<String, Object>> traerDatoSerieChipIdCU(String serie, Integer idSucursal) {
         if (serie == null || serie.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
         }
-        return catalogoRepository.traerDatoSerieChipIdCU(serie.trim());
+        return catalogoRepository.traerDatoSerieChipIdCU(serie.trim(), idSucursal);
     }
 
     public List<Map<String, Object>> traerDatoSerieChipIdCUCUNR2(String serie, String chipId) {
+        return traerDatoSerieChipIdCUCUNR2(serie, chipId, null);
+    }
+
+    public List<Map<String, Object>> traerDatoSerieChipIdCUCUNR2(String serie, String chipId, Integer idSucursal) {
         if (serie == null || serie.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "serie es requerida.");
         }
         if (chipId == null || chipId.trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "chipId es requerido.");
         }
-        return catalogoRepository.traerDatoSerieChipIdCUCUNR2(serie.trim(), chipId.trim());
+        return catalogoRepository.traerDatoSerieChipIdCUCUNR2(serie.trim(), chipId.trim(), idSucursal);
     }
 
     /**
      * Lista mascaras/configuraciones de productos.
      */
     public List<Map<String, Object>> listarProductosMascara() {
-        return catalogoRepository.listarProductosMascara();
+        return listarProductosMascara(null);
+    }
+
+    public List<Map<String, Object>> listarProductosMascara(Integer idSucursal) {
+        return catalogoRepository.listarProductosMascara(idSucursal);
     }
 
     /**
      * Lista kits de decodificadores.
      */
     public List<Map<String, Object>> listarKitsDecodificadores() {
-        return catalogoRepository.listarKitsDecodificadores();
+        return listarKitsDecodificadores(null);
+    }
+
+    public List<Map<String, Object>> listarKitsDecodificadores(Integer idSucursal) {
+        return catalogoRepository.listarKitsDecodificadores(idSucursal);
     }
 
     /**

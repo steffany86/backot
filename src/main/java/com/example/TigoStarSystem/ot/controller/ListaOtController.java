@@ -5,7 +5,6 @@ import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.ot.service.ListaOtService;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -17,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -24,7 +24,12 @@ import java.util.Map;
 
 @Validated
 @RestController
-@RequestMapping("/ListaOt")
+@RequestMapping({
+        "/ListaOt",
+        "/supervisor/spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO",
+        "/ot/spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO",
+        "/spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO"
+})
 public class ListaOtController {
     private final ListaOtService listaOtService;
     private final AuthService authService;
@@ -37,14 +42,14 @@ public class ListaOtController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listar(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
-            @RequestParam("fecha")
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "fecha", required = false) String fecha,
             @RequestParam(value = "rol", required = false) String rol,
             @RequestParam(value = "idUsuario", required = false) Integer idUsuario,
             @RequestParam(value = "tecnico", required = false) String tecnico,
             @RequestParam(value = "estado", required = false) String estado,
             @RequestParam(value = "estados", required = false) List<String> estados) {
         AuthMeResponse me = resolveSession(token);
+        LocalDate fechaFiltro = resolveFecha(fecha);
         String rolResuelto = resolveRol(me, rol);
         boolean administrador = isAdministrador(me, rolResuelto);
         boolean tecnicoRol = isTecnico(rolResuelto);
@@ -62,7 +67,7 @@ public class ListaOtController {
 
         List<String> estadosFiltro = resolveEstados(estado, estados);
         List<Map<String, Object>> data = listaOtService.listar(
-                fecha,
+                fechaFiltro,
                 tecnicoFiltro,
                 tecnicoExacto,
                 estadosFiltro,
@@ -100,11 +105,19 @@ public class ListaOtController {
         if (!isBlank(rolParam)) {
             return rolParam;
         }
-        throw new ApiException(
-                HttpStatus.BAD_REQUEST,
-                "VALIDATION_ERROR",
-                "rol es requerido cuando no se envia sesion."
-        );
+        // Compatibilidad legacy: evitar 400 cuando no llega rol ni sesion.
+        return "tecnico";
+    }
+
+    private LocalDate resolveFecha(String fechaParam) {
+        if (isBlank(fechaParam)) {
+            return LocalDate.now();
+        }
+        try {
+            return LocalDate.parse(fechaParam.trim());
+        } catch (DateTimeParseException ex) {
+            return LocalDate.now();
+        }
     }
 
     private boolean isAdministrador(AuthMeResponse me, String rolResuelto) {

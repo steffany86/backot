@@ -32,7 +32,7 @@ public class ListaOtService {
             List<String> estadosSeleccionados,
             Integer idUsuario,
             Integer idSucursal) {
-        List<Map<String, Object>> rowsSp = repository.listarPorFecha(fecha, tecnico, idSucursal);
+        List<Map<String, Object>> rowsSp = repository.listarPorFecha(fecha, tecnico, idSucursal, idUsuario);
         Set<String> agendaKeys = buildAgendaMatchKeys(rowsSp);
         if (!agendaKeys.isEmpty()) {
             try {
@@ -108,6 +108,11 @@ public class ListaOtService {
                 continue;
             }
             result.add(row);
+        }
+        // Fallback defensivo: algunos SP devuelven columnas/aliases distintos para tecnico
+        // y el filtro posterior puede vaciar el listado aun cuando el SP retorno filas.
+        if (result.isEmpty() && filtrarTecnico && tecnicoExacto && rowsSp != null && !rowsSp.isEmpty()) {
+            return rowsSp;
         }
         return result;
     }

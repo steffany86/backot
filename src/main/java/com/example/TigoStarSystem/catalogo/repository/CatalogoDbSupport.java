@@ -1,18 +1,20 @@
-package com.example.TigoStarSystem.ot.repository;
+package com.example.TigoStarSystem.catalogo.repository;
 
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import com.example.TigoStarSystem.common.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
-import java.text.Normalizer;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-final class OtDbSupport {
+final class CatalogoDbSupport {
+    private static final Logger logger = LoggerFactory.getLogger(CatalogoDbSupport.class);
     private final SucursalRepository sucursalRepository;
     private final String dbDriver;
     private final String dbParams;
@@ -20,7 +22,7 @@ final class OtDbSupport {
     private final String dbPassword;
     private final Map<Integer, JdbcTemplate> templatesBySucursal = new LinkedHashMap<>();
 
-    OtDbSupport(
+    CatalogoDbSupport(
             SucursalRepository sucursalRepository,
             String dbDriver,
             String mainDatasourceUrl,
@@ -39,11 +41,7 @@ final class OtDbSupport {
 
     JdbcTemplate resolveTemplate(Integer idSucursal, JdbcTemplate defaultJdbcTemplate) {
         if (idSucursal == null) {
-            throw new ApiException(
-                    HttpStatus.BAD_REQUEST,
-                    "VALIDATION_ERROR",
-                    "idSucursal es requerido para resolver la base de datos."
-            );
+            return defaultJdbcTemplate;
         }
         SucursalDbInfo info = resolverSucursalDbInfo(idSucursal);
         if (info == null) {
@@ -56,8 +54,10 @@ final class OtDbSupport {
         synchronized (templatesBySucursal) {
             JdbcTemplate template = templatesBySucursal.get(idSucursal);
             if (template != null) {
+                logger.debug("Catalogo DB cache hit idSucursal={} host={} db={}", idSucursal, info.host, info.baseDeDatos);
                 return template;
             }
+            logger.info("Catalogo DB resolve idSucursal={} host={} db={}", idSucursal, info.host, info.baseDeDatos);
             template = crearJdbcTemplate(info.host, info.baseDeDatos, dbUsername, dbPassword);
             templatesBySucursal.put(idSucursal, template);
             return template;
@@ -86,9 +86,6 @@ final class OtDbSupport {
         dataSource.setPassword(password);
         return new JdbcTemplate(dataSource);
     }
-
-
-
 
     private SucursalDbInfo resolverSucursalDbInfo(Integer idSucursal) {
         List<Map<String, Object>> rows = sucursalRepository.obtenerSucursales();
@@ -124,8 +121,6 @@ final class OtDbSupport {
         return null;
     }
 
-
-    
     private Integer asInteger(Object value) {
         if (value == null) {
             return null;
@@ -144,16 +139,6 @@ final class OtDbSupport {
         return value == null ? null : value.toString();
     }
 
-    private String normalizeText(String value) {
-        if (value == null) {
-            return "";
-        }
-        String normalized = Normalizer.normalize(value, Normalizer.Form.NFD);
-        normalized = normalized.replaceAll("\\p{InCombiningDiacriticalMarks}+", "");
-        normalized = normalized.replaceAll("[\\s_\\-]+", "");
-        return normalized.trim().toLowerCase(Locale.ROOT);
-    }
-
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
     }
@@ -163,68 +148,6 @@ final class OtDbSupport {
             return preferred.trim();
         }
         return fallback;
-    }
-
-    private String parseHostFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-        String rest = url.substring(idx + 3);
-        int sepSlash = rest.indexOf('/');
-        int sepSemicolon = rest.indexOf(';');
-        int end = -1;
-        if (sepSlash >= 0 && sepSemicolon >= 0) {
-            end = Math.min(sepSlash, sepSemicolon);
-        } else if (sepSlash >= 0) {
-            end = sepSlash;
-        } else if (sepSemicolon >= 0) {
-            end = sepSemicolon;
-        }
-        String hostPort = end >= 0 ? rest.substring(0, end) : rest;
-        int comma = hostPort.indexOf(',');
-        if (comma >= 0) {
-            hostPort = hostPort.substring(0, comma);
-        }
-        int colon = hostPort.indexOf(':');
-        if (colon >= 0) {
-            hostPort = hostPort.substring(0, colon);
-        }
-        String host = hostPort.trim();
-        return host.isEmpty() ? null : host;
-    }
-
-    private String parseDatabaseFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        String lower = url.toLowerCase(Locale.ROOT);
-        String token = "databasename=";
-        int idxDbName = lower.indexOf(token);
-        if (idxDbName >= 0) {
-            int start = idxDbName + token.length();
-            int end = url.indexOf(';', start);
-            String db = (end >= 0 ? url.substring(start, end) : url.substring(start)).trim();
-            return db.isEmpty() ? null : db;
-        }
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-        String rest = url.substring(idx + 3);
-        int slash = rest.indexOf('/');
-        if (slash < 0 || slash + 1 >= rest.length()) {
-            return null;
-        }
-        String afterSlash = rest.substring(slash + 1);
-        int end = afterSlash.indexOf(';');
-        String db = (end >= 0 ? afterSlash.substring(0, end) : afterSlash).trim();
-        return db.isEmpty() ? null : db;
     }
 
     private static final class SucursalDbInfo {
