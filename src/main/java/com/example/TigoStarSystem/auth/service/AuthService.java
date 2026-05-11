@@ -3,6 +3,7 @@ package com.example.TigoStarSystem.auth.service;
 import com.example.TigoStarSystem.auth.dto.AuthLoginRequest;
 import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
+import com.example.TigoStarSystem.auth.dto.ChangePasswordRequest;
 import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.repository.AuthRepository;
 import com.example.TigoStarSystem.auth.repository.AuthSessionRepository;
@@ -156,9 +157,12 @@ public class AuthService {
         AuthLoginResponse user = new AuthLoginResponse(
                 userFromDb.getIdUsuario(),
                 userFromDb.getNombre(),
+                userFromDb.getLoggin(),
                 userFromDb.getRol(),
                 userFromDb.getIdRol(),
-                idSucursalSeleccionada
+                idSucursalSeleccionada,
+                userFromDb.getNecesitaCambio(),
+                userFromDb.getUltimaModificacion()
         );
         String token = UUID.randomUUID().toString();
         OffsetDateTime expira = OffsetDateTime.now().plus(SESSION_TTL);
@@ -232,6 +236,33 @@ public class AuthService {
         return me;
     }
 
+    public void cambiarPassword(String token, ChangePasswordRequest request) {
+        if (request == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Request requerida.");
+        }
+        AuthMeResponse me = me(token);
+        AuthLoginResponse usuario = me.getUsuario();
+        if (usuario == null || usuario.getIdUsuario() == null || usuario.getIdSucursal() == null) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "Sesion invalida.");
+        }
+        if (isBlank(request.getActual()) || isBlank(request.getNueva())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Password actual y nueva son requeridas.");
+        }
+        String actualHash = hashMd5Base64(request.getActual().trim());
+        String nuevaHash = hashMd5Base64(request.getNueva().trim());
+        SucursalInfo sucursal = obtenerSucursalPorId(usuario.getIdSucursal());
+        JdbcTemplate jdbcTemplate = crearJdbcTemplateSucursal(sucursal, dbUsername, dbPassword);
+        List<Map<String, Object>> rows = authRepository.cambiarPasswordUsuarioPorId(
+                jdbcTemplate,
+                usuario.getIdUsuario(),
+                actualHash,
+                nuevaHash
+        );
+        if (rows == null || rows.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PASSWORD_CHANGE_FAILED", "No se pudo cambiar password.");
+        }
+    }
+
     /**
      * Determina si un usuario pertenece al rol de Sistemas (administrador).
      */
@@ -254,7 +285,10 @@ public class AuthService {
             idSucursal = idSucursalFallback;
         }
         String nombre = toString(findValue(row, "nombre", "nombres", "nombreusuario", "usuario"));
+        String loggin = toString(findValue(row, "loggin", "login", "usuario"));
         String rol = toString(findValue(row, "rol", "nombrerol", "descripcionrol"));
+        Boolean necesitaCambio = toBoolean(findValue(row, "necesitacambio"));
+        java.time.LocalDateTime ultimaModificacion = toLocalDateTime(findValue(row, "ultimamodificacion"));
 
         if (idUsuario == null || nombre == null) {
             Map<String, Object> details = new HashMap<>();
@@ -266,7 +300,7 @@ public class AuthService {
                     details
             );
         }
-        return new AuthLoginResponse(idUsuario, nombre, rol, idRol, idSucursal);
+        return new AuthLoginResponse(idUsuario, nombre, loggin, rol, idRol, idSucursal, necesitaCambio, ultimaModificacion);
     }
 
     /**
@@ -516,6 +550,39 @@ public class AuthService {
      */
     private String toString(Object value) {
         return value == null ? null : value.toString();
+    }
+
+    private Boolean toBoolean(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        String text = value.toString().trim().toLowerCase(Locale.ROOT);
+        if ("true".equals(text) || "1".equals(text) || "si".equals(text) || "yes".equals(text)) {
+            return true;
+        }
+        if ("false".equals(text) || "0".equals(text) || "no".equals(text)) {
+            return false;
+        }
+        return null;
+    }
+
+    private java.time.LocalDateTime toLocalDateTime(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof java.time.LocalDateTime) {
+            return (java.time.LocalDateTime) value;
+        }
+        if (value instanceof java.sql.Timestamp) {
+            return ((java.sql.Timestamp) value).toLocalDateTime();
+        }
+        return null;
     }
 
     /**

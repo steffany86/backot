@@ -69,8 +69,13 @@ public class ConformacionCuadrillaWebService {
         }
 
         LocalDate fechaSalida = fecha == null ? LocalDate.now() : fecha;
+        Map<Integer, Map<String, Object>> relacionesByRuta = indexRelacionesByRuta(sucursalResuelta);
+        Map<Integer, Map<String, Object>> tecnicoDetalleCache = new java.util.HashMap<>();
         for (Map<String, Object> row : rows) {
-            out.add(mapRutaRowToWebResponse(row, sucursalResuelta, fechaSalida));
+            ConformacionCuadrillaWebResponse mapped = mapRutaRowToWebResponse(row, sucursalResuelta, fechaSalida);
+            completarRelacionRuta(mapped, relacionesByRuta);
+            completarTecnicoFaltante(mapped, sucursalResuelta, tecnicoDetalleCache);
+            out.add(mapped);
         }
         if (limite == null || limite <= 0 || out.size() <= limite) {
             return out;
@@ -410,6 +415,142 @@ public class ConformacionCuadrillaWebService {
                 isBlank(sucursal) ? toString(readValue(row, "sucursal", "Sucursal")) : sucursal
         ));
         out.setEEliminado(toBoolean(readValue(row, "e_eliminado", "eeliminado", "eliminado", "E_Eliminado")));
+        return out;
+    }
+
+    /**
+     * Completa datos de tecnico cuando el listado de rutas no trae nombre/cuenta/salesforce.
+     */
+    private void completarTecnicoFaltante(
+            ConformacionCuadrillaWebResponse out,
+            String sucursal,
+            Map<Integer, Map<String, Object>> tecnicoDetalleCache) {
+        if (out == null || out.getIdTecnico() == null || out.getIdTecnico() <= 0) {
+            return;
+        }
+        boolean requiereDetalleTecnico = isBlank(out.getTecnico())
+                || isBlank(out.getSalesforce())
+                || isBlank(out.getCuentaSf())
+                || isBlank(out.getHabilidad())
+                || isBlank(out.getVehiculo())
+                || (out.getIdTecnicoAuxiliar() == null || out.getIdTecnicoAuxiliar() <= 0)
+                || isBlank(out.getAuxiliar())
+                || (out.getIdUsuarioDigitador() == null || out.getIdUsuarioDigitador() <= 0)
+                || isBlank(out.getDigitador());
+        if (!requiereDetalleTecnico) {
+            return;
+        }
+
+        Integer idTecnico = out.getIdTecnico();
+        Map<String, Object> detalle = tecnicoDetalleCache.get(idTecnico);
+        if (detalle == null) {
+            List<Map<String, Object>> rows = repository.obtenerTecnicoDetalle(idTecnico, sucursal);
+            if (rows != null && !rows.isEmpty()) {
+                detalle = rows.get(0);
+            } else {
+                detalle = java.util.Collections.emptyMap();
+            }
+            tecnicoDetalleCache.put(idTecnico, detalle);
+        }
+        if (detalle.isEmpty()) {
+            return;
+        }
+
+        if (isBlank(out.getTecnico())) {
+            out.setTecnico(toString(readValue(detalle, "tecnico", "nombrevendedor", "vendedor", "nombre")));
+        }
+        if (isBlank(out.getSalesforce())) {
+            out.setSalesforce(toString(readValue(detalle, "salesforce", "SalesForce", "cuentasf", "cuenta_sf")));
+        }
+        if (isBlank(out.getCuentaSf())) {
+            out.setCuentaSf(toString(readValue(detalle, "cuentaSf", "cuenta_sf", "cuentasf", "salesforce", "SalesForce")));
+        }
+        if (isBlank(out.getHabilidad())) {
+            out.setHabilidad(toString(readValue(detalle, "habilidad", "Habilidad", "tipohabilidad")));
+        }
+        if (isBlank(out.getVehiculo())) {
+            out.setVehiculo(toString(readValue(detalle, "vehiculo", "Vehiculo", "placa", "placavehiculo", "placaVehiculo")));
+        }
+        if (out.getIdTecnicoAuxiliar() == null || out.getIdTecnicoAuxiliar() <= 0) {
+            Object idAux = readValue(
+                    detalle,
+                    "idTecnicoAuxiliar",
+                    "id_tecnico_auxiliar",
+                    "idtecnicoauxiliar",
+                    "idtecnicoAuxiliar",
+                    "id_tecnicoAuxiliar"
+            );
+            if (idAux == null) idAux = detalle.get("idtecnicoAuxiliar");
+            if (idAux == null) idAux = detalle.get("idTecnicoAuxiliar");
+            if (idAux == null) idAux = detalle.get("id_tecnico_auxiliar");
+            out.setIdTecnicoAuxiliar(toInteger(idAux));
+        }
+        if (isBlank(out.getAuxiliar())) {
+            Object aux = readValue(detalle, "auxiliar", "tecnicoauxiliar", "nombreauxiliar");
+            if (aux == null) aux = detalle.get("auxiliar");
+            out.setAuxiliar(toString(aux));
+        }
+        if (out.getIdUsuarioDigitador() == null || out.getIdUsuarioDigitador() <= 0) {
+            out.setIdUsuarioDigitador(toInteger(readValue(
+                    detalle,
+                    "idUsuarioDigitador",
+                    "id_usuario_digitador",
+                    "idusuariodigitador",
+                    "id_usuariodigitador"
+            )));
+        }
+        if (isBlank(out.getDigitador())) {
+            out.setDigitador(toString(readValue(
+                    detalle,
+                    "digitador",
+                    "nombreDigitador",
+                    "nombredigitador",
+                    "usuariodigitador"
+            )));
+        }
+    }
+
+    /**
+     * Completa auxiliar/digitador desde la relacion guardada por ruta.
+     */
+    private void completarRelacionRuta(
+            ConformacionCuadrillaWebResponse out,
+            Map<Integer, Map<String, Object>> relacionesByRuta) {
+        if (out == null || out.getId() == null || relacionesByRuta == null || relacionesByRuta.isEmpty()) {
+            return;
+        }
+        Integer idRuta = out.getId().intValue();
+        Map<String, Object> relacion = relacionesByRuta.get(idRuta);
+        if (relacion == null || relacion.isEmpty()) {
+            return;
+        }
+        if (out.getIdTecnicoAuxiliar() == null) {
+            out.setIdTecnicoAuxiliar(toInteger(readValue(relacion, "id_tecnico_auxiliar", "idtecnicoauxiliar", "idTecnicoAuxiliar")));
+        }
+        if (isBlank(out.getAuxiliar())) {
+            out.setAuxiliar(toString(readValue(relacion, "auxiliar", "tecnicoauxiliar", "nombreauxiliar")));
+        }
+        if (out.getIdUsuarioDigitador() == null) {
+            out.setIdUsuarioDigitador(toInteger(readValue(relacion, "id_usuario_digitador", "idusuariodigitador", "idUsuarioDigitador")));
+        }
+        if (isBlank(out.getDigitador())) {
+            out.setDigitador(toString(readValue(relacion, "digitador", "nombreDigitador", "usuariodigitador")));
+        }
+    }
+
+    private Map<Integer, Map<String, Object>> indexRelacionesByRuta(String sucursal) {
+        Map<Integer, Map<String, Object>> out = new java.util.HashMap<>();
+        List<Map<String, Object>> rows = backofficeRepository.listarRelacionesCuadrilla(sucursal);
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> row : rows) {
+            Integer idRuta = toInteger(readValue(row, "id_ruta", "idruta", "idRuta", "Id_Ruta"));
+            if (idRuta == null || out.containsKey(idRuta)) {
+                continue;
+            }
+            out.put(idRuta, row);
+        }
         return out;
     }
 

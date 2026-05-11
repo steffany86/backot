@@ -8,6 +8,7 @@ public class OtValidarVentaDetalleResponse {
     private final Integer numeroCliente;
     private final Boolean existeVenta;
     private final Integer cantidadVentas;
+    private final Boolean tieneDetalle;
     private final Boolean tieneDetalleEnCodigoVenta;
     private final Integer cantidadDetalles;
     private final Boolean addMaterialOCargoUsuario;
@@ -19,6 +20,7 @@ public class OtValidarVentaDetalleResponse {
             Integer numeroCliente,
             Boolean existeVenta,
             Integer cantidadVentas,
+            Boolean tieneDetalle,
             Boolean tieneDetalleEnCodigoVenta,
             Integer cantidadDetalles,
             Boolean addMaterialOCargoUsuario,
@@ -28,6 +30,7 @@ public class OtValidarVentaDetalleResponse {
         this.numeroCliente = numeroCliente;
         this.existeVenta = existeVenta;
         this.cantidadVentas = cantidadVentas;
+        this.tieneDetalle = tieneDetalle;
         this.tieneDetalleEnCodigoVenta = tieneDetalleEnCodigoVenta;
         this.cantidadDetalles = cantidadDetalles;
         this.addMaterialOCargoUsuario = addMaterialOCargoUsuario;
@@ -52,6 +55,10 @@ public class OtValidarVentaDetalleResponse {
 
     public Integer getCantidadVentas() {
         return cantidadVentas;
+    }
+
+    public Boolean getTieneDetalle() {
+        return tieneDetalle;
     }
 
     public Boolean getTieneDetalleEnCodigoVenta() {

@@ -75,6 +75,35 @@ public class AuthRepository {
         }
     }
 
+    public List<Map<String, Object>> cambiarPasswordUsuarioPorId(
+            JdbcTemplate template,
+            Integer idUsuario,
+            String passwordHashActual,
+            String passwordHashNueva
+    ) {
+        if (template == null) {
+            throw new IllegalArgumentException("JdbcTemplate requerido para cambiar password.");
+        }
+        try {
+            return template.queryForList(
+                    "EXEC dbo.spx_CambiarPasswordUsuarioPorId ?, ?, ?",
+                    idUsuario,
+                    passwordHashActual,
+                    passwordHashNueva
+            );
+        } catch (DataAccessException ex) {
+            if (!isMissingStoredProcedure(ex)) {
+                throw ex;
+            }
+            return template.queryForList(
+                    "EXEC spx_CambiarPasswordUsuarioPorId ?, ?, ?",
+                    idUsuario,
+                    passwordHashActual,
+                    passwordHashNueva
+            );
+        }
+    }
+
 
 
 //chequea si hay un error de procedimiento almacenado no encontrado, para evitar fallar si el SP tiene un nombre diferente (con o sin prefijo dbo.)

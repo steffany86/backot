@@ -70,6 +70,15 @@ public class CatalogoController {
                 "Listado de productos nomencladores."));
     }
 
+    @GetMapping("/materiales-autocarga")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarMaterialesAutocarga(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        Integer idSucursal = resolveOptionalIdSucursal(token);
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.listarMaterialesAutocarga(idSucursal),
+                "Listado de reglas para autocarga de materiales."));
+    }
+
     @GetMapping("/estados")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarEstados(
             @RequestHeader(value = "X-Session-Token", required = false) String token) {
@@ -77,6 +86,16 @@ public class CatalogoController {
         return ResponseEntity.ok(ApiResponse.of(
                 catalogoService.listarEstados(idSucursal),
                 "Listado de estados."));
+    }
+
+    @GetMapping("/ramales")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarRamales(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        Integer idSucursal = resolveOptionalIdSucursal(token);
+        return ResponseEntity.ok(ApiResponse.of(
+                catalogoService.listarRamales(idSucursal),
+                "Listado de ramales."
+        ));
     }
 
     @GetMapping("/tipo-material")

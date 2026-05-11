@@ -1,12 +1,15 @@
 package com.example.TigoStarSystem.ot.repository;
 
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -22,11 +25,14 @@ import java.util.Map;
 
 @Repository
 public class OtRepository {
+    private static final Logger logger = LoggerFactory.getLogger(OtRepository.class);
     private final JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate centralJdbcTemplate;
     private final OtDbSupport dbSupport;
 
     public OtRepository(
             JdbcTemplate jdbcTemplate,
+            @Qualifier("centralJdbcTemplate") JdbcTemplate centralJdbcTemplate,
             SucursalRepository sucursalRepository,
             @Value("${spring.datasource.driver-class-name}") String dbDriver,
             @Value("${spring.datasource.url}") String mainDatasourceUrl,
@@ -36,6 +42,7 @@ public class OtRepository {
             @Value("${app.sucre.datasource.password:${spring.datasource.password}}") String sucrePassword,
             @Value("${app.datasource.params:encrypt=false;trustServerCertificate=true}") String dbParams) {
         this.jdbcTemplate = jdbcTemplate;
+        this.centralJdbcTemplate = centralJdbcTemplate;
         this.dbSupport = new OtDbSupport(
                 sucursalRepository,
                 dbDriver,
@@ -90,6 +97,28 @@ public class OtRepository {
             return Collections.emptyList();
         }
 
+        StringBuilder idsCsvBuilder = new StringBuilder();
+        for (Integer id : idsValidos) {
+            if (id == null || id <= 0) continue;
+            if (idsCsvBuilder.length() > 0) {
+                idsCsvBuilder.append(",");
+            }
+            idsCsvBuilder.append(id);
+        }
+        String idsCsv = idsCsvBuilder.toString();
+
+        JdbcTemplate target = template(idSucursal);
+        try {
+            return target.queryForList(
+                    "EXEC dbo.spx_ListarOtFinalizadas ?, ?, ?",
+                    sqlDate(fecha),
+                    idsValidos.get(0),
+                    idsCsv
+            );
+        } catch (DataAccessException ex) {
+            // Fallback temporal al SQL directo mientras se despliega el SP
+        }
+
         StringBuilder inClause = new StringBuilder();
         for (int i = 0; i < idsValidos.size(); i++) {
             if (i > 0) {
@@ -98,29 +127,59 @@ public class OtRepository {
             inClause.append("?");
         }
 
-        String sql = "SELECT " +
-                "v.Id_Venta AS idVenta, " +
-                "v.OrdenTrabajo AS ordenTrabajo, " +
-                "v.CodigoCliente AS codigoCliente, " +
-                "v.Fecha_Ejecucion AS fechaEjecucion, " +
-                "v.Origen AS origen, " +
-                "v.Id_Vendedor AS idVendedor, " +
-                "v.Id_TipoServicio AS idTipoServicio, " +
-                "ts.Nombre AS tipoServicio, " +
-                "v.Id_Estado AS idEstado, " +
-                "e.Nombre AS estado " +
-                "FROM dbo.tbl_Venta v " +
-                "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
-                "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
-                "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
-                "AND CONVERT(DATE, v.Fecha_Ejecucion) = ? " +
-                "AND v.Id_Vendedor IN (" + inClause + ") " +
-                "ORDER BY v.Id_Venta DESC";
+        String[] sqlVariants = new String[] {
+                "SELECT " +
+                        "v.Id_Venta AS idVenta, " +
+                        "v.OrdenTrabajo AS ordenTrabajo, " +
+                        "v.CodigoCliente AS codigoCliente, " +
+                        "v.Fecha_Ejecucion AS fechaEjecucion, " +
+                        "v.Origen AS origen, " +
+                        "v.Id_Vendedor AS idVendedor, " +
+                        "v.Id_TipoServicio AS idTipoServicio, " +
+                        "ts.Nombre AS tipoServicio, " +
+                        "v.Id_Estado AS idEstado, " +
+                        "e.Nombre AS estado " +
+                        "FROM dbo.tbl_Venta v " +
+                        "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
+                        "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
+                        "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                        "AND CONVERT(DATE, v.Fecha_Ejecucion) = ? " +
+                        "AND v.Id_Vendedor IN (" + inClause + ") " +
+                        "ORDER BY v.Id_Venta DESC",
+                "SELECT " +
+                        "v.id_venta AS idVenta, " +
+                        "v.ordentrabajo AS ordenTrabajo, " +
+                        "v.codigocliente AS codigoCliente, " +
+                        "v.fecha_ejecucion AS fechaEjecucion, " +
+                        "v.origen AS origen, " +
+                        "v.id_vendedor AS idVendedor, " +
+                        "v.id_tiposervicio AS idTipoServicio, " +
+                        "ts.nombre AS tipoServicio, " +
+                        "v.id_estado AS idEstado, " +
+                        "e.nombre AS estado " +
+                        "FROM dbo.tbl_venta v " +
+                        "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.id_tiposervicio = v.id_tiposervicio " +
+                        "LEFT JOIN dbo.tbl_estado e ON e.id_estado = v.id_estado " +
+                        "WHERE CONVERT(DATE, v.fecha_ejecucion) = ? " +
+                        "AND v.id_vendedor IN (" + inClause + ") " +
+                        "ORDER BY v.id_venta DESC"
+        };
 
         List<Object> params = new ArrayList<>();
         params.add(sqlDate(fecha));
         params.addAll(idsValidos);
-        return template(idSucursal).queryForList(sql, params.toArray());
+        RuntimeException lastError = null;
+        for (String sql : sqlVariants) {
+            try {
+                return target.queryForList(sql, params.toArray());
+            } catch (DataAccessException ex) {
+                lastError = ex;
+            }
+        }
+        if (lastError != null) {
+            logger.warn("No se pudo listar OT finalizadas con SQL fallback: {}", lastError.getMessage());
+        }
+        return Collections.emptyList();
     }
 
     public List<Map<String, Object>> obtenerOrdenTrabajoPorNumero(String numeroOrden, Integer idSucursal) {
@@ -200,6 +259,26 @@ public class OtRepository {
         }
 
         JdbcTemplate target = template(idSucursal);
+
+        String[] directVendorStatements = new String[] {};
+        for (String sql : directVendorStatements) {
+            try {
+                List<Map<String, Object>> rows = target.queryForList(sql, idUsuario);
+                if (rows == null || rows.isEmpty()) continue;
+                LinkedHashSet<Integer> out = new LinkedHashSet<>();
+                for (Map<String, Object> row : rows) {
+                    Object value = row.get("id_vendedor");
+                    if (value == null) value = row.get("Id_Vendedor");
+                    if (value == null) value = row.get("idvendedor");
+                    Integer parsed = parsePositiveInteger(value);
+                    if (parsed != null) out.add(parsed);
+                }
+                if (!out.isEmpty()) return new ArrayList<>(out);
+            } catch (DataAccessException ex) {
+                // Continuar con siguiente variante.
+            }
+        }
+
         String[] statements = new String[] {
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
@@ -328,7 +407,13 @@ public class OtRepository {
         }
 
         if (lastError != null) {
-            throw lastError;
+            logger.warn(
+                    "No se pudo resolver mapeo idUsuario->idVendedor para idUsuario={}, idSucursal={}. " +
+                            "Se usara fallback con idUsuario como vendedor. Causa: {}",
+                    idUsuario,
+                    idSucursal,
+                    lastError.getMessage()
+            );
         }
         return Collections.emptyList();
     }
@@ -444,6 +529,43 @@ public class OtRepository {
                 "EXEC spx_ValidaMovimientos ?",
                 sqlDate(fecha)
         );
+    }
+
+    public boolean existeConformacionCuadrillaTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {
+        if (fecha == null || idUsuario == null || idUsuario <= 0) {
+            return false;
+        }
+        String[] sqlCandidates = new String[] {
+                "SELECT TOP 1 1 AS existe " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE CONVERT(date, fecha) = CONVERT(date, ?) " +
+                        "  AND ISNULL(eEliminado, 0) = 0 " +
+                        "  AND id_tecnico = ?",
+                "SELECT TOP 1 1 AS existe " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE CONVERT(date, fecha) = CONVERT(date, ?) " +
+                        "  AND ISNULL(e_eliminado, 0) = 0 " +
+                        "  AND id_tecnico = ?",
+                "SELECT TOP 1 1 AS existe " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE CONVERT(date, fecha) = CONVERT(date, ?) " +
+                        "  AND id_tecnico = ?"
+        };
+        for (String sql : sqlCandidates) {
+            try {
+                List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
+                        sql,
+                        sqlDate(fecha),
+                        idUsuario
+                );
+                if (rows != null && !rows.isEmpty()) {
+                    return true;
+                }
+            } catch (DataAccessException ignored) {
+                // Intentar siguiente variante de esquema.
+            }
+        }
+        return false;
     }
 
     public List<Map<String, Object>> validarEstadoSerie(
@@ -880,6 +1002,91 @@ public class OtRepository {
                 latitud,
                 longitud
         );
+    }
+
+    public int actualizarRutaPdfVenta(Long idVenta, String rutaPdf, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0 || rutaPdf == null || rutaPdf.trim().isEmpty()) {
+            return 0;
+        }
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta SET RutaPdf = ? WHERE Id_Venta = ?",
+                rutaPdf.trim(),
+                idVenta
+        );
+    }
+
+    public int actualizarDatosNodoRamalTapBocaVenta(
+            Long idVenta,
+            String nodo,
+            String ramal,
+            Integer tap,
+            String nodoRamalTap,
+            Integer boca,
+            Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0) {
+            return 0;
+        }
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta " +
+                        "SET Nodo = ?, Ramal = ?, Tap = ?, Nodo_Ramal_Tap = ?, Boca = ? " +
+                        "WHERE Id_Venta = ?",
+                nodo,
+                ramal,
+                tap,
+                nodoRamalTap,
+                boca,
+                idVenta
+        );
+    }
+
+    public int actualizarTipoTecnologiaVenta(Long idVenta, String tipoTecnologia, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0 || tipoTecnologia == null || tipoTecnologia.trim().isEmpty()) {
+            return 0;
+        }
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta SET TipoTecnologia = ? WHERE Id_Venta = ?",
+                tipoTecnologia.trim(),
+                idVenta
+        );
+    }
+
+    public int actualizarChecksVenta(Long idVenta, Boolean checkPlantaExterna, Boolean tieneDetalle, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0) {
+            return 0;
+        }
+        boolean checkPlantaExternaValue = Boolean.TRUE.equals(checkPlantaExterna);
+        boolean tieneDetalleValue = Boolean.TRUE.equals(tieneDetalle);
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta SET CheckPlantaExterna = ?, TieneDetalle = ? WHERE Id_Venta = ?",
+                checkPlantaExternaValue,
+                tieneDetalleValue,
+                idVenta
+        );
+    }
+
+    public int actualizarFechaHoraDetalleVenta(Long idVenta, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0) {
+            return 0;
+        }
+        JdbcTemplate target = template(idSucursalSesion);
+        String[] statements = new String[] {
+                "UPDATE dbo.tbl_Venta SET FechaHoraDetalle = GETDATE() WHERE Id_Venta = ?",
+                "UPDATE dbo.tbl_venta SET FechaHoraDetalle = GETDATE() WHERE id_venta = ?",
+                "UPDATE dbo.tbl_Venta SET Fecha_Hora_Detalle = GETDATE() WHERE Id_Venta = ?",
+                "UPDATE dbo.tbl_venta SET fecha_hora_detalle = GETDATE() WHERE id_venta = ?"
+        };
+        DataAccessException lastError = null;
+        for (String sql : statements) {
+            try {
+                return target.update(sql, idVenta);
+            } catch (DataAccessException ex) {
+                lastError = ex;
+            }
+        }
+        if (lastError != null) {
+            throw lastError;
+        }
+        return 0;
     }
 
     private JdbcTemplate template(Integer idSucursal) {

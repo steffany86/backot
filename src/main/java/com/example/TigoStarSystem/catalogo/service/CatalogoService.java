@@ -70,6 +70,10 @@ public class CatalogoService {
         return catalogoRepository.listarNomencladores(idSucursal);
     }
 
+    public List<Map<String, Object>> listarMaterialesAutocarga(Integer idSucursal) {
+        return catalogoRepository.listarMaterialesAutocarga(idSucursal);
+    }
+
     /**
      * Lista estados de OT.
      */
@@ -79,6 +83,10 @@ public class CatalogoService {
 
     public List<Map<String, Object>> listarEstados(Integer idSucursal) {
         return catalogoRepository.listarEstados(idSucursal);
+    }
+
+    public List<Map<String, Object>> listarRamales(Integer idSucursal) {
+        return catalogoRepository.listarRamales(idSucursal);
     }
 
     /**
@@ -290,6 +298,8 @@ public class CatalogoService {
             Object idRuta = readValue(row, "idRuta", "id_ruta", "Id_Ruta", "IdRuta", "id", "Id");
             Object nombreRuta = readValue(row, "ruta", "cuadrilla", "Nombre", "nombre", "grupo", "Grupo");
             Object idTecnico = readValue(row, "idTecnico", "id_tecnico", "Id_Tecnico", "id_vendedor", "Id_Vendedor");
+            Object tipoGrupo = readValue(row, "tipoGrupo", "TipoGrupo", "tipo_grupo");
+            Object tipoTecnologia = readValue(row, "tipoTecnologia", "TipoTecnologia", "tipo_tecnologia");
             if (idRuta != null) {
                 normalized.put("idRuta", idRuta);
                 normalized.put("id_ruta", idRuta);
@@ -302,6 +312,12 @@ public class CatalogoService {
             if (idTecnico != null) {
                 normalized.put("idTecnico", idTecnico);
                 normalized.put("id_tecnico", idTecnico);
+            }
+            if (tipoGrupo != null) {
+                normalized.put("tipoGrupo", tipoGrupo);
+            }
+            if (tipoTecnologia != null) {
+                normalized.put("tipoTecnologia", tipoTecnologia);
             }
             out.add(normalized);
         }

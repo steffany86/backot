@@ -77,16 +77,8 @@ public class CatalogoRepository {
                 }
             }
 
-            // Compatibilidad: en algunas instalaciones el id recibido puede corresponder directamente al vendedor.
-            List<Map<String, Object>> vendedorRows = listarRutasActivasPorVendedor(target, tecnico);
-            if (!vendedorRows.isEmpty()) {
-                return vendedorRows;
-            }
-            try {
-                return filtrarRutasNoEliminadas(target.queryForList("EXEC spx_ObtenerRutaXIdTecnico ?", tecnico));
-            } catch (DataAccessException ex) {
-                return new ArrayList<>();
-            }
+            // Regla estricta: si no hay mapeo en tbl_usuariotecnico, no mostrar rutas.
+            return new ArrayList<>();
         }
 
         List<Map<String, Object>> activeRows = listarRutasActivas(target);
@@ -107,6 +99,8 @@ public class CatalogoRepository {
                         "r.id_ruta AS idRuta, " +
                         "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
                         "r.id_vendedor AS id_vendedor, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
                         "INNER JOIN dbo.tbl_usuariotecnico ut ON ut.id_vendedor = r.id_vendedor " +
@@ -118,6 +112,8 @@ public class CatalogoRepository {
                         "r.id_ruta AS idRuta, " +
                         "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
                         "r.id_tecnico AS id_tecnico, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
                         "INNER JOIN dbo.tbl_usuariotecnico ut ON ut.id_vendedor = r.id_tecnico " +
@@ -164,6 +160,20 @@ public class CatalogoRepository {
     }
 
     private List<Integer> listarVendedoresPorUsuario(JdbcTemplate target, Integer idUsuario) {
+        String[] directVendorStatements = new String[] {};
+
+        for (String sql : directVendorStatements) {
+            try {
+                List<Map<String, Object>> rows = target.queryForList(sql, idUsuario);
+                List<Integer> vendedores = extraerIdsVendedor(rows);
+                if (!vendedores.isEmpty()) {
+                    return vendedores;
+                }
+            } catch (DataAccessException ex) {
+                // probar siguiente variante
+            }
+        }
+
         String[] statements = new String[] {
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
@@ -340,6 +350,26 @@ public class CatalogoRepository {
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.idusuario = ? " +
                         "AND ut.idvendedor IS NOT NULL " +
+                        "ORDER BY 1",
+                "SELECT DISTINCT CAST(v.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_vendedor v " +
+                        "WHERE v.id_usuario = ? " +
+                        "AND v.id_vendedor IS NOT NULL " +
+                        "ORDER BY 1",
+                "SELECT DISTINCT CAST(v.id_vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_vendedor v " +
+                        "WHERE v.idusuario = ? " +
+                        "AND v.id_vendedor IS NOT NULL " +
+                        "ORDER BY 1",
+                "SELECT DISTINCT CAST(v.Id_Vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_Vendedor v " +
+                        "WHERE v.Id_Usuario = ? " +
+                        "AND v.Id_Vendedor IS NOT NULL " +
+                        "ORDER BY 1",
+                "SELECT DISTINCT CAST(v.Id_Vendedor AS INT) AS id_vendedor " +
+                        "FROM dbo.tbl_Vendedor v " +
+                        "WHERE v.IdUsuario = ? " +
+                        "AND v.Id_Vendedor IS NOT NULL " +
                         "ORDER BY 1"
         };
 
@@ -395,6 +425,8 @@ public class CatalogoRepository {
                         "r.id_ruta AS idRuta, " +
                         "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
                         "r.id_vendedor AS id_vendedor, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
                         "WHERE r.id_vendedor = ? " +
@@ -404,6 +436,8 @@ public class CatalogoRepository {
                         "r.id_ruta AS idRuta, " +
                         "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
                         "r.id_tecnico AS id_tecnico, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
                         "WHERE r.id_tecnico = ? " +
@@ -413,6 +447,8 @@ public class CatalogoRepository {
                         "r.Id_Ruta AS idRuta, " +
                         "CONVERT(NVARCHAR(200), r.Id_Ruta) AS ruta, " +
                         "r.Id_Vendedor AS id_vendedor, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.TipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.TipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +
                         "WHERE r.Id_Vendedor = ? " +
@@ -422,6 +458,8 @@ public class CatalogoRepository {
                         "r.Id_Ruta AS idRuta, " +
                         "CONVERT(NVARCHAR(200), r.Id_Ruta) AS ruta, " +
                         "r.Id_Tecnico AS id_tecnico, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.TipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.TipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +
                         "WHERE r.Id_Tecnico = ? " +
@@ -449,6 +487,8 @@ public class CatalogoRepository {
                         "CAST(r.id_ruta AS INT) AS idRuta, " +
                         "CAST(r.id_ruta AS NVARCHAR(200)) AS ruta, " +
                         "CAST(r.id_vendedor AS INT) AS id_vendedor, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.tipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
                         "WHERE ISNULL(r.e_eliminado, 0) = 0 " +
@@ -457,6 +497,8 @@ public class CatalogoRepository {
                         "CAST(r.Id_Ruta AS INT) AS idRuta, " +
                         "CAST(r.Id_Ruta AS NVARCHAR(200)) AS ruta, " +
                         "CAST(r.Id_Vendedor AS INT) AS id_vendedor, " +
+                        "LTRIM(RTRIM(ISNULL(CAST(r.TipoGrupo AS NVARCHAR(100)), ''))) AS tipoGrupo, " +
+                        "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(CAST(r.TipoGrupo AS NVARCHAR(100)), '')))) = 'ANTENERO' THEN 'DTH' ELSE 'HFC' END AS tipoTecnologia, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +
                         "WHERE ISNULL(r.E_Eliminado, 0) = 0 " +
@@ -521,7 +563,9 @@ public class CatalogoRepository {
                             "Id_TipoServicio AS idTipoServicio, " +
                             "Nombre AS tipoServicio, " +
                             "Prefijo AS prefijo, " +
-                            "ISNULL(CAST(Nomencladores AS BIT), 0) AS nomencladores " +
+                            "ISNULL(CAST(Nomencladores AS BIT), 0) AS nomencladores, " +
+                            "checkPlantaExterna AS checkPlantaExterna, " +
+                            "habilitarTieneDetalle AS habilitarTieneDetalle " +
                             "FROM dbo.tbl_tiposervicio " +
                             "WHERE ISNULL(E_Eliminado, 0) = 0 " +
                             "ORDER BY Nombre"
@@ -544,12 +588,77 @@ public class CatalogoRepository {
         }
     }
 
+    public List<Map<String, Object>> listarMaterialesAutocarga(Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
+        try {
+            return target.queryForList(
+                    "SELECT " +
+                            "ram.Id_ReglaAutoMaterial AS idReglaAutoMaterial, " +
+                            "ram.TipoRegla AS tipoRegla, " +
+                            "ram.Id_TipoServicio AS idTipoServicio, " +
+                            "ram.TipoTecnologia AS tipoTecnologia, " +
+                            "ram.SufijoNomenclador AS sufijoNomenclador, " +
+                            "ram.Id_Producto AS idProducto, " +
+                            "LTRIM(RTRIM(ISNULL(p.Producto, ''))) AS producto, " +
+                            "ram.Cantidad AS cantidad, " +
+                            "ram.Id_TipoMaterial AS idTipoMaterial, " +
+                            "ISNULL(ram.Activo, 1) AS activo " +
+                            "FROM dbo.tbl_ReglaAutoMaterial ram " +
+                            "LEFT JOIN dbo.tbl_productos p ON p.Id_Producto = ram.Id_Producto " +
+                            "WHERE ISNULL(ram.E_Eliminado, 0) = 0 " +
+                            "AND ISNULL(ram.Activo, 1) = 1 " +
+                            "ORDER BY " +
+                            "CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(ram.TipoRegla, '')))) = 'FIJO' THEN 1 ELSE 0 END, " +
+                            "ram.Id_ReglaAutoMaterial"
+            );
+        } catch (DataAccessException ex) {
+            return Collections.emptyList();
+        }
+    }
+
     public List<Map<String, Object>> listarEstados() {
         return listarEstados(null);
     }
 
     public List<Map<String, Object>> listarEstados(Integer idSucursal) {
         return template(idSucursal).queryForList("EXEC sp_ObtenerEstado");
+    }
+
+    public List<Map<String, Object>> listarRamales(Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
+        String[] statements = new String[] {
+                "SELECT DISTINCT " +
+                        "CAST(Id_Ramal AS INT) AS idRamal, " +
+                        "LTRIM(RTRIM(CAST(Ramal AS NVARCHAR(100)))) AS ramal " +
+                        "FROM dbo.tbl_ramal " +
+                        "WHERE ISNULL(E_Eliminado, 0) = 0 " +
+                        "ORDER BY ramal",
+                "SELECT DISTINCT " +
+                        "CAST(id_ramal AS INT) AS idRamal, " +
+                        "LTRIM(RTRIM(CAST(ramal AS NVARCHAR(100)))) AS ramal " +
+                        "FROM dbo.tbl_ramal " +
+                        "WHERE ISNULL(e_eliminado, 0) = 0 " +
+                        "ORDER BY ramal",
+                "SELECT DISTINCT " +
+                        "LTRIM(RTRIM(CAST(Ramal AS NVARCHAR(100)))) AS ramal " +
+                        "FROM dbo.tbl_ramal " +
+                        "ORDER BY ramal",
+                "SELECT DISTINCT " +
+                        "LTRIM(RTRIM(CAST(ramal AS NVARCHAR(100)))) AS ramal " +
+                        "FROM dbo.tbl_ramal " +
+                        "ORDER BY ramal"
+        };
+        for (String sql : statements) {
+            try {
+                List<Map<String, Object>> rows = target.queryForList(sql);
+                if (rows != null && !rows.isEmpty()) {
+                    return rows;
+                }
+            } catch (DataAccessException ex) {
+                // siguiente variante
+            }
+        }
+        return Collections.emptyList();
     }
 
     public List<Map<String, Object>> listarTipoMaterial(Integer idTipoServicio) {

@@ -79,29 +79,34 @@ public class ListaOtService {
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (Map<String, Object> row : rows) {
-            boolean manualRow = isManualRow(row);
-            boolean tieneTecnicoEnFila = hasTecnicoValue(row);
-            if (filtrarTecnico && filtrarVendedor) {
-                boolean coincideTecnico = matchTecnico(row, tecnicoNorm, tecnicoExacto);
-                boolean coincideVendedor = matchIdVendedor(row, idsVendedorNorm);
-                if (manualRow) {
-                    if (!coincideVendedor && !(filtrarUsuario && matchIdUsuario(row, idUsuario))) {
-                        continue;
-                    }
-                } else if (!coincideTecnico && tieneTecnicoEnFila) {
+            if (filtrarUsuario) {
+                boolean coincideUsuario = matchIdUsuario(row, idUsuario);
+                boolean coincideVendedor = filtrarVendedor && matchIdVendedor(row, idsVendedorNorm);
+                boolean coincideTecnico = filtrarTecnico && matchTecnico(row, tecnicoNorm, tecnicoExacto);
+                if (!coincideUsuario && !coincideVendedor && !coincideTecnico) {
                     continue;
                 }
-            } else if (filtrarTecnico && !matchTecnico(row, tecnicoNorm, tecnicoExacto)) {
-                if (manualRow) {
-                    if (!(filtrarUsuario && matchIdUsuario(row, idUsuario))) {
+            } else {
+                boolean manualRow = isManualRow(row);
+                boolean tieneTecnicoEnFila = hasTecnicoValue(row);
+                if (filtrarTecnico && filtrarVendedor) {
+                    boolean coincideTecnico = matchTecnico(row, tecnicoNorm, tecnicoExacto);
+                    boolean coincideVendedor = matchIdVendedor(row, idsVendedorNorm);
+                    if (manualRow) {
+                        if (!coincideVendedor) {
+                            continue;
+                        }
+                    } else if (!coincideTecnico && tieneTecnicoEnFila) {
                         continue;
                     }
-                } else if (tieneTecnicoEnFila) {
-                    continue;
-                }
-            } else if (filtrarVendedor && !matchIdVendedor(row, idsVendedorNorm)) {
-                if (manualRow) {
-                    continue;
+                } else if (filtrarTecnico && !matchTecnico(row, tecnicoNorm, tecnicoExacto)) {
+                    if (!manualRow && tieneTecnicoEnFila) {
+                        continue;
+                    }
+                } else if (filtrarVendedor && !matchIdVendedor(row, idsVendedorNorm)) {
+                    if (manualRow) {
+                        continue;
+                    }
                 }
             }
             if (filtrarEstado && !matchEstado(row, estadosNorm)) {
@@ -111,7 +116,7 @@ public class ListaOtService {
         }
         // Fallback defensivo: algunos SP devuelven columnas/aliases distintos para tecnico
         // y el filtro posterior puede vaciar el listado aun cuando el SP retorno filas.
-        if (result.isEmpty() && filtrarTecnico && tecnicoExacto && rowsSp != null && !rowsSp.isEmpty()) {
+        if (result.isEmpty() && !filtrarUsuario && filtrarTecnico && tecnicoExacto && rowsSp != null && !rowsSp.isEmpty()) {
             return rowsSp;
         }
         return result;

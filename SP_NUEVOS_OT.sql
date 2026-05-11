@@ -7,6 +7,74 @@ BEGIN
 END
 GO
 
+-- SP para listar OT finalizadas por fecha y vendedores (versionable por BD)
+IF OBJECT_ID('dbo.spx_ListarOtFinalizadas', 'P') IS NULL
+BEGIN
+    EXEC('CREATE PROC dbo.spx_ListarOtFinalizadas AS SELECT 1 AS placeholder;');
+END
+GO
+
+ALTER PROC dbo.spx_ListarOtFinalizadas
+    @Fecha DATETIME,
+    @IdUsuario INT = NULL,
+    @IdsVendedorCsv NVARCHAR(MAX) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF @Fecha IS NULL
+    BEGIN
+        RAISERROR('Fecha es requerida.', 16, 1);
+        RETURN;
+    END
+
+    DECLARE @Vendedores TABLE (Id_Vendedor INT PRIMARY KEY);
+
+    IF @IdsVendedorCsv IS NOT NULL AND LTRIM(RTRIM(@IdsVendedorCsv)) <> ''
+    BEGIN
+        DECLARE @xml XML;
+        DECLARE @csv NVARCHAR(MAX);
+        SET @csv = REPLACE(LTRIM(RTRIM(@IdsVendedorCsv)), ' ', '');
+        SET @xml = CAST('<x><i>' + REPLACE(@csv, ',', '</i><i>') + '</i></x>' AS XML);
+
+        INSERT INTO @Vendedores (Id_Vendedor)
+        SELECT DISTINCT CAST(T.N.value('.', 'NVARCHAR(50)') AS INT)
+        FROM @xml.nodes('/x/i') AS T(N)
+        WHERE ISNUMERIC(T.N.value('.', 'NVARCHAR(50)')) = 1
+          AND CAST(T.N.value('.', 'NVARCHAR(50)') AS INT) > 0;
+    END
+
+    IF @IdUsuario IS NOT NULL AND @IdUsuario > 0
+       AND NOT EXISTS (SELECT 1 FROM @Vendedores WHERE Id_Vendedor = @IdUsuario)
+    BEGIN
+        INSERT INTO @Vendedores (Id_Vendedor) VALUES (@IdUsuario);
+    END
+
+    SELECT
+        v.Id_Venta AS idVenta,
+        v.OrdenTrabajo AS ordenTrabajo,
+        v.CodigoCliente AS codigoCliente,
+        v.Fecha_Ejecucion AS fechaEjecucion,
+        v.Origen AS origen,
+        v.Id_Vendedor AS idVendedor,
+        v.Id_TipoServicio AS idTipoServicio,
+        ts.Nombre AS tipoServicio,
+        v.Id_Estado AS idEstado,
+        e.Nombre AS estado
+    FROM dbo.tbl_Venta v
+    LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio
+    LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado
+    WHERE ISNULL(v.E_Eliminado, 0) = 0
+      AND CONVERT(DATE, v.Fecha_Ejecucion) = @Fecha
+      AND EXISTS (
+            SELECT 1
+            FROM @Vendedores x
+            WHERE x.Id_Vendedor = v.Id_Vendedor
+      )
+    ORDER BY v.Id_Venta DESC;
+END
+GO
+
 ALTER PROC dbo.spx_RegistrarOrdenTrabajo
     @Id_Usuario INT,
     @Id_Ruta INT,

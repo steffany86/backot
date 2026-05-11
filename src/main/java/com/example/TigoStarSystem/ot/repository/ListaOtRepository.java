@@ -285,6 +285,27 @@ public class ListaOtRepository {
             return Collections.emptyList();
         }
         JdbcTemplate target = template(idSucursal);
+
+        String[] directVendorStatements = new String[] {};
+        for (String sql : directVendorStatements) {
+            try {
+                List<Map<String, Object>> rows = target.queryForList(sql, idUsuario);
+                if (rows == null || rows.isEmpty()) continue;
+                LinkedHashSet<Integer> ids = new LinkedHashSet<>();
+                for (Map<String, Object> row : rows) {
+                    Integer parsed = parsePositiveInt(row.get("id_vendedor"));
+                    if (parsed == null) parsed = parsePositiveInt(row.get("Id_Vendedor"));
+                    if (parsed == null) parsed = parsePositiveInt(row.get("idvendedor"));
+                    if (parsed != null) ids.add(parsed);
+                }
+                if (!ids.isEmpty()) {
+                    return new ArrayList<>(ids);
+                }
+            } catch (DataAccessException ex) {
+                // continuar a siguiente variante
+            }
+        }
+
         String[] statements = new String[] {
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +

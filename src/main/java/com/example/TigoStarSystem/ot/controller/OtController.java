@@ -19,10 +19,12 @@ import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
 import com.example.TigoStarSystem.ot.dto.OtValidarVentaDetalleResponse;
 import com.example.TigoStarSystem.ot.service.OtService;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.validation.Valid;
 import javax.validation.constraints.NotBlank;
@@ -50,7 +52,10 @@ public class OtController {
         return ResponseEntity.ok(ApiResponse.of(filas, "OT actualizada como realizada."));
     }
 
-    @PostMapping({"/spx_RegistrarVentaParaRegistroOTwb", "/venta/registro-otwb"})
+    @PostMapping(
+            value = {"/spx_RegistrarVentaParaRegistroOTwb", "/venta/registro-otwb"},
+            consumes = MediaType.APPLICATION_JSON_VALUE
+    )
     public ResponseEntity<ApiResponse<OtRegistrarVentaResponse>> registrarVentaParaRegistroOtWb(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
             @Valid @RequestBody OtRegistrarVentaRequest request) {
@@ -58,9 +63,22 @@ public class OtController {
         return ResponseEntity.ok(ApiResponse.of(response, "Registro exitoso."));
     }
 
+    @PostMapping(
+            value = {"/spx_RegistrarVentaParaRegistroOTwb", "/venta/registro-otwb"},
+            consumes = MediaType.MULTIPART_FORM_DATA_VALUE
+    )
+    public ResponseEntity<ApiResponse<OtRegistrarVentaResponse>> registrarVentaParaRegistroOtWbMultipart(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @Valid @RequestPart("payload") OtRegistrarVentaRequest request,
+            @RequestPart("pdf") MultipartFile pdf) {
+        OtRegistrarVentaResponse response = otService.registrarVentaParaRegistroOtWb(request, resolveIdSucursal(token), pdf);
+        return ResponseEntity.ok(ApiResponse.of(response, "Registro exitoso."));
+    }
+
     @PostMapping("/detalle-materiales")
     public ResponseEntity<ApiResponse<OtRegistrarDetalleAgendaResponse>> registrarDetalleMateriales(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
             @RequestBody OtRegistrarDetalleAgendaRequest request) {
         OtRegistrarDetalleAgendaResponse response = otService.registrarDetalleAgenda(request, resolveIdSucursal(token));
         return ResponseEntity.ok(ApiResponse.of(response, "Detalle de OT registrado correctamente."));
@@ -69,6 +87,7 @@ public class OtController {
     @PostMapping("/cargo-usuario")
     public ResponseEntity<ApiResponse<Map<String, Object>>> registrarCargoUsuario(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
             @RequestBody OtRegistrarCargoUsuarioRequest request) {
         int filas = otService.registrarCargoUsuario(request, resolveIdSucursal(token));
         Map<String, Object> response = new java.util.LinkedHashMap<>();
@@ -408,6 +427,7 @@ public class OtController {
                 "Debes enviar X-Session-Token o idSucursal para resolver la base de datos de la sucursal."
         );
     }
+
 
     private Integer extractIdSucursal(AuthMeResponse me) {
         if (me == null || me.getUsuario() == null) {
