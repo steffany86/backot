@@ -14,10 +14,12 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class NpsService {
@@ -71,13 +73,49 @@ public class NpsService {
                 rolConsulta,
                 idUsuarioSesion
         );
+        JdbcTemplate sucursalTemplate = resolveSucursalTemplate(sucursalObjetivo);
+        data = filtrarDashboardPorInterseccionTecnicos(
+                centralTemplate,
+                sucursalTemplate,
+                sucursalObjetivo,
+                supervisorObjetivo,
+                data
+        );
+        boolean permitirFallbackFechas =
+                supervisorObjetivo == null
+                && tecnicoObjetivo == null
+                && isBlank(supervisorNombreObjetivo)
+                && isBlank(tecnicoNombreObjetivo);
+        boolean fallbackUltimaFecha = false;
+        if (permitirFallbackFechas && data.isEmpty() && (fechaInicio != null || fechaFin != null)) {
+            data = repository.obtenerDashboard(
+                    centralTemplate,
+                    null,
+                    null,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    tecnicoObjetivo,
+                    supervisorNombreObjetivo,
+                    tecnicoNombreObjetivo,
+                    rolConsulta,
+                    idUsuarioSesion
+            );
+            data = filtrarDashboardPorInterseccionTecnicos(
+                    centralTemplate,
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    data
+            );
+            fallbackUltimaFecha = !data.isEmpty();
+        }
 
         Map<String, Object> out = new LinkedHashMap<String, Object>();
         out.put("scope", rolConsulta);
         out.put("idSucursal", sucursalObjetivo);
         out.put("idSupervisor", supervisorObjetivo);
         out.put("idTecnico", tecnicoObjetivo);
-        out.put("fallbackUltimaFecha", false);
+        out.put("fallbackUltimaFecha", fallbackUltimaFecha);
         out.put("rows", data);
         out.put("filtros", obtenerFiltrosInterno(scope));
         return out;
@@ -133,14 +171,17 @@ public class NpsService {
 
         if (esTecnico) {
             rolConsulta = "TECNICO";
+            // Regla: tecnico logeado manda su propio tecnico/supervisor de sesion, no selector.
             JdbcTemplate sucursalTemplate = resolveSucursalTemplate(sucursalObjetivo);
             List<Integer> idsTecnicoNps = repository.listarIdsTecnicoNpsPorUsuario(sucursalTemplate, idUsuarioSesion);
             tecnicoObjetivo = idsTecnicoNps.isEmpty() ? idUsuarioSesion : idsTecnicoNps.get(0);
             Integer idSupervisorSesion = resolveSupervisorDelTecnico(centralTemplate, sucursalObjetivo, idUsuarioSesion);
             supervisorObjetivo = idSupervisorSesion;
             tecnicoNombre = usuario.getNombre();
+            supervisorNombre = null;
         } else if (esSupervisor) {
             rolConsulta = "SUPERVISOR";
+            // Regla: supervisor logeado manda su propio idSupervisor de sesion, no selector.
             supervisorObjetivo = idUsuarioSesion;
             if (idTecnico != null) {
                 JdbcTemplate sucursalTemplate = resolveSucursalTemplate(sucursalObjetivo);
@@ -149,16 +190,23 @@ public class NpsService {
             } else {
                 tecnicoObjetivo = null;
             }
+            supervisorNombre = null;
         } else {
             rolConsulta = "CENTRAL";
+            // Regla: central/admin toma supervisor y tecnico desde selectores.
         }
 
         Map<String, Object> scope = new LinkedHashMap<String, Object>();
+        String supervisorNombreObjetivo = "CENTRAL".equalsIgnoreCase(rolConsulta) ? trimToNull(supervisorNombre) : null;
+        if (supervisorObjetivo != null) {
+            // Si ya filtramos por idSupervisor, no forzar match por supervisor_1 de NPS.
+            supervisorNombreObjetivo = null;
+        }
         scope.put("idUsuarioSesion", idUsuarioSesion);
         scope.put("idSucursal", sucursalObjetivo);
         scope.put("idSupervisor", supervisorObjetivo);
         scope.put("idTecnico", tecnicoObjetivo);
-        scope.put("supervisorNombre", "CENTRAL".equalsIgnoreCase(rolConsulta) ? trimToNull(supervisorNombre) : null);
+        scope.put("supervisorNombre", supervisorNombreObjetivo);
         scope.put("tecnicoNombre",
                 "TECNICO".equalsIgnoreCase(rolConsulta)
                         ? trimToNull(tecnicoNombre)
@@ -179,7 +227,8 @@ public class NpsService {
         JdbcTemplate centralTemplate = dbConnectionManager.connDb("central");
         String supervisorNombre = (String) scope.get("supervisorNombre");
 
-        List<Map<String, Object>> filtrosSupervisores = repository.listarSupervisoresSucursal(sucursalTemplate, sucursalObjetivo);
+        List<Map<String, Object>> supervisoresConformacion = repository.listarSupervisoresSucursal(sucursalTemplate, sucursalObjetivo);
+        List<Map<String, Object>> filtrosSupervisores = supervisoresConformacion;
         List<Map<String, Object>> filtrosTecnicos;
 
         if ("TECNICO".equalsIgnoreCase(rolConsulta)) {
@@ -257,6 +306,14 @@ public class NpsService {
                 filtrosTecnicos = repository.listarTecnicosPorSupervisor(sucursalTemplate, sucursalObjetivo, 0);
             }
         }
+
+        // Regla solicitada:
+        // 1) Supervisores: siempre todos los existentes en conformacion de cuadrillas.
+        // 2) Tecnicos: solo interseccion entre conformacion de cuadrillas y NPS.
+        filtrosSupervisores = supervisoresConformacion == null ? new ArrayList<Map<String, Object>>() : supervisoresConformacion;
+        List<Map<String, Object>> tecnicosConformacion =
+                repository.listarTecnicosPorSupervisor(sucursalTemplate, sucursalObjetivo, supervisorObjetivo == null ? 0 : supervisorObjetivo);
+        filtrosTecnicos = interseccionTecnicosConNps(centralTemplate, sucursalObjetivo, filtrosTecnicos, tecnicosConformacion);
 
         Map<String, Object> filtros = new HashMap<String, Object>();
         filtros.put("supervisores", filtrosSupervisores);
@@ -351,6 +408,91 @@ public class NpsService {
         addTecnicos(out, seen, actuales);
         addTecnicos(out, seen, historicos);
         return out;
+    }
+
+    private List<Map<String, Object>> interseccionTecnicosConNps(
+            JdbcTemplate centralTemplate,
+            Integer idSucursal,
+            List<Map<String, Object>> candidatos,
+            List<Map<String, Object>> tecnicosConformacion) {
+        List<Map<String, Object>> filtrosNps = repository.listarFiltrosCentralPorNombres(centralTemplate, idSucursal);
+        Set<String> tecnicosNps = new HashSet<String>();
+        for (Map<String, Object> row : filtrosNps) {
+            String tipo = asText(find(row, "tipo"));
+            if (!"TECNICO".equalsIgnoreCase(tipo)) continue;
+            String nombre = asText(find(row, "nombre", "tecnico", "tecnico_nombre"));
+            if (!isBlank(nombre)) tecnicosNps.add(normalizeKey(nombre));
+        }
+
+        Map<String, Map<String, Object>> baseConformacion = new LinkedHashMap<String, Map<String, Object>>();
+        addTecnicos(baseConformacion, tecnicosConformacion);
+
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        Set<String> seen = new HashSet<String>();
+        if (candidatos != null) {
+            for (Map<String, Object> row : candidatos) {
+                String nombre = asText(find(row, "tecnico", "nombre", "tecnico_nombre", "idTecnico", "id_tecnico"));
+                if (isBlank(nombre)) continue;
+                String key = normalizeKey(nombre);
+                if (!tecnicosNps.contains(key)) continue;
+                Map<String, Object> fromConformacion = baseConformacion.get(key);
+                if (fromConformacion == null) continue;
+                if (seen.contains(key)) continue;
+                out.add(fromConformacion);
+                seen.add(key);
+            }
+        }
+
+        // Fallback: si no hubo candidatos, usar toda la interseccion conformacion ∩ NPS
+        if (out.isEmpty()) {
+            for (Map.Entry<String, Map<String, Object>> e : baseConformacion.entrySet()) {
+                if (!tecnicosNps.contains(e.getKey())) continue;
+                out.add(e.getValue());
+            }
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> filtrarDashboardPorInterseccionTecnicos(
+            JdbcTemplate centralTemplate,
+            JdbcTemplate sucursalTemplate,
+            Integer idSucursal,
+            Integer idSupervisor,
+            List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) return rows == null ? new ArrayList<Map<String, Object>>() : rows;
+        List<Map<String, Object>> tecnicosConformacion =
+                repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, idSupervisor == null ? 0 : idSupervisor);
+        List<Map<String, Object>> interseccion =
+                interseccionTecnicosConNps(centralTemplate, idSucursal, tecnicosConformacion, tecnicosConformacion);
+        Set<String> allowed = new HashSet<String>();
+        for (Map<String, Object> t : interseccion) {
+            String nombre = asText(find(t, "tecnico", "nombre", "tecnico_nombre", "idTecnico", "id_tecnico"));
+            if (!isBlank(nombre)) allowed.add(normalizeKey(nombre));
+        }
+        if (allowed.isEmpty()) return new ArrayList<Map<String, Object>>();
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> row : rows) {
+            String tecnico = asText(find(row, "tecnico_nombre", "tecnico", "nombre"));
+            if (allowed.contains(normalizeKey(tecnico))) out.add(row);
+        }
+        return out;
+    }
+
+    private void addTecnicos(Map<String, Map<String, Object>> out, List<Map<String, Object>> source) {
+        if (source == null) return;
+        for (Map<String, Object> row : source) {
+            Object idObj = find(row, "idTecnico", "id_tecnico");
+            String nombre = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
+            if (isBlank(nombre)) nombre = asText(idObj);
+            if (isBlank(nombre)) continue;
+            String key = normalizeKey(nombre);
+            if (out.containsKey(key)) continue;
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            if (idObj != null && !isBlank(asText(idObj))) item.put("idTecnico", idObj);
+            else item.put("idTecnico", nombre);
+            item.put("tecnico", nombre);
+            out.put(key, item);
+        }
     }
 
     private void addTecnicos(
