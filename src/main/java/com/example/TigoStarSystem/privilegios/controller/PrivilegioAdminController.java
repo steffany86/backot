@@ -3,6 +3,10 @@ package com.example.TigoStarSystem.privilegios.controller;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.privilegios.dto.PrivilegioActualizarRequest;
+import com.example.TigoStarSystem.privilegios.dto.PrivilegioMenuPaginasActualizarRequest;
+import com.example.TigoStarSystem.privilegios.dto.PrivilegioMenuPaginasResponse;
+import com.example.TigoStarSystem.privilegios.dto.PrivilegioMenuSidebarNombreActualizarRequest;
+import com.example.TigoStarSystem.privilegios.dto.PrivilegioMenuSidebarNombreResponse;
 import com.example.TigoStarSystem.privilegios.dto.PrivilegioRolDetalleResponse;
 import com.example.TigoStarSystem.privilegios.dto.PrivilegioRolResponse;
 import com.example.TigoStarSystem.privilegios.service.PrivilegioService;
@@ -72,6 +76,30 @@ public class PrivilegioAdminController {
         return ResponseEntity.ok(ApiResponse.of(
                 privilegioService.aplicarPresetSupervisorCuadrillas(idRol),
                 "Preset de Supervisor Cuadrillas aplicado."
+        ));
+    }
+
+    @PutMapping("/menus/{idMenu}/paginas")
+    public ResponseEntity<ApiResponse<PrivilegioMenuPaginasResponse>> actualizarPaginasPorMenu(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idMenu") Integer idMenu,
+            @Valid @RequestBody PrivilegioMenuPaginasActualizarRequest request) {
+        authService.requireAdmin(token);
+        return ResponseEntity.ok(ApiResponse.of(
+                privilegioService.actualizarPaginasPorMenu(idMenu, request.getPaginasAsociadas()),
+                "Paginas asociadas actualizadas."
+        ));
+    }
+
+    @PutMapping("/menus/{idMenu}/sidebar-nombre")
+    public ResponseEntity<ApiResponse<PrivilegioMenuSidebarNombreResponse>> actualizarNombreSidebarPorMenu(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idMenu") Integer idMenu,
+            @RequestBody PrivilegioMenuSidebarNombreActualizarRequest request) {
+        authService.requireAdmin(token);
+        return ResponseEntity.ok(ApiResponse.of(
+                privilegioService.actualizarNombreSidebarPorMenu(idMenu, request == null ? null : request.getNombreSidebar()),
+                "Nombre de sidebar actualizado."
         ));
     }
 }

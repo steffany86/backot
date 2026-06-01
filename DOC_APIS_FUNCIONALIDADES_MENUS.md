@@ -82,6 +82,8 @@ Nota:
 - `GET /ot/{id}/retirados`
 - `GET /ot/{id}/excedentes`
 - `GET /ot/{id}/cargo-usuario`
+- `GET /ot/spx_ObtenerSaldoRuta?idRuta=...&fecha=YYYY-MM-DD`
+- `GET /ot/saldo-ruta?idRuta=...&fecha=YYYY-MM-DD`
 - `PUT /ot/{id}/datos`
 - `PUT /ot/{id}/fecha`
 - `DELETE /ot/{id}?modo=con_cu|solo_cu&usuario=...`

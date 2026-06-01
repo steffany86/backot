@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$jdk8 = "C:\\Program Files\\Java\\jdk-1.8"
+$jdk8 = "C:\Program Files\Java\jdk-1.8"
 $override = (Resolve-Path (Join-Path $root "config\\java.security.override")).Path
 
 if (-not (Test-Path $jdk8)) {

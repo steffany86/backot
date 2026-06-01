@@ -8,6 +8,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class DbConnectionManager {
@@ -19,6 +21,7 @@ public class DbConnectionManager {
     private final String sucreUsername;
     private final String sucrePassword;
     private volatile JdbcTemplate sucreJdbcTemplate;
+    private final Map<String, JdbcTemplate> dynamicJdbcTemplates = new ConcurrentHashMap<>();
 
     public DbConnectionManager(
             JdbcTemplate operativaJdbcTemplate,
@@ -69,7 +72,20 @@ public class DbConnectionManager {
                     "ConnDb(" + nombreDb + ") requiere username y password."
             );
         }
-        return crearJdbcTemplate(jdbcUrl.trim(), username.trim(), password.trim(), "ConnDb-" + safePoolKey(nombreDb));
+        String normalizedUrl = jdbcUrl.trim();
+        String normalizedUsername = username.trim();
+        String normalizedPassword = password.trim();
+        String poolKey = safePoolKey(nombreDb);
+        String cacheKey = normalize(poolKey) + "|" + normalizeJdbcUrlForCache(normalizedUrl) + "|" + normalizedUsername.toLowerCase(Locale.ROOT);
+        return dynamicJdbcTemplates.computeIfAbsent(
+                cacheKey,
+                key -> crearJdbcTemplate(
+                        normalizedUrl,
+                        normalizedUsername,
+                        normalizedPassword,
+                        "ConnDb-" + poolKey
+                )
+        );
     }
 
     private JdbcTemplate connDbSucre() {
@@ -144,5 +160,9 @@ public class DbConnectionManager {
             return "Custom";
         }
         return value.trim().replaceAll("[^A-Za-z0-9_\\-]", "_");
+    }
+
+    private String normalizeJdbcUrlForCache(String jdbcUrl) {
+        return jdbcUrl == null ? "" : jdbcUrl.trim().toLowerCase(Locale.ROOT);
     }
 }

@@ -1,10 +1,13 @@
 package com.example.TigoStarSystem.ot.repository;
 
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
+import com.example.TigoStarSystem.common.ApiException;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.text.Normalizer;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -13,11 +16,9 @@ final class OtDbSupport {
     private final SucursalRepository sucursalRepository;
     private final String dbDriver;
     private final String dbParams;
-    private final String sucreHost;
-    private final String sucreDatabase;
-    private final String sucreUsername;
-    private final String sucrePassword;
-    private final JdbcTemplate sucreJdbcTemplate;
+    private final String dbUsername;
+    private final String dbPassword;
+    private final Map<Integer, JdbcTemplate> templatesBySucursal = new LinkedHashMap<>();
 
     OtDbSupport(
             SucursalRepository sucursalRepository,
@@ -32,38 +33,47 @@ final class OtDbSupport {
         this.sucursalRepository = sucursalRepository;
         this.dbDriver = dbDriver;
         this.dbParams = dbParams;
-
-        String mainHost = parseHostFromJdbcUrl(mainDatasourceUrl);
-        String parsedSucreHost = parseHostFromJdbcUrl(sucreDatasourceUrl);
-        String parsedSucreDatabase = parseDatabaseFromJdbcUrl(sucreDatasourceUrl);
-
-        this.sucreHost = firstNonBlank(parsedSucreHost, mainHost);
-        this.sucreDatabase = firstNonBlank(parsedSucreDatabase, sucreDatabase);
-        this.sucreUsername = sucreUsername;
-        this.sucrePassword = sucrePassword;
-        this.sucreJdbcTemplate = crearJdbcTemplateSucre();
+        this.dbUsername = firstNonBlank(sucreUsername, "sistemas");
+        this.dbPassword = firstNonBlank(sucrePassword, "sametsis");
     }
 
     JdbcTemplate resolveTemplate(Integer idSucursal, JdbcTemplate defaultJdbcTemplate) {
-        if (idSucursal == null || defaultJdbcTemplate == null) {
-            return defaultJdbcTemplate;
+        if (idSucursal == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "idSucursal es requerido para resolver la base de datos."
+            );
         }
-        if (isSucreSucursal(idSucursal) && sucreJdbcTemplate != null) {
-            return sucreJdbcTemplate;
+        SucursalDbInfo info = resolverSucursalDbInfo(idSucursal);
+        if (info == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "SUCURSAL_DB_NOT_RESOLVED",
+                    "No se pudo resolver la conexion de la sucursal seleccionada."
+            );
         }
-        return defaultJdbcTemplate;
+        synchronized (templatesBySucursal) {
+            JdbcTemplate template = templatesBySucursal.get(idSucursal);
+            if (template != null) {
+                return template;
+            }
+            template = crearJdbcTemplate(info.host, info.baseDeDatos, dbUsername, dbPassword);
+            templatesBySucursal.put(idSucursal, template);
+            return template;
+        }
     }
 
-    private JdbcTemplate crearJdbcTemplateSucre() {
-        if (isBlank(sucreHost) || isBlank(sucreDatabase) || isBlank(sucreUsername) || isBlank(sucrePassword)) {
+    private JdbcTemplate crearJdbcTemplate(String host, String database, String username, String password) {
+        if (isBlank(host) || isBlank(database) || isBlank(username) || isBlank(password)) {
             return null;
         }
 
         String url;
         if (dbDriver != null && dbDriver.toLowerCase(Locale.ROOT).contains("jtds")) {
-            url = "jdbc:jtds:sqlserver://" + sucreHost + "/" + sucreDatabase;
+            url = "jdbc:jtds:sqlserver://" + host + "/" + database;
         } else {
-            url = "jdbc:sqlserver://" + sucreHost + ";databaseName=" + sucreDatabase;
+            url = "jdbc:sqlserver://" + host + ";databaseName=" + database;
         }
         if (!isBlank(dbParams)) {
             url = url + (dbParams.startsWith(";") ? dbParams : ";" + dbParams);
@@ -72,28 +82,34 @@ final class OtDbSupport {
         DriverManagerDataSource dataSource = new DriverManagerDataSource();
         dataSource.setDriverClassName(dbDriver);
         dataSource.setUrl(url);
-        dataSource.setUsername(sucreUsername);
-        dataSource.setPassword(sucrePassword);
+        dataSource.setUsername(username);
+        dataSource.setPassword(password);
         return new JdbcTemplate(dataSource);
     }
 
 
 
 
-    private boolean isSucreSucursal(Integer idSucursal) {
+    private SucursalDbInfo resolverSucursalDbInfo(Integer idSucursal) {
         List<Map<String, Object>> rows = sucursalRepository.obtenerSucursales();
         if (rows == null || rows.isEmpty()) {
-            return false;
+            return null;
         }
         for (Map<String, Object> row : rows) {
             Integer id = asInteger(firstNonNull(row, "idsucursal", "id_sucursal", "Id_Sucursal"));
             if (id == null || !id.equals(idSucursal)) {
                 continue;
             }
-            String sucursal = asString(firstNonNull(row, "sucursal", "Sucursal"));
-            return normalizeText(sucursal).contains("sucre");
+            String ip = asString(firstNonNull(row, "ip", "IP"));
+            String ip2 = asString(firstNonNull(row, "ip2", "IP2"));
+            String host = firstNonBlank(ip, ip2);
+            String baseDeDatos = asString(firstNonNull(row, "basededatos", "base_de_datos", "BaseDeDatos"));
+            if (isBlank(host) || isBlank(baseDeDatos)) {
+                return null;
+            }
+            return new SucursalDbInfo(host.trim(), baseDeDatos.trim());
         }
-        return false;
+        return null;
     }
 
     private Object firstNonNull(Map<String, Object> row, String... keys) {
@@ -209,5 +225,15 @@ final class OtDbSupport {
         int end = afterSlash.indexOf(';');
         String db = (end >= 0 ? afterSlash.substring(0, end) : afterSlash).trim();
         return db.isEmpty() ? null : db;
+    }
+
+    private static final class SucursalDbInfo {
+        private final String host;
+        private final String baseDeDatos;
+
+        private SucursalDbInfo(String host, String baseDeDatos) {
+            this.host = host;
+            this.baseDeDatos = baseDeDatos;
+        }
     }
 }

@@ -90,6 +90,18 @@ public class ConformacionCuadrillaWebController {
         ));
     }
 
+    @GetMapping({"/catalogos/salesforce", "/catalogos/sales-force"})
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarSalesforce(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "sucursal", required = false) String sucursal) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarSalesforce(q, limit, sucursal, token),
+                "Listado de salesforce para conformacion cuadrilla web."
+        ));
+    }
+
     @GetMapping({"/catalogos/actividades", "/catalogos/actividad"})
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarActividades(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

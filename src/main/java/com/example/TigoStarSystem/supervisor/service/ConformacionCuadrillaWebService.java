@@ -4,6 +4,7 @@ import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
 import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
+import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRowRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaWebRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaWebResponse;
@@ -14,9 +15,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class ConformacionCuadrillaWebService {
@@ -25,6 +28,7 @@ public class ConformacionCuadrillaWebService {
     private final ConformacionCuadrillaMailService mailService;
     private final ConformacionCuadrillaRequestValidator validator;
     private final AuthService authService;
+    private final ConformacionCuadrillaRowMapper rowMapper;
 
     /**
      * Inicializa el servicio web de conformacion de cuadrilla.
@@ -39,6 +43,7 @@ public class ConformacionCuadrillaWebService {
         this.mailService = mailService;
         this.authService = authService;
         this.validator = new ConformacionCuadrillaRequestValidator();
+        this.rowMapper = new ConformacionCuadrillaRowMapper();
     }
 
     /**
@@ -64,8 +69,13 @@ public class ConformacionCuadrillaWebService {
         }
 
         LocalDate fechaSalida = fecha == null ? LocalDate.now() : fecha;
+        Map<Integer, Map<String, Object>> relacionesByRuta = indexRelacionesByRuta(sucursalResuelta);
+        Map<Integer, Map<String, Object>> tecnicoDetalleCache = new java.util.HashMap<>();
         for (Map<String, Object> row : rows) {
-            out.add(mapRutaRowToWebResponse(row, sucursalResuelta, fechaSalida));
+            ConformacionCuadrillaWebResponse mapped = mapRutaRowToWebResponse(row, sucursalResuelta, fechaSalida);
+            completarRelacionRuta(mapped, relacionesByRuta);
+            completarTecnicoFaltante(mapped, sucursalResuelta, tecnicoDetalleCache);
+            out.add(mapped);
         }
         if (limite == null || limite <= 0 || out.size() <= limite) {
             return out;
@@ -96,6 +106,20 @@ public class ConformacionCuadrillaWebService {
     public ConformacionCuadrillaWebResponse crear(ConformacionCuadrillaWebRequest request, String token) {
         completarContextoSesion(request, token);
         validator.validarWeb(request);
+        validarAuxiliarNoPuedeSerTecnicoActivo(
+                request.getIdTecnicoAuxiliar(),
+                request.getIdTecnico(),
+                request.getFecha(),
+                request.getSucursal(),
+                null
+        );
+        validarTecnicoNoDuplicado(
+                request.getTecnico(),
+                request.getFecha(),
+                request.getSucursal(),
+                null,
+                "Registro"
+        );
         Long id = repository.crear(request);
         if (id == null) {
             throw new ApiException(
@@ -117,6 +141,20 @@ public class ConformacionCuadrillaWebService {
         validarId(id);
         completarContextoSesion(request, token);
         validator.validarWeb(request);
+        validarAuxiliarNoPuedeSerTecnicoActivo(
+                request.getIdTecnicoAuxiliar(),
+                request.getIdTecnico(),
+                request.getFecha(),
+                request.getSucursal(),
+                id
+        );
+        validarTecnicoNoDuplicado(
+                request.getTecnico(),
+                request.getFecha(),
+                request.getSucursal(),
+                id,
+                "Registro"
+        );
         int affected = repository.actualizar(id, request);
         if (affected == 0) {
             int affectedBackoffice = backofficeRepository.actualizarFila(id, mapToBackOfficeRow(request));
@@ -249,6 +287,27 @@ public class ConformacionCuadrillaWebService {
     }
 
     /**
+     * Lista catalogo Salesforce/Cuenta SF desde tbl_SalesForce segun sucursal resuelta.
+     */
+    public List<Map<String, Object>> listarSalesforce(String q, Integer limit, String sucursal, String token) {
+        String sucursalResuelta = resolveSucursalNombre(sucursal, token);
+        List<Map<String, Object>> items = rowMapper.deduplicarPorPrimerCampoNoNulo(
+                backofficeRepository.listarSalesforce(sucursalResuelta),
+                "salesforce",
+                "SalesForce"
+        );
+        return rowMapper.filtrarPorTextoYLimite(
+                items,
+                q,
+                limit,
+                "salesforce",
+                "cuenta_sf",
+                "cuentasf",
+                "cuentaSf"
+        );
+    }
+
+    /**
      * Lista actividades disponibles en la sucursal resuelta.
      */
     public List<Map<String, Object>> listarActividades(String sucursal, String token) {
@@ -317,7 +376,7 @@ public class ConformacionCuadrillaWebService {
         out.setAuxiliar(in.getAuxiliar());
         out.setIdUsuarioSupervisor(in.getIdUsuarioSupervisor());
         out.setSupervisorACargo(in.getSupervisorACargo());
-        out.setSucursal(in.getSucursal());
+        out.setSucursal(SucursalCanonicalizer.canonicalize(in.getSucursal()));
         out.setObservacion(in.getObservacion());
         out.setIdUsuarioRegistra(in.getIdUsuarioRegistra());
         return out;
@@ -345,14 +404,159 @@ public class ConformacionCuadrillaWebService {
         ConformacionCuadrillaWebResponse out = new ConformacionCuadrillaWebResponse();
         out.setId(toLong(readValue(row, "id", "id_ruta", "idruta", "Id_Ruta")));
         out.setFecha(fecha);
+        out.setActividad(resolverActividadDesdeRuta(row));
         out.setIdTecnico(toInteger(readValue(row, "id_tecnico", "idtecnico", "id_vendedor", "Id_Vendedor")));
         out.setTecnico(toString(readValue(row, "tecnico", "nombrevendedor", "vendedor", "nombre")));
         out.setGrupo(toString(readValue(row, "grupo", "cuadrilla", "ruta", "nombre", "Nombre")));
         out.setVehiculo(toString(readValue(row, "vehiculo", "Vehiculo", "placa", "placaVehiculo")));
         out.setAlmacen(toString(readValue(row, "almacen", "almacen_tigo", "almacenTigo", "BodegaTigo")));
         out.setGrupoDigitacion(toString(readValue(row, "grupoDigitacion", "grupodigitacion")));
-        out.setSucursal(isBlank(sucursal) ? toString(readValue(row, "sucursal", "Sucursal")) : sucursal);
+        out.setSucursal(SucursalCanonicalizer.canonicalize(
+                isBlank(sucursal) ? toString(readValue(row, "sucursal", "Sucursal")) : sucursal
+        ));
         out.setEEliminado(toBoolean(readValue(row, "e_eliminado", "eeliminado", "eliminado", "E_Eliminado")));
+        return out;
+    }
+
+    /**
+     * Completa datos de tecnico cuando el listado de rutas no trae nombre/cuenta/salesforce.
+     */
+    private void completarTecnicoFaltante(
+            ConformacionCuadrillaWebResponse out,
+            String sucursal,
+            Map<Integer, Map<String, Object>> tecnicoDetalleCache) {
+        if (out == null || out.getIdTecnico() == null || out.getIdTecnico() <= 0) {
+            return;
+        }
+        boolean requiereDetalleTecnico = isBlank(out.getTecnico())
+                || isBlank(out.getSalesforce())
+                || isBlank(out.getCuentaSf())
+                || isBlank(out.getHabilidad())
+                || isBlank(out.getVehiculo())
+                || (out.getIdTecnicoAuxiliar() == null || out.getIdTecnicoAuxiliar() <= 0)
+                || isBlank(out.getAuxiliar())
+                || (out.getIdUsuarioDigitador() == null || out.getIdUsuarioDigitador() <= 0)
+                || isBlank(out.getDigitador());
+        if (!requiereDetalleTecnico) {
+            return;
+        }
+
+        Integer idTecnico = out.getIdTecnico();
+        Map<String, Object> detalle = tecnicoDetalleCache.get(idTecnico);
+        if (detalle == null) {
+            List<Map<String, Object>> rows = repository.obtenerTecnicoDetalle(idTecnico, sucursal);
+            if (rows != null && !rows.isEmpty()) {
+                detalle = rows.get(0);
+            } else {
+                detalle = java.util.Collections.emptyMap();
+            }
+            tecnicoDetalleCache.put(idTecnico, detalle);
+        }
+        if (detalle.isEmpty()) {
+            return;
+        }
+
+        if (isBlank(out.getTecnico())) {
+            out.setTecnico(toString(readValue(detalle, "tecnico", "nombrevendedor", "vendedor", "nombre")));
+        }
+        if (isBlank(out.getSalesforce())) {
+            out.setSalesforce(toString(readValue(
+                    detalle,
+                    "salesforce",
+                    "SalesForce",
+                    "nombreSalesforce",
+                    "nombre_salesforce"
+            )));
+        }
+        if (isBlank(out.getCuentaSf())) {
+            out.setCuentaSf(toString(readValue(detalle, "cuentaSf", "cuenta_sf", "cuentasf", "CuentaSF")));
+        }
+        if (isBlank(out.getHabilidad())) {
+            out.setHabilidad(toString(readValue(detalle, "habilidad", "Habilidad", "tipohabilidad")));
+        }
+        if (isBlank(out.getVehiculo())) {
+            out.setVehiculo(toString(readValue(detalle, "vehiculo", "Vehiculo", "placa", "placavehiculo", "placaVehiculo")));
+        }
+        if (out.getIdTecnicoAuxiliar() == null || out.getIdTecnicoAuxiliar() <= 0) {
+            Object idAux = readValue(
+                    detalle,
+                    "idTecnicoAuxiliar",
+                    "id_tecnico_auxiliar",
+                    "idtecnicoauxiliar",
+                    "idtecnicoAuxiliar",
+                    "id_tecnicoAuxiliar"
+            );
+            if (idAux == null) idAux = detalle.get("idtecnicoAuxiliar");
+            if (idAux == null) idAux = detalle.get("idTecnicoAuxiliar");
+            if (idAux == null) idAux = detalle.get("id_tecnico_auxiliar");
+            out.setIdTecnicoAuxiliar(toInteger(idAux));
+        }
+        if (isBlank(out.getAuxiliar())) {
+            Object aux = readValue(detalle, "auxiliar", "tecnicoauxiliar", "nombreauxiliar");
+            if (aux == null) aux = detalle.get("auxiliar");
+            out.setAuxiliar(toString(aux));
+        }
+        if (out.getIdUsuarioDigitador() == null || out.getIdUsuarioDigitador() <= 0) {
+            out.setIdUsuarioDigitador(toInteger(readValue(
+                    detalle,
+                    "idUsuarioDigitador",
+                    "id_usuario_digitador",
+                    "idusuariodigitador",
+                    "id_usuariodigitador"
+            )));
+        }
+        if (isBlank(out.getDigitador())) {
+            out.setDigitador(toString(readValue(
+                    detalle,
+                    "digitador",
+                    "nombreDigitador",
+                    "nombredigitador",
+                    "usuariodigitador"
+            )));
+        }
+    }
+
+    /**
+     * Completa auxiliar/digitador desde la relacion guardada por ruta.
+     */
+    private void completarRelacionRuta(
+            ConformacionCuadrillaWebResponse out,
+            Map<Integer, Map<String, Object>> relacionesByRuta) {
+        if (out == null || out.getId() == null || relacionesByRuta == null || relacionesByRuta.isEmpty()) {
+            return;
+        }
+        Integer idRuta = out.getId().intValue();
+        Map<String, Object> relacion = relacionesByRuta.get(idRuta);
+        if (relacion == null || relacion.isEmpty()) {
+            return;
+        }
+        if (out.getIdTecnicoAuxiliar() == null) {
+            out.setIdTecnicoAuxiliar(toInteger(readValue(relacion, "id_tecnico_auxiliar", "idtecnicoauxiliar", "idTecnicoAuxiliar")));
+        }
+        if (isBlank(out.getAuxiliar())) {
+            out.setAuxiliar(toString(readValue(relacion, "auxiliar", "tecnicoauxiliar", "nombreauxiliar")));
+        }
+        if (out.getIdUsuarioDigitador() == null) {
+            out.setIdUsuarioDigitador(toInteger(readValue(relacion, "id_usuario_digitador", "idusuariodigitador", "idUsuarioDigitador")));
+        }
+        if (isBlank(out.getDigitador())) {
+            out.setDigitador(toString(readValue(relacion, "digitador", "nombreDigitador", "usuariodigitador")));
+        }
+    }
+
+    private Map<Integer, Map<String, Object>> indexRelacionesByRuta(String sucursal) {
+        Map<Integer, Map<String, Object>> out = new java.util.HashMap<>();
+        List<Map<String, Object>> rows = backofficeRepository.listarRelacionesCuadrilla(sucursal);
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> row : rows) {
+            Integer idRuta = toInteger(readValue(row, "id_ruta", "idruta", "idRuta", "Id_Ruta"));
+            if (idRuta == null || out.containsKey(idRuta)) {
+                continue;
+            }
+            out.put(idRuta, row);
+        }
         return out;
     }
 
@@ -369,6 +573,28 @@ public class ConformacionCuadrillaWebService {
             }
         }
         return null;
+    }
+
+    private String resolverActividadDesdeRuta(Map<String, Object> row) {
+        String actividad = toUpperTrim(readValue(row, "actividad", "tipoactividad", "tipo"));
+        if ("BACKUP".equals(actividad)) {
+            return "BACKUP";
+        }
+        if ("TITULAR".equals(actividad)) {
+            return "TITULAR";
+        }
+        return "TITULAR";
+    }
+
+    private String toUpperTrim(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+        return text.toUpperCase(Locale.ROOT);
     }
 
     private String normalizeKey(String key) {
@@ -431,11 +657,115 @@ public class ConformacionCuadrillaWebService {
     }
 
     /**
+     * Bloquea asignar como auxiliar a una persona que ya es tecnico activo.
+     */
+    private void validarAuxiliarNoPuedeSerTecnicoActivo(
+            Integer idTecnicoAuxiliar,
+            Integer idTecnicoRequest,
+            LocalDate fecha,
+            String sucursal,
+            Long idExcluir) {
+        if (idTecnicoAuxiliar == null) {
+            return;
+        }
+        Set<Integer> idsTecnicos = obtenerIdsTecnicosActivos(resolverFecha(fecha), sucursal, idExcluir);
+        if (idTecnicoRequest != null) {
+            idsTecnicos.add(idTecnicoRequest);
+        }
+        if (idsTecnicos.contains(idTecnicoAuxiliar)) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "El auxiliar seleccionado corresponde a un tecnico activo y no puede asignarse como auxiliar."
+            );
+        }
+    }
+
+    /**
+     * Lee ids de tecnicos activos del dia/sucursal desde BD central.
+     */
+    private Set<Integer> obtenerIdsTecnicosActivos(LocalDate fecha, String sucursal, Long idExcluir) {
+        Set<Integer> idsTecnicos = new HashSet<>();
+        List<Map<String, Object>> rows = backofficeRepository.listarConEliminadosCentral(fecha, sucursal, null, null);
+        if (rows == null || rows.isEmpty()) {
+            return idsTecnicos;
+        }
+        for (Map<String, Object> row : rows) {
+            if (rowMapper.isEliminado(row)) {
+                continue;
+            }
+            Long idRegistro = toLong(readValue(row, "id", "Id"));
+            if (idExcluir != null && idRegistro != null && idExcluir.equals(idRegistro)) {
+                continue;
+            }
+            Integer idTecnico = toInteger(readValue(row, "idTecnico", "id_tecnico", "idtecnico", "id_vendedor", "idvendedor"));
+            if (idTecnico != null) {
+                idsTecnicos.add(idTecnico);
+            }
+        }
+        return idsTecnicos;
+    }
+
+    /**
+     * Bloquea Salesforce repetido ya persistido en tbl_ConformacionCuadrillaDiario.
+     */
+    private void validarTecnicoNoDuplicado(
+            String tecnico,
+            LocalDate fecha,
+            String sucursal,
+            Long idExcluir,
+            String errorPrefix) {
+        String tecnicoValue = toString(tecnico);
+        if (isBlank(tecnicoValue)) {
+            return;
+        }
+        String tecnicoTrimmed = tecnicoValue.trim();
+        if (tecnicoTrimmed.isEmpty()) {
+            return;
+        }
+
+        Map<String, Object> existente = backofficeRepository.buscarRegistroActivoPorTecnicoEnContexto(
+                resolverFecha(fecha),
+                sucursal,
+                tecnicoTrimmed,
+                idExcluir
+        );
+        if (existente == null || existente.isEmpty()) {
+            return;
+        }
+
+        Long idRegistro = toLong(readValue(existente, "id", "Id"));
+        String tecnicoExistente = toString(readValue(existente, "tecnico", "nombrevendedor", "vendedor", "nombre"));
+        StringBuilder detalle = new StringBuilder();
+        if (!isBlank(tecnicoExistente)) {
+            detalle.append(" | Tecnico: ").append(tecnicoExistente.trim());
+        }
+        if (idRegistro != null) {
+            detalle.append(" | ID registro: ").append(idRegistro);
+        }
+
+        throw new ApiException(
+                HttpStatus.BAD_REQUEST,
+                "VALIDATION_ERROR",
+                errorPrefix + ": el tecnico '" + tecnicoTrimmed
+                        + "' ya esta registrado en tbl_ConformacionCuadrillaDiario para la fecha."
+                        + detalle + "."
+        );
+    }
+
+    /**
+     * Usa fecha actual cuando no se envia fecha en request.
+     */
+    private LocalDate resolverFecha(LocalDate fecha) {
+        return fecha == null ? LocalDate.now() : fecha;
+    }
+
+    /**
      * Resuelve nombre de sucursal con prioridad: parametro > token > id como texto.
      */
     private String resolveSucursalNombre(String sucursal, String token) {
         if (!isBlank(sucursal)) {
-            return sucursal.trim();
+            return SucursalCanonicalizer.canonicalize(sucursal);
         }
         if (isBlank(token)) {
             return null;
@@ -450,10 +780,10 @@ public class ConformacionCuadrillaWebService {
         List<SucursalResponse> sucursales = authService.listarSucursales();
         for (SucursalResponse item : sucursales) {
             if (item != null && idSucursal.equals(item.getIdSucursal())) {
-                return item.getSucursal();
+                return SucursalCanonicalizer.canonicalize(item.getSucursal());
             }
         }
-        return String.valueOf(idSucursal);
+        return SucursalCanonicalizer.canonicalize(String.valueOf(idSucursal));
     }
 
     /**
