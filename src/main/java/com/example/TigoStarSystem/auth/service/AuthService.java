@@ -3,16 +3,22 @@ package com.example.TigoStarSystem.auth.service;
 import com.example.TigoStarSystem.auth.dto.AuthLoginRequest;
 import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
+import com.example.TigoStarSystem.auth.dto.ChangePasswordRequest;
 import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.repository.AuthRepository;
+import com.example.TigoStarSystem.auth.repository.AuthSessionRepository;
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import com.example.TigoStarSystem.config.DbConnectionManager;
 import com.example.TigoStarSystem.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +27,8 @@ import java.security.NoSuchAlgorithmException;
 import java.text.Normalizer;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -29,6 +37,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.sql.SQLException;
 
 @Service
 public class AuthService {
@@ -36,52 +45,38 @@ public class AuthService {
     private static final Duration SESSION_TTL = Duration.ofHours(8);
     private static final Logger logger = LoggerFactory.getLogger(AuthService.class);
     private final AuthRepository authRepository;
+    private final AuthSessionRepository authSessionRepository;
     private final SucursalRepository sucursalRepository;
     private final DbConnectionManager dbConnectionManager;
+    private final JwtService jwtService;
     private final Map<String, AuthSession> sessions = new ConcurrentHashMap<>();
     private final String dbUsername;
     private final String dbPassword;
-    private final String uTecnicosHost;
-    private final String uTecnicosDatabase;
-    private final String centralHost;
-    private final String sucreLoginHost;
-    private final String sucreLoginDatabase;
-    private final String sucreLoginUsername;
-    private final String sucreLoginPassword;
     private final boolean validarSucursal;
+    private final boolean jwtEnabled;
 
     /**
      * Inicializa el servicio de autenticacion y resuelve configuracion de conexiones.
      */
     public AuthService(
             AuthRepository authRepository,
+            AuthSessionRepository authSessionRepository,
             SucursalRepository sucursalRepository,
             DbConnectionManager dbConnectionManager,
+            JwtService jwtService,
             @Value("${spring.datasource.username}") String dbUsername,
             @Value("${spring.datasource.password}") String dbPassword,
-            @Value("${spring.datasource.url}") String mainDatasourceUrl,
-            @Value("${app.central.datasource.url:}") String centralDatasourceUrl,
-            @Value("${app.sucre.datasource.url:}") String sucreDatasourceUrl,
-            @Value("${auth.login.sucre.database:SucrePrueba}") String sucreLoginDatabase,
-            @Value("${app.sucre.datasource.username:${spring.datasource.username}}") String sucreLoginUsername,
-            @Value("${app.sucre.datasource.password:${spring.datasource.password}}") String sucreLoginPassword,
-            @Value("${auth.login.validar-sucursal:true}") boolean validarSucursal) {
+            @Value("${auth.login.validar-sucursal:true}") boolean validarSucursal,
+            @Value("${auth.jwt.enabled:true}") boolean jwtEnabled) {
         this.authRepository = authRepository;
+        this.authSessionRepository = authSessionRepository;
         this.sucursalRepository = sucursalRepository;
         this.dbConnectionManager = dbConnectionManager;
+        this.jwtService = jwtService;
         this.dbUsername = dbUsername;
         this.dbPassword = dbPassword;
-        this.uTecnicosHost = parseHostFromJdbcUrl(mainDatasourceUrl);
-        this.uTecnicosDatabase = parseDatabaseFromJdbcUrl(mainDatasourceUrl);
-        String parsedCentralHost = parseHostFromJdbcUrl(centralDatasourceUrl);
-        this.centralHost = isBlank(parsedCentralHost) ? this.uTecnicosHost : parsedCentralHost;
-        String parsedSucreHost = parseHostFromJdbcUrl(sucreDatasourceUrl);
-        String parsedSucreDatabase = parseDatabaseFromJdbcUrl(sucreDatasourceUrl);
-        this.sucreLoginHost = firstNonBlank(parsedSucreHost, this.centralHost);
-        this.sucreLoginDatabase = firstNonBlank(parsedSucreDatabase, sucreLoginDatabase);
-        this.sucreLoginUsername = firstNonBlank(sucreLoginUsername, dbUsername);
-        this.sucreLoginPassword = firstNonBlank(sucreLoginPassword, dbPassword);
         this.validarSucursal = validarSucursal;
+        this.jwtEnabled = jwtEnabled;
     }
 
     /**
@@ -101,45 +96,67 @@ public class AuthService {
                 sucursal.host,
                 sucursal.baseDeDatos
         );
-        SucursalInfo sucursalLogin = resolverDestinoLogin(sucursal);
-        boolean esSucre = isSucre(normalizeText(sucursal == null ? null : sucursal.sucursal));
-        logger.debug(
-                "Login target resolved idSucursal={}, sucursal={}, host={}, baseDeDatos={}",
-                sucursalLogin.idSucursal,
-                sucursalLogin.sucursal,
-                sucursalLogin.host,
-                sucursalLogin.baseDeDatos
-        );
-        String loginUsername = esSucre ? sucreLoginUsername : dbUsername;
-        String loginPassword = esSucre ? sucreLoginPassword : dbPassword;
-        JdbcTemplate jdbcTemplate = crearJdbcTemplateSucursal(sucursalLogin, loginUsername, loginPassword);
+        List<SucursalInfo> destinosLogin = resolverDestinosLogin(sucursal);
         String passwordHash = hashMd5Base64(request.getPassword());
-
-        List<Map<String, Object>> rows;
-        try {
-            rows = ejecutarValidacionConSpAlternativo(jdbcTemplate, request, passwordHash, validarSucursal);
-        } catch (DataAccessException ex) {
-            logger.error(
-                    "Login SP failed usuario={}, idSucursal={}, host={}, baseDeDatos={}, validarSucursal={}",
-                    safe(request.getUsuario()),
-                    request.getIdSucursal(),
+        List<Map<String, Object>> rows = null;
+        Exception lastError = null;
+        for (int i = 0; i < destinosLogin.size(); i++) {
+            SucursalInfo sucursalLogin = destinosLogin.get(i);
+            logger.debug(
+                    "Login target attempt={} idSucursal={}, sucursal={}, host={}, baseDeDatos={}",
+                    i + 1,
+                    sucursalLogin.idSucursal,
+                    sucursalLogin.sucursal,
                     sucursalLogin.host,
-                    sucursalLogin.baseDeDatos,
-                    validarSucursal,
-                    ex
+                    sucursalLogin.baseDeDatos
             );
-            throw ex;
-        } catch (Exception ex) {
-            logger.error(
-                    "Login SP failed usuario={}, idSucursal={}, host={}, baseDeDatos={}, validarSucursal={}",
-                    safe(request.getUsuario()),
-                    request.getIdSucursal(),
-                    sucursalLogin.host,
-                    sucursalLogin.baseDeDatos,
-                    validarSucursal,
-                    ex
+            JdbcTemplate jdbcTemplate = crearJdbcTemplateSucursal(sucursalLogin, dbUsername, dbPassword);
+            try {
+                rows = ejecutarValidacionConSpAlternativo(jdbcTemplate, request, passwordHash, validarSucursal);
+                if (rows != null && !rows.isEmpty()) {
+                    break;
+                }
+            } catch (DataAccessException ex) {
+                lastError = ex;
+                logger.warn(
+                        "Login SP failed on attempt {} usuario={}, idSucursal={}, host={}, baseDeDatos={}",
+                        i + 1,
+                        safe(request.getUsuario()),
+                        request.getIdSucursal(),
+                        sucursalLogin.host,
+                        sucursalLogin.baseDeDatos,
+                        ex
+                );
+            } catch (Exception ex) {
+                lastError = ex;
+                logger.warn(
+                        "Login failed on attempt {} usuario={}, idSucursal={}, host={}, baseDeDatos={}",
+                        i + 1,
+                        safe(request.getUsuario()),
+                        request.getIdSucursal(),
+                        sucursalLogin.host,
+                        sucursalLogin.baseDeDatos,
+                        ex
+                );
+            }
+        }
+        if ((rows == null || rows.isEmpty()) && lastError != null) {
+            if (lastError instanceof DataAccessException) {
+                throw traducirErrorLogin((DataAccessException) lastError, request, sucursal);
+            }
+            Map<String, Object> details = new HashMap<>();
+            details.put("usuario", safe(request == null ? null : request.getUsuario()));
+            details.put("idSucursal", request == null ? null : request.getIdSucursal());
+            details.put("sucursal", sucursal == null ? null : sucursal.sucursal);
+            details.put("host", sucursal == null ? null : sucursal.host);
+            details.put("baseDeDatos", sucursal == null ? null : sucursal.baseDeDatos);
+            details.put("rootCause", lastError.getMessage());
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "LOGIN_EXECUTION_ERROR",
+                    "No se pudo ejecutar la validacion de login para la sucursal seleccionada.",
+                    details
             );
-            throw ex;
         }
         logger.debug("Login SP returned {} rows", rows == null ? 0 : rows.size());
         if (rows == null || rows.isEmpty()) {
@@ -166,14 +183,23 @@ public class AuthService {
         AuthLoginResponse user = new AuthLoginResponse(
                 userFromDb.getIdUsuario(),
                 userFromDb.getNombre(),
+                userFromDb.getLoggin(),
                 userFromDb.getRol(),
                 userFromDb.getIdRol(),
-                idSucursalSeleccionada
+                idSucursalSeleccionada,
+                userFromDb.getNecesitaCambio(),
+                userFromDb.getUltimaModificacion()
         );
-        String token = UUID.randomUUID().toString();
         OffsetDateTime expira = OffsetDateTime.now().plus(SESSION_TTL);
+        String token = jwtEnabled
+                ? jwtService.generateAccessToken(user, expira)
+                : UUID.randomUUID().toString();
         AuthSession session = new AuthSession(token, user, expira);
         sessions.put(token, session);
+        if (!jwtEnabled) {
+            authSessionRepository.save(session);
+            authSessionRepository.deleteExpired();
+        }
         return session;
     }
 
@@ -195,17 +221,47 @@ public class AuthService {
      */
     public AuthMeResponse me(String token) {
         if (token == null || isBlank(token)) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_REQUIRED", "SesiÃ³n requerida.");
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_REQUIRED", "Sesion requerida.");
+        }
+        if (jwtEnabled) {
+            JwtService.ParsedToken parsed = jwtService.parseAccessToken(token);
+            AuthLoginResponse usuario = parsed == null ? null : parsed.getUser();
+            OffsetDateTime expira = parsed == null ? null : parsed.getExpira();
+            if (usuario == null || usuario.getIdUsuario() == null) {
+                throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "Sesion invalida.");
+            }
+            if (expira == null) {
+                expira = OffsetDateTime.now().plus(SESSION_TTL);
+            }
+            sessions.put(token, new AuthSession(token, usuario, expira));
+            return new AuthMeResponse(usuario, expira, resolveHostName());
         }
         AuthSession session = sessions.get(token);
         if (session == null) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "SesiÃ³n invÃ¡lida.");
+            session = authSessionRepository.findByToken(token);
+            if (session != null) {
+                sessions.put(token, session);
+            }
+        }
+        if (session == null) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "Sesion invalida.");
         }
         if (session.getExpira().isBefore(OffsetDateTime.now())) {
             sessions.remove(token);
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "SesiÃ³n expirada.");
+            authSessionRepository.deleteByToken(token);
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "Sesion expirada.");
         }
-        return new AuthMeResponse(session.getUsuario(), session.getExpira());
+        return new AuthMeResponse(session.getUsuario(), session.getExpira(), resolveHostName());
+    }
+
+    private String resolveHostName() {
+        try {
+            String hostName = InetAddress.getLocalHost().getHostName();
+            return hostName == null ? null : hostName.trim();
+        } catch (UnknownHostException ex) {
+            logger.warn("No se pudo resolver el nombre del host para la sesion.", ex);
+            return null;
+        }
     }
 
     /**
@@ -221,6 +277,33 @@ public class AuthService {
             );
         }
         return me;
+    }
+
+    public void cambiarPassword(String token, ChangePasswordRequest request) {
+        if (request == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Request requerida.");
+        }
+        AuthMeResponse me = me(token);
+        AuthLoginResponse usuario = me.getUsuario();
+        if (usuario == null || usuario.getIdUsuario() == null || usuario.getIdSucursal() == null) {
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "Sesion invalida.");
+        }
+        if (isBlank(request.getActual()) || isBlank(request.getNueva())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Password actual y nueva son requeridas.");
+        }
+        String actualHash = hashMd5Base64(request.getActual().trim());
+        String nuevaHash = hashMd5Base64(request.getNueva().trim());
+        SucursalInfo sucursal = obtenerSucursalPorId(usuario.getIdSucursal());
+        JdbcTemplate jdbcTemplate = crearJdbcTemplateSucursal(sucursal, dbUsername, dbPassword);
+        List<Map<String, Object>> rows = authRepository.cambiarPasswordUsuarioPorId(
+                jdbcTemplate,
+                usuario.getIdUsuario(),
+                actualHash,
+                nuevaHash
+        );
+        if (rows == null || rows.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PASSWORD_CHANGE_FAILED", "No se pudo cambiar password.");
+        }
     }
 
     /**
@@ -245,7 +328,10 @@ public class AuthService {
             idSucursal = idSucursalFallback;
         }
         String nombre = toString(findValue(row, "nombre", "nombres", "nombreusuario", "usuario"));
+        String loggin = toString(findValue(row, "loggin", "login", "usuario"));
         String rol = toString(findValue(row, "rol", "nombrerol", "descripcionrol"));
+        Boolean necesitaCambio = toBoolean(findValue(row, "necesitacambio"));
+        java.time.LocalDateTime ultimaModificacion = toLocalDateTime(findValue(row, "ultimamodificacion"));
 
         if (idUsuario == null || nombre == null) {
             Map<String, Object> details = new HashMap<>();
@@ -257,7 +343,7 @@ public class AuthService {
                     details
             );
         }
-        return new AuthLoginResponse(idUsuario, nombre, rol, idRol, idSucursal);
+        return new AuthLoginResponse(idUsuario, nombre, loggin, rol, idRol, idSucursal, necesitaCambio, ultimaModificacion);
     }
 
     /**
@@ -282,12 +368,15 @@ public class AuthService {
      */
     private SucursalInfo mapToSucursal(Map<String, Object> row) {
         Integer idSucursal = toInteger(findValue(row, "idsucursal", "id_sucursal"));
-        String sucursal = toString(findValue(row, "sucursal"));
-        String ip = toString(findValue(row, "ip"));
-        String ip2 = toString(findValue(row, "ip2"));
+        String sucursal = canonicalizarSucursal(toString(findValue(row, "sucursal")));
+        String ip = trimToNull(toString(findValue(row, "ip")));
+        String ip2 = trimToNull(toString(findValue(row, "ip2")));
         String baseDeDatos = toString(findValue(row, "basededatos", "base_de_datos"));
-
-        String host = (ip != null && !isBlank(ip)) ? ip : ip2;
+        String host = firstNonBlank(ip, ip2);
+        String hostAlterno = null;
+        if (!isBlank(ip) && !isBlank(ip2) && !ip.equalsIgnoreCase(ip2)) {
+            hostAlterno = ip2;
+        }
         if (idSucursal == null) {
             Map<String, Object> details = new HashMap<>();
             details.put("rowKeys", row.keySet());
@@ -298,24 +387,40 @@ public class AuthService {
                     details
             );
         }
-        return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos));
+        return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos), trimToNull(hostAlterno));
     }
 
     /**
-     * Resuelve host/base de datos final para autenticar segun sucursal (Sucre u operativa).
+     * Unifica variantes comunes de sucursal para evitar inconsistencias en el front.
      */
-    private SucursalInfo resolverDestinoLogin(SucursalInfo sucursalOriginal) {
-        if (sucursalOriginal == null) {
-            return sucursalOriginal;
+    private String canonicalizarSucursal(String value) {
+        String trimmed = trimToNull(value);
+        if (trimmed == null) {
+            return null;
         }
+        String normalized = normalizeText(trimmed).replaceAll("[\\s_\\-]+", "");
+        if ("santacruz".equals(normalized)) {
+            return "SantaCruz";
+        }
+        if ("sucre".equals(normalized)) {
+            return "Sucre";
+        }
+        return trimmed;
+    }
 
-        boolean sucursalEsSucre = isSucre(normalizeText(sucursalOriginal.sucursal));
-        String host = sucursalEsSucre
-                ? firstNonBlank(sucreLoginHost, sucursalOriginal.host)
-                : firstNonBlank(uTecnicosHost, sucursalOriginal.host);
-        String database = sucursalEsSucre
-                ? firstNonBlank(sucreLoginDatabase, sucursalOriginal.baseDeDatos)
-                : firstNonBlank(uTecnicosDatabase, sucursalOriginal.baseDeDatos);
+    /**
+     * Resuelve el/los destinos de login para la sucursal seleccionada.
+     */
+    private List<SucursalInfo> resolverDestinosLogin(SucursalInfo sucursalOriginal) {
+        if (sucursalOriginal == null) {
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "SUCURSAL_DB_NOT_RESOLVED",
+                    "No se pudo resolver host/base de datos para la sucursal seleccionada."
+            );
+        }
+        String host = trimToNull(sucursalOriginal.host);
+        String database = trimToNull(sucursalOriginal.baseDeDatos);
 
         if (isBlank(host) || isBlank(database)) {
             throw new ApiException(
@@ -324,12 +429,24 @@ public class AuthService {
                     "No se pudo resolver host/base de datos para la sucursal seleccionada."
             );
         }
-        return new SucursalInfo(
+        List<SucursalInfo> destinos = new ArrayList<>();
+        destinos.add(new SucursalInfo(
                 sucursalOriginal.idSucursal,
                 sucursalOriginal.sucursal,
                 host.trim(),
-                database.trim()
-        );
+                database.trim(),
+                null
+        ));
+        if (!isBlank(sucursalOriginal.hostAlterno) && !host.equalsIgnoreCase(sucursalOriginal.hostAlterno)) {
+            destinos.add(new SucursalInfo(
+                    sucursalOriginal.idSucursal,
+                    sucursalOriginal.sucursal,
+                    sucursalOriginal.hostAlterno.trim(),
+                    database.trim(),
+                    null
+            ));
+        }
+        return destinos;
     }
 
     /**
@@ -395,6 +512,44 @@ public class AuthService {
             );
             return ejecutarValidacion(template, request, passwordHash, validarSucursalAlternativo);
         }
+    }
+
+    private ApiException traducirErrorLogin(DataAccessException ex, AuthLoginRequest request, SucursalInfo sucursal) {
+        Map<String, Object> details = new HashMap<>();
+        Throwable root = ex.getMostSpecificCause();
+        details.put("storedProcedure", validarSucursal ? "spx_ValidarUsuarioSucursal/spx_ValidarUsuario" : "spx_ValidarUsuario/spx_ValidarUsuarioSucursal");
+        details.put("rootCause", root == null ? ex.getMessage() : root.getMessage());
+        details.put("usuario", safe(request == null ? null : request.getUsuario()));
+        details.put("idSucursal", request == null ? null : request.getIdSucursal());
+        details.put("sucursal", sucursal == null ? null : sucursal.sucursal);
+        details.put("host", sucursal == null ? null : sucursal.host);
+        details.put("baseDeDatos", sucursal == null ? null : sucursal.baseDeDatos);
+
+        if (ex instanceof QueryTimeoutException || ex instanceof CannotAcquireLockException) {
+            return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "SP_TIMEOUT", "El login excedio el tiempo de espera.", details);
+        }
+        if (ex instanceof CannotGetJdbcConnectionException) {
+            return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "DB_CONNECTION_ERROR", "No se pudo conectar a la base de datos de la sucursal.", details);
+        }
+        SQLException sqlEx = findSqlException(ex);
+        if (sqlEx != null && sqlEx.getErrorCode() == 2812) {
+            return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "SP_NOT_FOUND", "No se encontro el procedimiento de validacion de login.", details);
+        }
+        if (ex instanceof BadSqlGrammarException) {
+            return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "SP_SQL_ERROR", "Error SQL al ejecutar la validacion de login.", details);
+        }
+        return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "DATABASE_ERROR", "Error en base de datos al validar login.", details);
+    }
+
+    private SQLException findSqlException(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            if (current instanceof SQLException) {
+                return (SQLException) current;
+            }
+            current = current.getCause();
+        }
+        return null;
     }
 
     /**
@@ -478,6 +633,39 @@ public class AuthService {
         return value == null ? null : value.toString();
     }
 
+    private Boolean toBoolean(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Boolean) {
+            return (Boolean) value;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        String text = value.toString().trim().toLowerCase(Locale.ROOT);
+        if ("true".equals(text) || "1".equals(text) || "si".equals(text) || "yes".equals(text)) {
+            return true;
+        }
+        if ("false".equals(text) || "0".equals(text) || "no".equals(text)) {
+            return false;
+        }
+        return null;
+    }
+
+    private java.time.LocalDateTime toLocalDateTime(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof java.time.LocalDateTime) {
+            return (java.time.LocalDateTime) value;
+        }
+        if (value instanceof java.sql.Timestamp) {
+            return ((java.sql.Timestamp) value).toLocalDateTime();
+        }
+        return null;
+    }
+
     /**
      * Verifica si un texto es nulo o vacio tras trim.
      */
@@ -496,13 +684,6 @@ public class AuthService {
     }
 
     /**
-     * Identifica si el nombre normalizado corresponde a la sucursal Sucre.
-     */
-    private boolean isSucre(String value) {
-        return value != null && value.contains("sucre");
-    }
-
-    /**
      * Retorna null cuando el texto llega vacio; en otro caso retorna trim.
      */
     private String trimToNull(String value) {
@@ -511,74 +692,6 @@ public class AuthService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
-    }
-
-    /**
-     * Extrae host desde un JDBC URL soportando formatos jtds y sqlserver.
-     */
-    private String parseHostFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-        String rest = url.substring(idx + 3);
-        int sepSlash = rest.indexOf('/');
-        int sepSemicolon = rest.indexOf(';');
-        int end = -1;
-        if (sepSlash >= 0 && sepSemicolon >= 0) {
-            end = Math.min(sepSlash, sepSemicolon);
-        } else if (sepSlash >= 0) {
-            end = sepSlash;
-        } else if (sepSemicolon >= 0) {
-            end = sepSemicolon;
-        }
-        String hostPort = end >= 0 ? rest.substring(0, end) : rest;
-        int comma = hostPort.indexOf(',');
-        if (comma >= 0) {
-            hostPort = hostPort.substring(0, comma);
-        }
-        int colon = hostPort.indexOf(':');
-        if (colon >= 0) {
-            hostPort = hostPort.substring(0, colon);
-        }
-        String host = hostPort.trim();
-        return host.isEmpty() ? null : host;
-    }
-
-    /**
-     * Extrae nombre de base desde un JDBC URL.
-     */
-    private String parseDatabaseFromJdbcUrl(String jdbcUrl) {
-        if (isBlank(jdbcUrl)) {
-            return null;
-        }
-        String url = jdbcUrl.trim();
-        String lower = url.toLowerCase(Locale.ROOT);
-        String token = "databasename=";
-        int idxDbName = lower.indexOf(token);
-        if (idxDbName >= 0) {
-            int start = idxDbName + token.length();
-            int end = url.indexOf(';', start);
-            String db = (end >= 0 ? url.substring(start, end) : url.substring(start)).trim();
-            return db.isEmpty() ? null : db;
-        }
-        int idx = url.indexOf("://");
-        if (idx < 0) {
-            return null;
-        }
-        String rest = url.substring(idx + 3);
-        int slash = rest.indexOf('/');
-        if (slash < 0 || slash + 1 >= rest.length()) {
-            return null;
-        }
-        String afterSlash = rest.substring(slash + 1);
-        int end = afterSlash.indexOf(';');
-        String db = (end >= 0 ? afterSlash.substring(0, end) : afterSlash).trim();
-        return db.isEmpty() ? null : db;
     }
 
     /**
@@ -618,15 +731,18 @@ public class AuthService {
         private final String sucursal;
         private final String host;
         private final String baseDeDatos;
+        private final String hostAlterno;
 
         /**
          * Estructura interna para transportar datos de sucursal ya resueltos.
          */
-        private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos) {
+        private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos, String hostAlterno) {
             this.idSucursal = idSucursal;
             this.sucursal = sucursal;
             this.host = host;
             this.baseDeDatos = baseDeDatos;
+            this.hostAlterno = hostAlterno;
         }
     }
 }
+

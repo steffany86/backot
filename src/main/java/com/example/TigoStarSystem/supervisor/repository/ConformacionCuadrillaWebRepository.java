@@ -45,7 +45,7 @@ public class ConformacionCuadrillaWebRepository {
     private static final String SP_ACTIVIDADES =
             "EXEC dbo.spx_ObtenerActividadesConformacionCuadrillaWeb";
     private static final String SP_VEHICULOS =
-            "EXEC dbo.spx_ObtenerVehiculosConformacionCuadrillaWeb ?";
+            "EXEC dbo.spx_ObtenerVehiculosConformacionCuadrillaWeb";
     private static final String SP_SUCURSALES =
             "EXEC dbo.spx_ObtenerSucursalesConformacionCuadrillaWeb";
 
@@ -105,11 +105,6 @@ public class ConformacionCuadrillaWebRepository {
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = dbSupport.resolverSucursalDbInfo(sucursalParam);
 
         Map<String, Object> row = queryForSingleInSucursal(dbInfo, SP_OBTENER_POR_ID, id);
-        if (row != null) {
-            return mapRow(row);
-        }
-
-        row = queryForSingle(centralJdbcTemplate, SP_OBTENER_POR_ID, id);
         return row == null ? null : mapRow(row);
     }
 
@@ -281,11 +276,11 @@ public class ConformacionCuadrillaWebRepository {
 
     public List<Map<String, Object>> listarVehiculos(String sucursal, String filtro) {
         String filtroParam = trimToNull(filtro);
-        return queryForListInSucursal(
+        List<Map<String, Object>> rows = queryForListOnlyInResolvedSucursal(
                 dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
-                SP_VEHICULOS,
-                filtroParam
+                SP_VEHICULOS
         );
+        return filtrarVehiculos(rows, filtroParam);
     }
 
     public List<Map<String, Object>> listarSucursales(String sucursal) {
@@ -296,19 +291,26 @@ public class ConformacionCuadrillaWebRepository {
             ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
             String sql,
             Object... args) {
-        if (dbInfo != null) {
-            try {
-                List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            } catch (DataAccessException ex) {
-                // fallback below
-            }
+        if (dbInfo == null) {
+            return new ArrayList<>();
         }
-
         try {
-            List<Map<String, Object>> rows = queryForList(jdbcTemplate, sql, args);
+            List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
+            return rows == null ? new ArrayList<>() : rows;
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    private List<Map<String, Object>> queryForListOnlyInResolvedSucursal(
+            ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
+            String sql,
+            Object... args) {
+        if (dbInfo == null) {
+            return new ArrayList<>();
+        }
+        try {
+            List<Map<String, Object>> rows = queryForList(dbSupport.crearJdbcTemplateSucursal(dbInfo), sql, args);
             return rows == null ? new ArrayList<>() : rows;
         } catch (DataAccessException ex) {
             return new ArrayList<>();
@@ -354,32 +356,11 @@ public class ConformacionCuadrillaWebRepository {
                 // fallback below
             }
         }
-        if (jdbcTemplate != null) {
-            out.add(jdbcTemplate);
-        }
-        if (centralJdbcTemplate != null) {
-            out.add(centralJdbcTemplate);
-        }
         return dedupeTemplates(out);
     }
 
     private List<JdbcTemplate> construirTemplatesEliminacion() {
-        List<JdbcTemplate> out = new ArrayList<>();
-        if (jdbcTemplate != null) {
-            out.add(jdbcTemplate);
-        }
-        try {
-            JdbcTemplate sucreTemplate = dbSupport.crearJdbcTemplateSucre();
-            if (sucreTemplate != null) {
-                out.add(sucreTemplate);
-            }
-        } catch (RuntimeException ignored) {
-            // fallback below
-        }
-        if (centralJdbcTemplate != null) {
-            out.add(centralJdbcTemplate);
-        }
-        return dedupeTemplates(out);
+        return new ArrayList<>();
     }
 
     private List<JdbcTemplate> dedupeTemplates(List<JdbcTemplate> templates) {
@@ -704,6 +685,36 @@ public class ConformacionCuadrillaWebRepository {
                 normalizada.put(nombreCanonico, nombre);
             }
             out.add(normalizada);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> filtrarVehiculos(List<Map<String, Object>> rows, String filtro) {
+        List<Map<String, Object>> source = rows == null ? new ArrayList<>() : rows;
+        String filtroNormalizado = trimToNull(filtro);
+        if (filtroNormalizado == null) {
+            return source;
+        }
+
+        String comparable = filtroNormalizado
+                .replace("%", "")
+                .replace("*", "")
+                .trim()
+                .toLowerCase(Locale.ROOT);
+        if (comparable.isEmpty()) {
+            return source;
+        }
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : source) {
+            Object vehiculo = findValue(row, "vehiculo", "Vehiculo", "placa", "Placa", "placaVehiculo", "placavehiculo");
+            if (vehiculo == null) {
+                continue;
+            }
+            String value = vehiculo.toString().trim().toLowerCase(Locale.ROOT);
+            if (!value.isEmpty() && value.contains(comparable)) {
+                out.add(row);
+            }
         }
         return out;
     }

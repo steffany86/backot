@@ -8,6 +8,7 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -84,14 +85,37 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleGeneric(Exception ex, HttpServletRequest request) {
         logger.error("Unhandled error on {} {}", request.getMethod(), request.getRequestURI(), ex);
+        Map<String, Object> details = new HashMap<>();
+        details.put("exception", ex.getClass().getSimpleName());
+        Throwable root = ex.getCause();
+        while (root != null && root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        if (root != null) {
+            details.put("rootCause", root.getMessage() == null ? root.getClass().getSimpleName() : root.getMessage());
+        }
         ApiError apiError = new ApiError(
                 "INTERNAL_ERROR",
                 "Error inesperado.",
-                null,
+                details,
                 OffsetDateTime.now(),
                 request.getRequestURI()
         );
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(apiError);
     }
-}
 
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiError> handleMaxUploadSize(MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        Map<String, Object> details = new HashMap<>();
+        details.put("exception", ex.getClass().getSimpleName());
+        details.put("maxSize", "10MB");
+        ApiError apiError = new ApiError(
+                "FILE_TOO_LARGE",
+                "El archivo PDF supera el limite permitido (10 MB). Reduce el tamaño del archivo e intenta nuevamente.",
+                details,
+                OffsetDateTime.now(),
+                request.getRequestURI()
+        );
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(apiError);
+    }
+}

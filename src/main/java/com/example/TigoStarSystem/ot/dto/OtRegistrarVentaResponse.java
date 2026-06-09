@@ -10,6 +10,7 @@ public class OtRegistrarVentaResponse {
     private final String origen;
     private final BigDecimal latitud;
     private final BigDecimal longitud;
+    private final String rutaPdf;
 
     public OtRegistrarVentaResponse(
             Integer idVenta,
@@ -18,7 +19,8 @@ public class OtRegistrarVentaResponse {
             Integer idSucursal,
             String origen,
             BigDecimal latitud,
-            BigDecimal longitud) {
+            BigDecimal longitud,
+            String rutaPdf) {
         this.idVenta = idVenta;
         this.ordenTrabajo = ordenTrabajo;
         this.codigoCliente = codigoCliente;
@@ -26,6 +28,7 @@ public class OtRegistrarVentaResponse {
         this.origen = origen;
         this.latitud = latitud;
         this.longitud = longitud;
+        this.rutaPdf = rutaPdf;
     }
 
     public Integer getIdVenta() {
@@ -54,5 +57,9 @@ public class OtRegistrarVentaResponse {
 
     public BigDecimal getLongitud() {
         return longitud;
+    }
+
+    public String getRutaPdf() {
+        return rutaPdf;
     }
 }

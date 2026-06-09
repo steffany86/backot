@@ -1,5 +1,7 @@
 package com.example.TigoStarSystem.supervisor.service;
 
+import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
+
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -163,10 +165,10 @@ final class ConformacionCuadrillaRowMapper {
             vehiculo = getCaseInsensitive(tecnicoRow, "vehiculo", "placa", "placavehiculo", "placaVehiculo");
         }
 
-        String sucursalResolved = firstNonBlank(
+        String sucursalResolved = SucursalCanonicalizer.canonicalize(firstNonBlank(
                 trimToNull(toString(getCaseInsensitive(row, "sucursal", "Sucursal"))),
                 trimToNull(sucursal)
-        );
+        ));
 
         out.put("id", id);
         out.put("idRegistro", id);
@@ -266,10 +268,10 @@ final class ConformacionCuadrillaRowMapper {
     Map<String, Object> mapConfirmada(Map<String, Object> row, String sucursalFiltro, LocalDate fechaFiltro) {
         Map<String, Object> out = new LinkedHashMap<>();
         Object vehiculo = getCaseInsensitive(row, "vehiculo", "Vehiculo", "placa", "placavehiculo", "placaVehiculo");
-        String sucursalResolved = firstNonBlank(
+        String sucursalResolved = SucursalCanonicalizer.canonicalize(firstNonBlank(
                 trimToNull(toString(getCaseInsensitive(row, "sucursal", "Sucursal"))),
                 trimToNull(sucursalFiltro)
-        );
+        ));
         Object idRegistro = getCaseInsensitive(row, "id");
 
         out.put("id", idRegistro);

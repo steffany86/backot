@@ -1,6 +1,7 @@
 package com.example.TigoStarSystem.supervisor.service;
 
 import com.example.TigoStarSystem.common.ApiException;
+import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRowRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaWebRequest;
 import org.springframework.http.HttpStatus;
@@ -28,6 +29,7 @@ final class ConformacionCuadrillaRequestValidator {
 
         fila.setEstado(normalizarEstado(fila.getEstado()));
         fila.setActividad(toUpperTrimOrNull(fila.getActividad()));
+        fila.setSucursal(SucursalCanonicalizer.canonicalize(trimToNull(fila.getSucursal())));
 
         List<String> faltantes = new ArrayList<>();
         agregarSiFalta(faltantes, fila.getIdTecnico() == null, "idTecnico");
@@ -40,6 +42,7 @@ final class ConformacionCuadrillaRequestValidator {
         validarTecnicosDistintos(fila.getIdTecnico(), fila.getIdTecnicoAuxiliar());
         validarFaltantes(faltantes);
         validarEstado(fila.getEstado());
+        validarActividad(fila.getActividad());
     }
 
     /**
@@ -62,6 +65,7 @@ final class ConformacionCuadrillaRequestValidator {
 
         validarFaltantes(faltantes);
         validarEstado(fila.getEstado());
+        validarActividad(fila.getActividad());
         validarTecnicosDistintos(fila.getIdTecnico(), fila.getIdTecnicoAuxiliar());
     }
 
@@ -82,7 +86,7 @@ final class ConformacionCuadrillaRequestValidator {
         fila.setTecnico(trimToNull(fila.getTecnico()));
         fila.setAuxiliar(trimToNull(fila.getAuxiliar()));
         fila.setSupervisorACargo(trimToNull(fila.getSupervisorACargo()));
-        fila.setSucursal(trimToNull(fila.getSucursal()));
+        fila.setSucursal(SucursalCanonicalizer.canonicalize(trimToNull(fila.getSucursal())));
         fila.setObservacion(trimToNull(fila.getObservacion()));
     }
 

@@ -1,7 +1,10 @@
 package com.example.TigoStarSystem.ot.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+
 import javax.validation.constraints.NotBlank;
 import javax.validation.constraints.NotNull;
+import javax.validation.constraints.Pattern;
 import java.math.BigDecimal;
 
 public class OtRegistrarVentaRequest {
@@ -41,6 +44,24 @@ public class OtRegistrarVentaRequest {
 
     private BigDecimal latitud;
     private BigDecimal longitud;
+
+    @NotBlank(message = "nodo es requerido")
+    @Pattern(regexp = "^[A-Za-z]{3}\\d{3,4}$", message = "nodo debe tener formato 3 letras y 3 o 4 numeros, ejemplo SCZ123 o SCZ1234")
+    private String nodo;
+
+    @NotBlank(message = "ramal es requerido")
+    private String ramal;
+
+    @NotNull(message = "tap es requerido")
+    private Integer tap;
+
+    @NotNull(message = "boca es requerido")
+    private Integer boca;
+    private String tipoTecnologia;
+    @JsonAlias({"CheckPlantaExterna", "check_planta_externa"})
+    private Boolean checkPlantaExterna;
+    @JsonAlias({"TieneDetalle", "tiene_detalle"})
+    private Boolean tieneDetalle;
 
     public Integer getIdUsuario() {
         return idUsuario;
@@ -176,5 +197,61 @@ public class OtRegistrarVentaRequest {
 
     public void setLongitud(BigDecimal longitud) {
         this.longitud = longitud;
+    }
+
+    public String getNodo() {
+        return nodo;
+    }
+
+    public void setNodo(String nodo) {
+        this.nodo = nodo;
+    }
+
+    public String getRamal() {
+        return ramal;
+    }
+
+    public void setRamal(String ramal) {
+        this.ramal = ramal;
+    }
+
+    public Integer getTap() {
+        return tap;
+    }
+
+    public void setTap(Integer tap) {
+        this.tap = tap;
+    }
+
+    public Integer getBoca() {
+        return boca;
+    }
+
+    public void setBoca(Integer boca) {
+        this.boca = boca;
+    }
+
+    public String getTipoTecnologia() {
+        return tipoTecnologia;
+    }
+
+    public void setTipoTecnologia(String tipoTecnologia) {
+        this.tipoTecnologia = tipoTecnologia;
+    }
+
+    public Boolean getCheckPlantaExterna() {
+        return checkPlantaExterna;
+    }
+
+    public void setCheckPlantaExterna(Boolean checkPlantaExterna) {
+        this.checkPlantaExterna = checkPlantaExterna;
+    }
+
+    public Boolean getTieneDetalle() {
+        return tieneDetalle;
+    }
+
+    public void setTieneDetalle(Boolean tieneDetalle) {
+        this.tieneDetalle = tieneDetalle;
     }
 }

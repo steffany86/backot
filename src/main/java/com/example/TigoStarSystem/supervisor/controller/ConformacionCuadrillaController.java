@@ -3,6 +3,7 @@ package com.example.TigoStarSystem.supervisor.controller;
 import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaCreateRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaCreateResponse;
+import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRelacionRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRowRequest;
 import com.example.TigoStarSystem.supervisor.service.ConformacionCuadrillaService;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -121,6 +122,17 @@ public class ConformacionCuadrillaController {
         ));
     }
 
+    @GetMapping({"/catalogos/salesforce", "/catalogos/sales-force"})
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarSalesforce(
+            @RequestParam(value = "q", required = false) String q,
+            @RequestParam(value = "limit", required = false) Integer limit,
+            @RequestParam(value = "sucursal", required = false) String sucursal) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarSalesforce(q, limit, sucursal),
+                "Listado de salesforce."
+        ));
+    }
+
     @GetMapping({"/catalogos/vehiculos", "/catalogos/vehiculo"})
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarVehiculos(
             @RequestParam(value = "filtro", required = false) String filtro) {
@@ -215,6 +227,16 @@ public class ConformacionCuadrillaController {
         return ResponseEntity.ok(ApiResponse.of(
                 filas,
                 "Conformacion de cuadrilla actualizada."
+        ));
+    }
+
+    @PostMapping({"/relaciones-cuadrilla", "/cuadrillas/relaciones"})
+    public ResponseEntity<ApiResponse<Integer>> guardarRelacionCuadrilla(
+            @RequestBody ConformacionCuadrillaRelacionRequest request) {
+        int filas = service.guardarRelacionCuadrilla(request);
+        return ResponseEntity.ok(ApiResponse.of(
+                filas,
+                "Relacion de cuadrilla guardada."
         ));
     }
 }
