@@ -21,6 +21,25 @@ public class CentralGruposRepository {
         return template.queryForList("EXEC dbo.spx_Grupo_FiltroSupervisoresCentral");
     }
 
+    public List<Map<String, Object>> listarSupervisoresDesdeConformacionCentral(JdbcTemplate centralTemplate, String sucursal) {
+        return centralTemplate.queryForList(
+                "SELECT DISTINCT " +
+                        "  CAST(idUsuarioSupervisor AS INT) AS idUsuarioSupervisor, " +
+                        "  CAST(idUsuarioSupervisor AS INT) AS id_usuario_supervisor, " +
+                        "  LTRIM(RTRIM(CAST(supervisorACargo AS NVARCHAR(200)))) AS supervisorACargo, " +
+                        "  LTRIM(RTRIM(CAST(supervisorACargo AS NVARCHAR(200)))) AS supervisor, " +
+                        "  LTRIM(RTRIM(CAST(sucursal AS NVARCHAR(100)))) AS sucursal " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "WHERE ISNULL(e_eliminado, 0) = 0 " +
+                        "  AND idUsuarioSupervisor IS NOT NULL " +
+                        "  AND NULLIF(LTRIM(RTRIM(ISNULL(supervisorACargo, ''))), '') IS NOT NULL " +
+                        "  AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                        "      LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', '')) " +
+                        "ORDER BY supervisorACargo",
+                sucursal
+        );
+    }
+
     public List<Map<String, Object>> listarTecnicosFiltro(JdbcTemplate template) {
         return template.queryForList("EXEC dbo.spx_Grupo_FiltroTecnicosCentral");
     }

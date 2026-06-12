@@ -48,6 +48,14 @@ public class CentralGruposService {
 
     public List<Map<String, Object>> listarSupervisoresFiltro(String token, String sucursal) {
         AuthLoginResponse usuario = requireCentralOrBackOffice(token);
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
+        List<Map<String, Object>> centralRows = repository.listarSupervisoresDesdeConformacionCentral(
+                dbConnectionManager.connDb("bdcontrolordenes"),
+                sucursalResuelta
+        );
+        if (centralRows != null && !centralRows.isEmpty()) {
+            return centralRows;
+        }
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         return repository.listarSupervisoresFiltro(template);
     }
@@ -88,7 +96,13 @@ public class CentralGruposService {
         // Refleja el cambio en la fuente usada por el listado (conformacion diaria).
         List<Map<String, Object>> supervisores;
         try {
-            supervisores = repository.listarSupervisoresFiltro(template);
+            supervisores = repository.listarSupervisoresDesdeConformacionCentral(
+                    dbConnectionManager.connDb("bdcontrolordenes"),
+                    sucursalResuelta
+            );
+            if (supervisores == null || supervisores.isEmpty()) {
+                supervisores = repository.listarSupervisoresFiltro(template);
+            }
         } catch (DataAccessException ex) {
             supervisores = new ArrayList<>();
         }
@@ -217,7 +231,13 @@ public class CentralGruposService {
         if (idSupervisorOrigen.equals(idSupervisorDestino)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Supervisor origen y destino deben ser diferentes.");
         }
-        List<Map<String, Object>> supervisores = repository.listarSupervisoresFiltro(template);
+        List<Map<String, Object>> supervisores = repository.listarSupervisoresDesdeConformacionCentral(
+                dbConnectionManager.connDb("bdcontrolordenes"),
+                sucursalResuelta
+        );
+        if (supervisores == null || supervisores.isEmpty()) {
+            supervisores = repository.listarSupervisoresFiltro(template);
+        }
         String nombreOrigen = findNombreSupervisor(supervisores, idSupervisorOrigen);
         String nombreDestino = findNombreSupervisor(supervisores, idSupervisorDestino);
         if (isBlank(nombreOrigen) || isBlank(nombreDestino)) {
@@ -338,15 +358,17 @@ public class CentralGruposService {
         String rol = normalize(usuario == null ? null : usuario.getRol());
         if (!"central".equals(rol)
                 && !"back office".equals(rol)
-                && !"backoffice".equals(rol)
-                && !"backoffice_v".equals(rol)
-                && !"backup".equals(rol)) {
-            throw new ApiException(
-                    HttpStatus.FORBIDDEN,
-                    "FORBIDDEN_CENTRAL_OR_BACKOFFICE_ONLY",
-                    "Esta funcionalidad es solo para rol Central o Back Office."
-            );
-        }
+            && !"backoffice".equals(rol)
+            && !"backoffice_v".equals(rol)
+            && !"backup".equals(rol)
+            && !"sistemas".equals(rol)
+            && !"admin".equals(rol)) {
+        throw new ApiException(
+                HttpStatus.FORBIDDEN,
+                "FORBIDDEN_CENTRAL_OR_BACKOFFICE_ONLY",
+                "Esta funcionalidad es solo para rol Central, Back Office o Sistemas."
+        );
+    }
         return usuario;
     }
 

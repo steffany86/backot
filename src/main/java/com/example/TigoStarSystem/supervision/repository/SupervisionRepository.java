@@ -1091,7 +1091,37 @@ public class SupervisionRepository {
 
     public List<Map<String, Object>> listarSupervisores(String sucursal) {
         JdbcTemplate template = resolveTemplateSupervisores(sucursal);
-        return listarSupervisoresDesdeTemplate(template);
+        List<Map<String, Object>> rows = listarSupervisoresDesdeTemplate(template);
+        if (rows != null && !rows.isEmpty()) {
+            return rows;
+        }
+        return listarSupervisoresDesdeCentral(sucursal);
+    }
+
+    private List<Map<String, Object>> listarSupervisoresDesdeCentral(String sucursal) {
+        String sucursalNorm = trimToNull(sucursal);
+        try {
+            JdbcTemplate central = dbConnectionManager.connDb("bdcontrolordenes");
+            return central.queryForList(
+                    "SELECT DISTINCT " +
+                            "  CAST(idUsuarioSupervisor AS INT) AS idSupervisor, " +
+                            "  CAST(idUsuarioSupervisor AS INT) AS idUsuarioSupervisor, " +
+                            "  CAST(supervisorACargo AS NVARCHAR(200)) AS nombre, " +
+                            "  CAST(supervisorACargo AS NVARCHAR(200)) AS supervisor, " +
+                            "  CAST(sucursal AS NVARCHAR(100)) AS sucursal " +
+                            "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                            "WHERE ISNULL(e_eliminado,0)=0 " +
+                            "  AND idUsuarioSupervisor IS NOT NULL " +
+                            "  AND NULLIF(LTRIM(RTRIM(ISNULL(supervisorACargo,''))), '') IS NOT NULL " +
+                            "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(ISNULL(sucursal,''), ' ', ''), '_', ''), '-', '')) = " +
+                            "                  LOWER(REPLACE(REPLACE(REPLACE(?, ' ', ''), '_', ''), '-', ''))) " +
+                            "ORDER BY supervisor",
+                    sucursalNorm,
+                    sucursalNorm
+            );
+        } catch (Exception ex) {
+            return java.util.Collections.emptyList();
+        }
     }
 
     private List<Map<String, Object>> listarSupervisoresDesdeTemplate(JdbcTemplate template) {
@@ -1135,10 +1165,7 @@ public class SupervisionRepository {
     }
 
     private JdbcTemplate resolveTemplateSupervisores(String sucursal) {
-        if ("sucre".equals(normalize(sucursal))) {
-            return dbConnectionManager.connDb("sucre");
-        }
-        return dbConnectionManager.connDb("operativa");
+        return resolveJdbcTemplateBySucursalNombre(sucursal);
     }
 
     public List<Map<String, Object>> listarTecnicosPorSupervisorBackoffice(Integer idSupervisor, String sucursal) {

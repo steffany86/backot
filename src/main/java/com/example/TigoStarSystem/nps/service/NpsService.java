@@ -412,10 +412,20 @@ public class NpsService {
             }
         }
 
+        List<Map<String, Object>> supervisoresFallback = filtrosSupervisores == null
+                ? new ArrayList<Map<String, Object>>()
+                : new ArrayList<Map<String, Object>>(filtrosSupervisores);
+        List<Map<String, Object>> tecnicosFallback = filtrosTecnicos == null
+                ? new ArrayList<Map<String, Object>>()
+                : new ArrayList<Map<String, Object>>(filtrosTecnicos);
+
         // Regla de filtros:
         // 1) Supervisores: siempre todos los existentes en conformacion de cuadrillas.
         // 2) Tecnicos: todos los tecnicos del supervisor/sucursal, aunque aun no tengan respuesta NPS.
         filtrosSupervisores = supervisoresConformacion == null ? new ArrayList<Map<String, Object>>() : supervisoresConformacion;
+        if (filtrosSupervisores.isEmpty()) {
+            filtrosSupervisores = supervisoresFallback;
+        }
         List<Map<String, Object>> tecnicosConformacion = listarTecnicosFiltroSupervision(
                 sucursalTemplate,
                 centralTemplate,
@@ -432,6 +442,9 @@ public class NpsService {
             );
         }
         filtrosTecnicos = tecnicosConformacion == null ? new ArrayList<Map<String, Object>>() : tecnicosConformacion;
+        if (filtrosTecnicos.isEmpty()) {
+            filtrosTecnicos = tecnicosFallback;
+        }
 
         // UX/Regla: para rol TECNICO se mantiene su supervisor, pero el filtro de tecnicos
         // muestra todos los tecnicos del grupo resuelto por SP_tecnicos_NPS.
