@@ -19,20 +19,20 @@ BEGIN
 
     IF OBJECT_ID(N'dbo.tbl_ConformacionCuadrillaDiario', N'U') IS NOT NULL
     BEGIN
-        IF COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiario','idUsuarioSupervisor') IS NOT NULL
+        IF COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiario','id_encargado') IS NOT NULL
            AND COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiario','id_tecnico') IS NOT NULL
         BEGIN
             SET @sql = @sql + N'
-            SELECT idUsuarioSupervisor AS idSupervisor, id_tecnico AS idTecnico
+            SELECT id_encargado AS idSupervisor, id_tecnico AS idTecnico
             FROM dbo.tbl_ConformacionCuadrillaDiario
             WHERE ISNULL(e_eliminado,0)=0
             ';
 
-            IF COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiario','id_tecnicoAuxiliar') IS NOT NULL
+            IF COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiario','id_tecnico_auxiliar') IS NOT NULL
             BEGIN
                 SET @sql = @sql + N'
                 UNION ALL
-                SELECT idUsuarioSupervisor AS idSupervisor, id_tecnicoAuxiliar AS idTecnico
+                SELECT id_encargado AS idSupervisor, id_tecnico_auxiliar AS idTecnico
                 FROM dbo.tbl_ConformacionCuadrillaDiario
                 WHERE ISNULL(e_eliminado,0)=0
                 ';
@@ -46,8 +46,8 @@ BEGIN
         DECLARE @auxWeb SYSNAME;
 
         SET @supWeb = CASE
-            WHEN COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiarioWeb','id_usuario_supervisor') IS NOT NULL THEN 'id_usuario_supervisor'
-            WHEN COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiarioWeb','idUsuarioSupervisor') IS NOT NULL THEN 'idUsuarioSupervisor'
+            WHEN COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiarioWeb','id_encargado') IS NOT NULL THEN 'id_encargado'
+            WHEN COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiarioWeb','idEncargado') IS NOT NULL THEN 'idEncargado'
             ELSE NULL END;
 
         SET @auxWeb = CASE

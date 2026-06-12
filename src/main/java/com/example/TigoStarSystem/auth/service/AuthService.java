@@ -13,8 +13,12 @@ import com.example.TigoStarSystem.common.ApiException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.QueryTimeoutException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.BadSqlGrammarException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -33,6 +37,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.sql.SQLException;
 
 @Service
 public class AuthService {
@@ -43,10 +48,12 @@ public class AuthService {
     private final AuthSessionRepository authSessionRepository;
     private final SucursalRepository sucursalRepository;
     private final DbConnectionManager dbConnectionManager;
+    private final JwtService jwtService;
     private final Map<String, AuthSession> sessions = new ConcurrentHashMap<>();
     private final String dbUsername;
     private final String dbPassword;
     private final boolean validarSucursal;
+    private final boolean jwtEnabled;
 
     /**
      * Inicializa el servicio de autenticacion y resuelve configuracion de conexiones.
@@ -56,16 +63,20 @@ public class AuthService {
             AuthSessionRepository authSessionRepository,
             SucursalRepository sucursalRepository,
             DbConnectionManager dbConnectionManager,
+            JwtService jwtService,
             @Value("${spring.datasource.username}") String dbUsername,
             @Value("${spring.datasource.password}") String dbPassword,
-            @Value("${auth.login.validar-sucursal:true}") boolean validarSucursal) {
+            @Value("${auth.login.validar-sucursal:true}") boolean validarSucursal,
+            @Value("${auth.jwt.enabled:true}") boolean jwtEnabled) {
         this.authRepository = authRepository;
         this.authSessionRepository = authSessionRepository;
         this.sucursalRepository = sucursalRepository;
         this.dbConnectionManager = dbConnectionManager;
+        this.jwtService = jwtService;
         this.dbUsername = dbUsername;
         this.dbPassword = dbPassword;
         this.validarSucursal = validarSucursal;
+        this.jwtEnabled = jwtEnabled;
     }
 
     /**
@@ -129,8 +140,23 @@ public class AuthService {
                 );
             }
         }
-        if ((rows == null || rows.isEmpty()) && lastError instanceof RuntimeException) {
-            throw (RuntimeException) lastError;
+        if ((rows == null || rows.isEmpty()) && lastError != null) {
+            if (lastError instanceof DataAccessException) {
+                throw traducirErrorLogin((DataAccessException) lastError, request, sucursal);
+            }
+            Map<String, Object> details = new HashMap<>();
+            details.put("usuario", safe(request == null ? null : request.getUsuario()));
+            details.put("idSucursal", request == null ? null : request.getIdSucursal());
+            details.put("sucursal", sucursal == null ? null : sucursal.sucursal);
+            details.put("host", sucursal == null ? null : sucursal.host);
+            details.put("baseDeDatos", sucursal == null ? null : sucursal.baseDeDatos);
+            details.put("rootCause", lastError.getMessage());
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "LOGIN_EXECUTION_ERROR",
+                    "No se pudo ejecutar la validacion de login para la sucursal seleccionada.",
+                    details
+            );
         }
         logger.debug("Login SP returned {} rows", rows == null ? 0 : rows.size());
         if (rows == null || rows.isEmpty()) {
@@ -164,12 +190,16 @@ public class AuthService {
                 userFromDb.getNecesitaCambio(),
                 userFromDb.getUltimaModificacion()
         );
-        String token = UUID.randomUUID().toString();
         OffsetDateTime expira = OffsetDateTime.now().plus(SESSION_TTL);
+        String token = jwtEnabled
+                ? jwtService.generateAccessToken(user, expira)
+                : UUID.randomUUID().toString();
         AuthSession session = new AuthSession(token, user, expira);
         sessions.put(token, session);
-        authSessionRepository.save(session);
-        authSessionRepository.deleteExpired();
+        if (!jwtEnabled) {
+            authSessionRepository.save(session);
+            authSessionRepository.deleteExpired();
+        }
         return session;
     }
 
@@ -191,7 +221,20 @@ public class AuthService {
      */
     public AuthMeResponse me(String token) {
         if (token == null || isBlank(token)) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_REQUIRED", "SesiÃ³n requerida.");
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_REQUIRED", "Sesion requerida.");
+        }
+        if (jwtEnabled) {
+            JwtService.ParsedToken parsed = jwtService.parseAccessToken(token);
+            AuthLoginResponse usuario = parsed == null ? null : parsed.getUser();
+            OffsetDateTime expira = parsed == null ? null : parsed.getExpira();
+            if (usuario == null || usuario.getIdUsuario() == null) {
+                throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "Sesion invalida.");
+            }
+            if (expira == null) {
+                expira = OffsetDateTime.now().plus(SESSION_TTL);
+            }
+            sessions.put(token, new AuthSession(token, usuario, expira));
+            return new AuthMeResponse(usuario, expira, resolveHostName());
         }
         AuthSession session = sessions.get(token);
         if (session == null) {
@@ -201,12 +244,12 @@ public class AuthService {
             }
         }
         if (session == null) {
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "SesiÃ³n invÃ¡lida.");
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_INVALID", "Sesion invalida.");
         }
         if (session.getExpira().isBefore(OffsetDateTime.now())) {
             sessions.remove(token);
             authSessionRepository.deleteByToken(token);
-            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "SesiÃ³n expirada.");
+            throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "Sesion expirada.");
         }
         return new AuthMeResponse(session.getUsuario(), session.getExpira(), resolveHostName());
     }
@@ -471,6 +514,44 @@ public class AuthService {
         }
     }
 
+    private ApiException traducirErrorLogin(DataAccessException ex, AuthLoginRequest request, SucursalInfo sucursal) {
+        Map<String, Object> details = new HashMap<>();
+        Throwable root = ex.getMostSpecificCause();
+        details.put("storedProcedure", validarSucursal ? "spx_ValidarUsuarioSucursal/spx_ValidarUsuario" : "spx_ValidarUsuario/spx_ValidarUsuarioSucursal");
+        details.put("rootCause", root == null ? ex.getMessage() : root.getMessage());
+        details.put("usuario", safe(request == null ? null : request.getUsuario()));
+        details.put("idSucursal", request == null ? null : request.getIdSucursal());
+        details.put("sucursal", sucursal == null ? null : sucursal.sucursal);
+        details.put("host", sucursal == null ? null : sucursal.host);
+        details.put("baseDeDatos", sucursal == null ? null : sucursal.baseDeDatos);
+
+        if (ex instanceof QueryTimeoutException || ex instanceof CannotAcquireLockException) {
+            return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "SP_TIMEOUT", "El login excedio el tiempo de espera.", details);
+        }
+        if (ex instanceof CannotGetJdbcConnectionException) {
+            return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "DB_CONNECTION_ERROR", "No se pudo conectar a la base de datos de la sucursal.", details);
+        }
+        SQLException sqlEx = findSqlException(ex);
+        if (sqlEx != null && sqlEx.getErrorCode() == 2812) {
+            return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "SP_NOT_FOUND", "No se encontro el procedimiento de validacion de login.", details);
+        }
+        if (ex instanceof BadSqlGrammarException) {
+            return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "SP_SQL_ERROR", "Error SQL al ejecutar la validacion de login.", details);
+        }
+        return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "DATABASE_ERROR", "Error en base de datos al validar login.", details);
+    }
+
+    private SQLException findSqlException(Throwable ex) {
+        Throwable current = ex;
+        while (current != null) {
+            if (current instanceof SQLException) {
+                return (SQLException) current;
+            }
+            current = current.getCause();
+        }
+        return null;
+    }
+
     /**
      * Genera hash MD5 en Base64 para comparar password con SP legacy.
      */
@@ -664,3 +745,4 @@ public class AuthService {
         }
     }
 }
+

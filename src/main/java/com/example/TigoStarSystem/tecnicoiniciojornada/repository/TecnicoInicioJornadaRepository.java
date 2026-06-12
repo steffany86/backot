@@ -84,24 +84,70 @@ public class TecnicoInicioJornadaRepository {
             Object id = findValue(row,
                     "idEncargado", "id_encargado", "id_usuario_supervisor", "idusuariosupervisor",
                     "id_supervisor", "idsupervisor", "id_usuario", "idusuario");
-            Object nombre = findValue(row,
-                    "encargado", "supervisor", "supervisor_a_cargo", "supervisorACargo", "nombre", "NombreSupervisor");
             Object sucursalRow = findValue(row, "sucursal", "Sucursal");
-            if (id == null || nombre == null) {
-                continue;
+            Integer idEncargado = toInteger(id);
+            String nombreEncargado = obtenerNombreUsuarioPorId(template, idEncargado);
+            if (nombreEncargado == null || nombreEncargado.trim().isEmpty()) {
+                Object nombreFromRow = findValue(row, "supervisorACargo", "supervisor_a_cargo", "encargado", "supervisor");
+                if (nombreFromRow != null) {
+                    String text = String.valueOf(nombreFromRow).trim();
+                    if (!text.isEmpty()) {
+                        nombreEncargado = text;
+                    }
+                }
             }
-            String idText = String.valueOf(id).trim();
-            String nombreText = String.valueOf(nombre).trim();
-            if (idText.isEmpty() || nombreText.isEmpty()) {
+            if (idEncargado == null || idEncargado <= 0) {
+                // Fallback: en algunos registros historicos viene id=0 pero si nombre valido.
+                idEncargado = obtenerIdUsuarioPorNombre(template, nombreEncargado);
+            }
+            if (idEncargado == null || idEncargado <= 0) {
                 continue;
             }
             Map<String, Object> out = new LinkedHashMap<>();
-            out.put("idEncargado", idText);
-            out.put("encargado", nombreText);
+            out.put("idEncargado", String.valueOf(idEncargado));
+            if (nombreEncargado != null && !nombreEncargado.trim().isEmpty()) {
+                out.put("encargado", nombreEncargado.trim());
+            }
             if (sucursalRow != null) {
                 out.put("sucursal", String.valueOf(sucursalRow).trim());
             }
             return out;
+        }
+        return null;
+    }
+
+    private Integer obtenerIdUsuarioPorNombre(JdbcTemplate template, String nombreUsuario) {
+        String nombre = toText(nombreUsuario);
+        if (template == null || nombre == null) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = template.queryForList(
+                    "SELECT TOP 1 Id_Usuario FROM dbo.tbl_Usuario " +
+                            "WHERE ISNULL(E_Eliminado,0)=0 AND UPPER(LTRIM(RTRIM(Nombre))) = UPPER(LTRIM(RTRIM(?)))",
+                    nombre
+            );
+            if (rows != null && !rows.isEmpty()) {
+                Integer id = toInteger(findValue(rows.get(0), "Id_Usuario", "id_usuario", "idUsuario"));
+                if (id != null && id > 0) {
+                    return id;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        try {
+            List<Map<String, Object>> rows = template.queryForList("EXEC dbo.SP_Usuario_ListarActivosBasico");
+            for (Map<String, Object> row : rows) {
+                String nombreRow = toText(findValue(row, "nombre", "Nombre"));
+                if (nombreRow == null || !nombreRow.equalsIgnoreCase(nombre)) {
+                    continue;
+                }
+                Integer id = toInteger(findValue(row, "idUsuario", "Id_Usuario", "id_usuario"));
+                if (id != null && id > 0) {
+                    return id;
+                }
+            }
+        } catch (Exception ignored) {
         }
         return null;
     }
@@ -297,6 +343,25 @@ public class TecnicoInicioJornadaRepository {
         );
     }
 
+    public int actualizarUbicacionInicio(JdbcTemplate template, Integer idInicio, String ubicacionGeoRef) {
+        if (template == null || idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        String ubicacion = toText(ubicacionGeoRef);
+        if (ubicacion == null) {
+            return 0;
+        }
+        try {
+            return template.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET ubicacion_georef = ? WHERE id_inicio = ?",
+                    ubicacion,
+                    idInicio
+            );
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
     public List<Map<String, Object>> cerrarJornada(
             JdbcTemplate template,
             Integer idTecnico,
@@ -352,6 +417,28 @@ public class TecnicoInicioJornadaRepository {
         );
     }
 
+    public String obtenerNombreUsuarioPorId(JdbcTemplate template, Integer idUsuario) {
+        if (template == null || idUsuario == null || idUsuario <= 0) {
+            return null;
+        }
+        String nombre = queryNombre(
+                template,
+                "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ? AND ISNULL(E_Eliminado,0)=0",
+                idUsuario
+        );
+        if (nombre != null) return nombre;
+        try {
+            List<Map<String, Object>> rows = template.queryForList("EXEC dbo.SP_Usuario_ListarActivosBasico");
+            for (Map<String, Object> row : rows) {
+                Integer id = toInteger(findValue(row, "idUsuario", "id_usuario", "Id_Usuario"));
+                if (id == null || !id.equals(idUsuario)) continue;
+                String n = toText(findValue(row, "nombre", "Nombre"));
+                if (n != null) return n;
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
     private String queryNombre(JdbcTemplate template, String sql, Integer id) {
         try {
             List<Map<String, Object>> rows = template.queryForList(sql, id);
@@ -363,6 +450,24 @@ public class TecnicoInicioJornadaRepository {
         } catch (Exception ex) {
             return null;
         }
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private String toText(Object value) {
+        if (value == null) return null;
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
     }
 
     private Set<String> obtenerColumnasInicioJornada(JdbcTemplate template) {

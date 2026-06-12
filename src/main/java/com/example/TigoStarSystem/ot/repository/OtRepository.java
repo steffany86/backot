@@ -190,10 +190,52 @@ public class OtRepository {
     }
 
     public List<Map<String, Object>> obtenerOrdenTrabajoPorIdVenta(Long idVenta, Integer idSucursal) {
+        if (idVenta == null || idVenta <= 0) {
+            return Collections.emptyList();
+        }
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT TOP (1) " +
+                            "v.Id_Venta AS Id_Venta, " +
+                            "v.Id_Usuario AS Id_Usuario, " +
+                            "v.Id_Vendedor AS Id_Vendedor, " +
+                            "v.Id_Ruta AS Id_Ruta, " +
+                            "v.Id_TipoServicio AS Id_TipoServicio, " +
+                            "v.Fecha_Ejecucion AS Fecha_Ejecucion, " +
+                            "v.Fecha_Registro AS Fecha_Registro, " +
+                            "v.OrdenTrabajo AS OrdenTrabajo, " +
+                            "v.CodigoCliente AS CodigoCliente, " +
+                            "v.Observacion AS Observacion, " +
+                            "v.Total AS Total, " +
+                            "v.Id_Estado AS Id_Estado, " +
+                            "v.Origen AS Origen, " +
+                            "v.Latitud AS Latitud, " +
+                            "v.Longitud AS Longitud, " +
+                            "v.RutaPdf AS RutaPdf, " +
+                            "v.Nodo AS Nodo, " +
+                            "v.Ramal AS Ramal, " +
+                            "v.Tap AS Tap, " +
+                            "v.Boca AS Boca, " +
+                            "v.TipoTecnologia AS TipoTecnologia, " +
+                            "v.CheckPlantaExterna AS CheckPlantaExterna, " +
+                            "e.Nombre AS Estado, " +
+                            "ts.Nombre AS TipoServicio " +
+                            "FROM dbo.tbl_Venta v " +
+                            "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
+                            "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
+                            "WHERE v.Id_Venta = ? AND ISNULL(v.E_Eliminado, 0) = 0 " +
+                            "ORDER BY v.Id_Venta DESC",
+                    idVenta
+            );
+            if (rows != null && !rows.isEmpty()) {
+                return rows;
+            }
+        } catch (DataAccessException ex) {
+            logger.debug("Fallback a SP por error en query directa de cabecera idVenta={}: {}", idVenta, ex.getMessage());
+        }
         return queryForListByIdVentaConSpAlternativos(
                 idVenta,
                 idSucursal,
-                "sp_ObtenerCabezeraOrdenTrabajo_X_Numero",
                 "sp_ObtenerOrdenTrabajo_X_Id_Venta"
         );
     }
@@ -209,8 +251,8 @@ public class OtRepository {
         List<Map<String, Object>> rows = queryForListByIdVentaConSpAlternativos(
                 idVenta,
                 idSucursal,
-                "sp_ObtenerInstalado_X_Numero",
-                "sp_ObtenerDetalleVenta_Instalado_X_ID"
+                "sp_ObtenerDetalleVenta_Instalado_X_ID",
+                "sp_ObtenerInstalado_X_Numero"
         );
         return enrichRowsConTipoMaterial(rows, idVenta, idSucursal);
     }
@@ -219,8 +261,8 @@ public class OtRepository {
         List<Map<String, Object>> rows = queryForListByIdVentaConSpAlternativos(
                 idVenta,
                 idSucursal,
-                "sp_ObteneRetirado_X_Numero",
-                "sp_ObtenerDetalleVenta_Retirado_X_ID"
+                "sp_ObtenerDetalleVenta_Retirado_X_ID",
+                "sp_ObteneRetirado_X_Numero"
         );
         return enrichRowsConTipoMaterial(rows, idVenta, idSucursal);
     }
@@ -436,13 +478,94 @@ public class OtRepository {
     }
 
     public Map<String, Object> obtenerUltimaVentaPorOrdenYCliente(Integer ordenTrabajo, Integer codigoCliente, Integer idSucursal) {
+        return obtenerUltimaVentaPorOrdenYCliente(ordenTrabajo, codigoCliente, null, idSucursal);
+    }
+
+    public boolean existeVentaPorOrdenTrabajo(Integer ordenTrabajo, Integer idSucursal) {
+        if (ordenTrabajo == null || ordenTrabajo <= 0) {
+            return false;
+        }
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT TOP (1) 1 AS existe " +
+                            "FROM dbo.tbl_Venta v " +
+                            "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                            "AND v.OrdenTrabajo = ?",
+                    ordenTrabajo
+            );
+            return rows != null && !rows.isEmpty();
+        } catch (DataAccessException ex) {
+            return false;
+        }
+    }
+
+    public Map<String, Object> obtenerUltimaVentaPorOrdenYCliente(
+            Integer ordenTrabajo,
+            Integer codigoCliente,
+            LocalDate fechaEjecucion,
+            Integer idSucursal) {
         if (ordenTrabajo == null || ordenTrabajo <= 0 || codigoCliente == null || codigoCliente <= 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows;
+            if (fechaEjecucion != null) {
+                rows = template(idSucursal).queryForList(
+                        "SELECT TOP (1) " +
+                                "v.Id_Venta AS idVenta, " +
+                                "v.OrdenTrabajo AS ordenTrabajo, " +
+                                "v.CodigoCliente AS codigoCliente, " +
+                                "v.Origen AS origen, " +
+                                "v.Id_Estado AS idEstado, " +
+                                "v.Fecha_Ejecucion AS fechaEjecucion " +
+                                "FROM dbo.tbl_Venta v " +
+                                "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                                "AND CONVERT(DATE, v.Fecha_Ejecucion) = ? " +
+                                "AND v.OrdenTrabajo = ? " +
+                                "AND v.CodigoCliente = ? " +
+                                "ORDER BY v.Id_Venta DESC",
+                        sqlDate(fechaEjecucion),
+                        ordenTrabajo,
+                        codigoCliente
+                );
+            } else {
+                rows = template(idSucursal).queryForList(
+                        "SELECT TOP (1) " +
+                                "v.Id_Venta AS idVenta, " +
+                                "v.OrdenTrabajo AS ordenTrabajo, " +
+                                "v.CodigoCliente AS codigoCliente, " +
+                                "v.Origen AS origen, " +
+                                "v.Id_Estado AS idEstado, " +
+                                "v.Fecha_Ejecucion AS fechaEjecucion " +
+                                "FROM dbo.tbl_Venta v " +
+                                "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                                "AND v.OrdenTrabajo = ? " +
+                                "AND v.CodigoCliente = ? " +
+                                "ORDER BY v.Id_Venta DESC",
+                        ordenTrabajo,
+                        codigoCliente
+                );
+            }
+            return rows == null || rows.isEmpty() ? null : rows.get(0);
+        } catch (DataAccessException ex) {
+            return null;
+        }
+    }
+
+    public Map<String, Object> obtenerVentaPorFechaOrdenYCliente(
+            LocalDate fechaEjecucion,
+            Integer ordenTrabajo,
+            Integer codigoCliente,
+            Integer idSucursal) {
+        if (fechaEjecucion == null || ordenTrabajo == null || ordenTrabajo <= 0 || codigoCliente == null || codigoCliente <= 0) {
             return null;
         }
         try {
             List<Map<String, Object>> rows = template(idSucursal).queryForList(
                     "SELECT TOP (1) " +
                             "v.Id_Venta AS idVenta, " +
+                            "v.Id_Ruta AS idRuta, " +
+                            "v.Id_TipoServicio AS idTipoServicio, " +
                             "v.OrdenTrabajo AS ordenTrabajo, " +
                             "v.CodigoCliente AS codigoCliente, " +
                             "v.Origen AS origen, " +
@@ -450,9 +573,11 @@ public class OtRepository {
                             "v.Fecha_Ejecucion AS fechaEjecucion " +
                             "FROM dbo.tbl_Venta v " +
                             "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                            "AND CONVERT(DATE, v.Fecha_Ejecucion) = ? " +
                             "AND v.OrdenTrabajo = ? " +
                             "AND v.CodigoCliente = ? " +
                             "ORDER BY v.Id_Venta DESC",
+                    sqlDate(fechaEjecucion),
                     ordenTrabajo,
                     codigoCliente
             );
@@ -630,8 +755,8 @@ public class OtRepository {
         );
     }
 
-    public Map<String, Object> validarSerieChipIdUnicos(String serie, String chipId) {
-        List<Map<String, Object>> rows = template(null).queryForList(
+    public Map<String, Object> validarSerieChipIdUnicos(String serie, String chipId, Integer idSucursal) {
+        List<Map<String, Object>> rows = template(idSucursal).queryForList(
                 "SELECT TOP 1 serial, chipid, id_producto, e_eliminado " +
                         "FROM dbo.tbl_productos " +
                         "WHERE (serial = ? OR chipid = ?) AND e_eliminado = 0",
@@ -917,12 +1042,16 @@ public class OtRepository {
             Integer nroOT,
             Integer numeroCliente,
             Integer idSucursal) {
-        return template(idSucursal).queryForMap(
+        List<Map<String, Object>> rows = template(idSucursal).queryForList(
                 "EXEC dbo.spx_ValidarVentaYDetallewb ?, ?, ?",
                 sqlDate(fecha),
                 nroOT,
                 numeroCliente
         );
+        if (rows == null || rows.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        return rows.get(0);
     }
 
     public int contarDetallesPorIdVenta(Long idVenta, Integer idSucursal) {
@@ -964,21 +1093,9 @@ public class OtRepository {
             Integer ordenTrabajo,
             Integer codigoCliente,
             Integer idSucursal) {
-        if (fechaEjecucion == null || ordenTrabajo == null || ordenTrabajo <= 0 || codigoCliente == null || codigoCliente <= 0) {
-            return 0;
-        }
-        return template(idSucursal).update(
-                "UPDATE dbo.tbl_Venta " +
-                        "SET Origen = 'OT_WEB' " +
-                        "WHERE CONVERT(DATE, Fecha_Ejecucion) = ? " +
-                        "AND OrdenTrabajo = ? " +
-                        "AND CodigoCliente = ? " +
-                        "AND ISNULL(E_Eliminado, 0) = 0 " +
-                        "AND UPPER(LTRIM(RTRIM(ISNULL(Origen, '')))) = 'MANUAL'",
-                sqlDate(fechaEjecucion),
-                ordenTrabajo,
-                codigoCliente
-        );
+        // Deshabilitado por requerimiento funcional:
+        // no modificar automaticamente el campo Origen.
+        return 0;
     }
 
     public Map<String, Object> registrarOt(
@@ -1136,6 +1253,11 @@ public class OtRepository {
 
     private JdbcTemplate template(Integer idSucursal) {
         return dbSupport.resolveTemplate(idSucursal, jdbcTemplate);
+    }
+
+    public javax.sql.DataSource dataSource(Integer idSucursal) {
+        JdbcTemplate target = template(idSucursal);
+        return target == null ? null : target.getDataSource();
     }
 
     private Date sqlDate(LocalDate date) {

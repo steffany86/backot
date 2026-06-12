@@ -15,6 +15,7 @@ BEGIN
             idUsuarioSupervisor AS idSupervisor,
             id_tecnico AS idTecnico,
             sucursal,
+            fecha,
             e_eliminado
         FROM dbo.tbl_ConformacionCuadrillaDiario
 
@@ -24,6 +25,7 @@ BEGIN
             idUsuarioSupervisor AS idSupervisor,
             id_tecnicoAuxiliar AS idTecnico,
             sucursal,
+            fecha,
             e_eliminado
         FROM dbo.tbl_ConformacionCuadrillaDiario
     )
@@ -33,6 +35,7 @@ BEGIN
     WHERE b.idSupervisor = @IdSupervisor
       AND b.idTecnico IS NOT NULL
       AND ISNULL(b.e_eliminado,0) = 0
+      AND CONVERT(date, b.fecha) = CONVERT(date, GETDATE())
       AND (
             @Suc IS NULL
             OR LTRIM(RTRIM(ISNULL(b.sucursal, ''))) = @Suc

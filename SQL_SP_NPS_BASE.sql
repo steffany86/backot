@@ -35,14 +35,31 @@ ALTER PROCEDURE dbo.SP_NPS_LISTAR_TECNICOS_POR_SUPERVISOR
 AS
 BEGIN
   SET NOCOUNT ON;
+  ;WITH base AS (
+    SELECT
+      cc.id_tecnico AS idTecnico,
+      cc.tecnico AS tecnico
+    FROM dbo.tbl_ConformacionCuadrillaDiario cc
+    WHERE ISNULL(cc.e_eliminado, 0) = 0
+      AND CONVERT(date, cc.fecha) = CONVERT(date, GETDATE())
+      AND (@IdSupervisor = 0 OR cc.idUsuarioSupervisor = @IdSupervisor)
+
+    UNION
+
+    SELECT
+      cc.id_tecnicoAuxiliar AS idTecnico,
+      cc.auxiliar AS tecnico
+    FROM dbo.tbl_ConformacionCuadrillaDiario cc
+    WHERE ISNULL(cc.e_eliminado, 0) = 0
+      AND CONVERT(date, cc.fecha) = CONVERT(date, GETDATE())
+      AND (@IdSupervisor = 0 OR cc.idUsuarioSupervisor = @IdSupervisor)
+  )
   SELECT DISTINCT
-    cc.id_tecnico AS idTecnico,
-    ISNULL(ut.Nombre, cc.tecnico) AS tecnico
-  FROM dbo.tbl_ConformacionCuadrillaDiario cc
-  LEFT JOIN dbo.tbl_UsuarioTecnico ut ON ut.Id_Tecnico = cc.id_tecnico
-  WHERE ISNULL(cc.e_eliminado, 0) = 0
-    AND (@IdSucursal IS NULL OR cc.id_sucursal = @IdSucursal)
-    AND (@IdSupervisor = 0 OR cc.id_usuario_supervisor = @IdSupervisor)
+    b.idTecnico,
+    COALESCE(NULLIF(LTRIM(RTRIM(ut.Nombre)), ''), NULLIF(LTRIM(RTRIM(b.tecnico)), ''), 'Tecnico ' + CONVERT(NVARCHAR(20), b.idTecnico)) AS tecnico
+  FROM base b
+  LEFT JOIN dbo.tbl_UsuarioTecnico ut ON ut.Id_Tecnico = b.idTecnico
+  WHERE b.idTecnico IS NOT NULL
   ORDER BY tecnico;
 END
 GO
@@ -58,11 +75,10 @@ AS
 BEGIN
   SET NOCOUNT ON;
   SELECT TOP 1
-    id_usuario_supervisor AS idSupervisor,
+    idUsuarioSupervisor AS idSupervisor,
     id_tecnico AS idTecnico
   FROM dbo.tbl_ConformacionCuadrillaDiario
-  WHERE id_tecnico = @IdTecnico
-    AND (@IdSucursal IS NULL OR id_sucursal = @IdSucursal)
+  WHERE (id_tecnico = @IdTecnico OR id_tecnicoAuxiliar = @IdTecnico)
     AND ISNULL(e_eliminado,0) = 0
   ORDER BY id DESC;
 END
@@ -94,8 +110,8 @@ BEGIN
       AND (@IdSupervisor IS NULL OR EXISTS (
             SELECT 1
             FROM dbo.tbl_ConformacionCuadrillaDiario cc
-            WHERE cc.id_tecnico = CONVERT(INT, r.tecnicoid)
-              AND cc.id_usuario_supervisor = @IdSupervisor
+            WHERE (cc.id_tecnico = CONVERT(INT, r.tecnicoid) OR cc.id_tecnicoAuxiliar = CONVERT(INT, r.tecnicoid))
+              AND cc.idUsuarioSupervisor = @IdSupervisor
               AND ISNULL(cc.e_eliminado,0)=0
       ))
   )

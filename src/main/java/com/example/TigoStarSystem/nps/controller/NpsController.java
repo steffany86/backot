@@ -25,6 +25,7 @@ public class NpsController {
     @GetMapping("/dashboard")
     public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerDashboard(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "modo", required = false) String modo,
             @RequestParam(value = "fechaInicio", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaInicio,
             @RequestParam(value = "fechaFin", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaFin,
             @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
@@ -34,7 +35,7 @@ public class NpsController {
             @RequestParam(value = "tecnicoNombre", required = false) String tecnicoNombre
     ) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.obtenerDashboard(token, fechaInicio, fechaFin, idSucursal, idSupervisor, idTecnico, supervisorNombre, tecnicoNombre),
+                service.obtenerDashboard(token, modo, fechaInicio, fechaFin, idSucursal, idSupervisor, idTecnico, supervisorNombre, tecnicoNombre),
                 "Dashboard NPS"
         ));
     }
@@ -42,6 +43,7 @@ public class NpsController {
     @GetMapping("/filtros")
     public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerFiltros(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "modo", required = false) String modo,
             @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(value = "idSupervisor", required = false) Integer idSupervisor,
             @RequestParam(value = "idTecnico", required = false) Integer idTecnico,
@@ -49,7 +51,7 @@ public class NpsController {
             @RequestParam(value = "tecnicoNombre", required = false) String tecnicoNombre
     ) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.obtenerFiltros(token, idSucursal, idSupervisor, idTecnico, supervisorNombre, tecnicoNombre),
+                service.obtenerFiltros(token, modo, idSucursal, idSupervisor, idTecnico, supervisorNombre, tecnicoNombre),
                 "Filtros NPS"
         ));
     }

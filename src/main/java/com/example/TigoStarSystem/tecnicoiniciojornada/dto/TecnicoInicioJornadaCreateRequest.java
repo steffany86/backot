@@ -16,6 +16,7 @@ public class TecnicoInicioJornadaCreateRequest {
     private String escalera;
     private String anclaje;
     private String imagen;
+    private String ubicacionGeoRef;
     private String sucursal;
 
     public Integer getIdAuxiliar() {
@@ -120,6 +121,14 @@ public class TecnicoInicioJornadaCreateRequest {
 
     public void setImagen(String imagen) {
         this.imagen = imagen;
+    }
+
+    public String getUbicacionGeoRef() {
+        return ubicacionGeoRef;
+    }
+
+    public void setUbicacionGeoRef(String ubicacionGeoRef) {
+        this.ubicacionGeoRef = ubicacionGeoRef;
     }
 
     public String getSucursal() {

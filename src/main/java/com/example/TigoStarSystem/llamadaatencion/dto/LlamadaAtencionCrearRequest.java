@@ -8,6 +8,9 @@ public class LlamadaAtencionCrearRequest {
     @NotBlank(message = "idTecnico es requerido")
     private String idTecnico;
 
+    @Size(max = 250, message = "tecnico no puede exceder 250 caracteres")
+    private String tecnico;
+
     @NotBlank(message = "codEmpleado es requerido")
     private String codEmpleado;
 
@@ -42,6 +45,14 @@ public class LlamadaAtencionCrearRequest {
 
     public void setIdTecnico(String idTecnico) {
         this.idTecnico = idTecnico;
+    }
+
+    public String getTecnico() {
+        return tecnico;
+    }
+
+    public void setTecnico(String tecnico) {
+        this.tecnico = tecnico;
     }
 
     public String getCodEmpleado() {

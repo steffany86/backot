@@ -7,11 +7,14 @@ import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.config.DbConnectionManager;
 import com.example.TigoStarSystem.nps.repository.NpsRepository;
+import com.example.TigoStarSystem.supervision.repository.SupervisionRepository;
+import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -24,6 +27,7 @@ import java.util.Set;
 @Service
 public class NpsService {
     private final NpsRepository repository;
+    private final SupervisionRepository supervisionRepository;
     private final AuthService authService;
     private final DbConnectionManager dbConnectionManager;
     private final String defaultDbUsername;
@@ -31,11 +35,13 @@ public class NpsService {
 
     public NpsService(
             NpsRepository repository,
+            SupervisionRepository supervisionRepository,
             AuthService authService,
             DbConnectionManager dbConnectionManager,
             @Value("${spring.datasource.username}") String defaultDbUsername,
             @Value("${spring.datasource.password}") String defaultDbPassword) {
         this.repository = repository;
+        this.supervisionRepository = supervisionRepository;
         this.authService = authService;
         this.dbConnectionManager = dbConnectionManager;
         this.defaultDbUsername = defaultDbUsername;
@@ -44,6 +50,7 @@ public class NpsService {
 
     public Map<String, Object> obtenerDashboard(
             String token,
+            String modo,
             LocalDate fechaInicio,
             LocalDate fechaFin,
             Integer idSucursal,
@@ -60,27 +67,92 @@ public class NpsService {
         String tecnicoNombreObjetivo = (String) scope.get("tecnicoNombre");
         String rolConsulta = (String) scope.get("scope");
         JdbcTemplate centralTemplate = dbConnectionManager.connDb("central");
-
-        List<Map<String, Object>> data = repository.obtenerDashboard(
-                centralTemplate,
-                fechaInicio,
-                fechaFin,
-                sucursalObjetivo,
-                supervisorObjetivo,
-                tecnicoObjetivo,
-                supervisorNombreObjetivo,
-                tecnicoNombreObjetivo,
-                rolConsulta,
-                idUsuarioSesion
-        );
         JdbcTemplate sucursalTemplate = resolveSucursalTemplate(sucursalObjetivo);
-        data = filtrarDashboardPorInterseccionTecnicos(
-                centralTemplate,
-                sucursalTemplate,
-                sucursalObjetivo,
-                supervisorObjetivo,
-                data
-        );
+        boolean modoInvitado = isModoInvitado(modo);
+        Integer supervisorParaConsulta = supervisorObjetivo;
+
+        // Para supervisor: si el usuario elige tecnico explicito,
+        // no bloquear por idSupervisor historico del registro (aplica en ambos modos NPS).
+        if ("SUPERVISOR".equalsIgnoreCase(rolConsulta)
+                && (tecnicoObjetivo != null || !isBlank(tecnicoNombreObjetivo))) {
+            supervisorParaConsulta = null;
+        }
+
+        LocalDate fechaInicioConsulta = fechaInicio;
+        LocalDate fechaFinConsulta = fechaFin;
+        if (modoInvitado) {
+            fechaFinConsulta = LocalDate.now();
+            fechaInicioConsulta = fechaFinConsulta.minusDays(3);
+        }
+
+        // En NPS Invitado para rol TECNICO: forzar filtro por el tecnico logueado.
+        // Esto evita que vea datos de otros tecnicos de su supervisor.
+        if (modoInvitado && "TECNICO".equalsIgnoreCase(rolConsulta)) {
+            String tecnicoSesion = resolveNombreTecnicoSesion(
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    tecnicoObjetivo,
+                    idUsuarioSesion
+            );
+            if (!isBlank(tecnicoSesion)) {
+                tecnicoNombreObjetivo = tecnicoSesion;
+            }
+            // Evitar que un idTecnico de mapeo distinto deje sin resultados.
+            tecnicoObjetivo = null;
+        }
+        // En NPS Respuestas para tecnico: usar nombre del tecnico logueado como fallback
+        // cuando el idTecnico de mapeo no coincide con los datos NPS historicos.
+        if (!modoInvitado && "TECNICO".equalsIgnoreCase(rolConsulta) && isBlank(tecnicoNombreObjetivo)) {
+            String tecnicoSesion = resolveNombreTecnicoSesion(
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    tecnicoObjetivo,
+                    idUsuarioSesion
+            );
+            if (!isBlank(tecnicoSesion)) {
+                tecnicoNombreObjetivo = tecnicoSesion;
+            }
+        }
+        if (!modoInvitado && "TECNICO".equalsIgnoreCase(rolConsulta) && !isBlank(tecnicoNombreObjetivo)) {
+            // En respuestas priorizar nombre del tecnico para no depender de id_vendedor legacy.
+            tecnicoObjetivo = null;
+        }
+
+        List<Map<String, Object>> data = modoInvitado
+                ? repository.obtenerDashboardInvitado(
+                    centralTemplate,
+                    fechaInicioConsulta,
+                    fechaFinConsulta,
+                    sucursalObjetivo,
+                    supervisorParaConsulta,
+                    tecnicoObjetivo,
+                    supervisorNombreObjetivo,
+                    tecnicoNombreObjetivo
+                )
+                : repository.obtenerDashboard(
+                    centralTemplate,
+                    fechaInicioConsulta,
+                    fechaFinConsulta,
+                    sucursalObjetivo,
+                    supervisorParaConsulta,
+                    tecnicoObjetivo,
+                    supervisorNombreObjetivo,
+                    tecnicoNombreObjetivo,
+                    rolConsulta,
+                    idUsuarioSesion
+                );
+        if (modoInvitado) {
+            data = filtrarDashboardPorInterseccionTecnicos(
+                    centralTemplate,
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    tecnicoNombreObjetivo,
+                    data
+            );
+        }
         boolean permitirFallbackFechas =
                 supervisorObjetivo == null
                 && tecnicoObjetivo == null
@@ -88,25 +160,39 @@ public class NpsService {
                 && isBlank(tecnicoNombreObjetivo);
         boolean fallbackUltimaFecha = false;
         if (permitirFallbackFechas && data.isEmpty() && (fechaInicio != null || fechaFin != null)) {
-            data = repository.obtenerDashboard(
-                    centralTemplate,
-                    null,
-                    null,
-                    sucursalObjetivo,
-                    supervisorObjetivo,
-                    tecnicoObjetivo,
-                    supervisorNombreObjetivo,
-                    tecnicoNombreObjetivo,
-                    rolConsulta,
-                    idUsuarioSesion
-            );
-            data = filtrarDashboardPorInterseccionTecnicos(
-                    centralTemplate,
-                    sucursalTemplate,
-                    sucursalObjetivo,
-                    supervisorObjetivo,
-                    data
-            );
+            data = modoInvitado
+                    ? repository.obtenerDashboardInvitado(
+                        centralTemplate,
+                        LocalDate.now().minusDays(3),
+                        LocalDate.now(),
+                        sucursalObjetivo,
+                        supervisorParaConsulta,
+                        tecnicoObjetivo,
+                        supervisorNombreObjetivo,
+                        tecnicoNombreObjetivo
+                    )
+                    : repository.obtenerDashboard(
+                        centralTemplate,
+                        null,
+                        null,
+                        sucursalObjetivo,
+                        supervisorParaConsulta,
+                        tecnicoObjetivo,
+                        supervisorNombreObjetivo,
+                        tecnicoNombreObjetivo,
+                        rolConsulta,
+                        idUsuarioSesion
+                    );
+            if (modoInvitado) {
+                data = filtrarDashboardPorInterseccionTecnicos(
+                        centralTemplate,
+                        sucursalTemplate,
+                        sucursalObjetivo,
+                        supervisorObjetivo,
+                        tecnicoNombreObjetivo,
+                        data
+                );
+            }
             fallbackUltimaFecha = !data.isEmpty();
         }
 
@@ -115,6 +201,7 @@ public class NpsService {
         out.put("idSucursal", sucursalObjetivo);
         out.put("idSupervisor", supervisorObjetivo);
         out.put("idTecnico", tecnicoObjetivo);
+        out.put("modo", modoInvitado ? "nps_invitado" : "nps_respuestas");
         out.put("fallbackUltimaFecha", fallbackUltimaFecha);
         out.put("rows", data);
         out.put("filtros", obtenerFiltrosInterno(scope));
@@ -123,6 +210,7 @@ public class NpsService {
 
     public Map<String, Object> obtenerFiltros(
             String token,
+            String modo,
             Integer idSucursal,
             Integer idSupervisor,
             Integer idTecnico,
@@ -134,8 +222,15 @@ public class NpsService {
         out.put("idSucursal", scope.get("idSucursal"));
         out.put("idSupervisor", scope.get("idSupervisor"));
         out.put("idTecnico", scope.get("idTecnico"));
+        out.put("modo", isModoInvitado(modo) ? "nps_invitado" : "nps_respuestas");
         out.put("filtros", obtenerFiltrosInterno(scope));
         return out;
+    }
+
+    private boolean isModoInvitado(String modo) {
+        if (modo == null) return false;
+        String m = modo.trim().toLowerCase();
+        return m.equals("nps_invitado") || m.equals("invitado") || m.equals("npsinvitado");
     }
 
     private Map<String, Object> resolveScope(
@@ -177,7 +272,9 @@ public class NpsService {
             tecnicoObjetivo = idsTecnicoNps.isEmpty() ? idUsuarioSesion : idsTecnicoNps.get(0);
             Integer idSupervisorSesion = resolveSupervisorDelTecnico(centralTemplate, sucursalObjetivo, idUsuarioSesion);
             supervisorObjetivo = idSupervisorSesion;
-            tecnicoNombre = usuario.getNombre();
+            // Evitar filtro por nombre para tecnico: en algunas BD llega con codificacion distinta (ej. CARREÃƒÂ‘O),
+            // y termina vaciando resultados aunque existan filas por idTecnico.
+            tecnicoNombre = trimToNull(usuario.getNombre());
             supervisorNombre = null;
         } else if (esSupervisor) {
             rolConsulta = "SUPERVISOR";
@@ -237,9 +334,17 @@ public class NpsService {
                     sucursalObjetivo,
                     supervisorObjetivo == null ? 0 : supervisorObjetivo
             );
+            Integer idTecnicoScope = asInteger(scope.get("idTecnico"));
+            String tecnicoNombreScope = asText(scope.get("tecnicoNombre"));
+            String tecnicoNombreScopeKey = normalizeKey(tecnicoNombreScope);
             List<Map<String, Object>> propios = new ArrayList<Map<String, Object>>();
             for (Map<String, Object> row : filtrosTecnicos) {
-                if (idUsuarioSesion.equals(asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario")))) {
+                Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+                String nombreFila = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
+                boolean coincideIdTecnico = idTecnicoScope != null && idFila != null && idTecnicoScope.equals(idFila);
+                boolean coincideIdSesion = idUsuarioSesion.equals(idFila);
+                boolean coincideNombre = !isBlank(tecnicoNombreScopeKey) && tecnicoNombreScopeKey.equals(normalizeKey(nombreFila));
+                if (coincideIdTecnico || coincideIdSesion || coincideNombre) {
                     propios.add(row);
                 }
             }
@@ -307,18 +412,151 @@ public class NpsService {
             }
         }
 
-        // Regla solicitada:
+        // Regla de filtros:
         // 1) Supervisores: siempre todos los existentes en conformacion de cuadrillas.
-        // 2) Tecnicos: solo interseccion entre conformacion de cuadrillas y NPS.
+        // 2) Tecnicos: todos los tecnicos del supervisor/sucursal, aunque aun no tengan respuesta NPS.
         filtrosSupervisores = supervisoresConformacion == null ? new ArrayList<Map<String, Object>>() : supervisoresConformacion;
-        List<Map<String, Object>> tecnicosConformacion =
-                repository.listarTecnicosPorSupervisor(sucursalTemplate, sucursalObjetivo, supervisorObjetivo == null ? 0 : supervisorObjetivo);
-        filtrosTecnicos = interseccionTecnicosConNps(centralTemplate, sucursalObjetivo, filtrosTecnicos, tecnicosConformacion);
+        List<Map<String, Object>> tecnicosConformacion = listarTecnicosFiltroSupervision(
+                sucursalTemplate,
+                centralTemplate,
+                sucursalObjetivo,
+                supervisorObjetivo == null ? 0 : supervisorObjetivo,
+                idUsuarioSesion
+        );
+        if ((tecnicosConformacion == null || tecnicosConformacion.isEmpty()) && supervisorObjetivo != null) {
+            // Fallback: cuando la sucursal no tiene conformacion local cargada, usar historico central.
+            tecnicosConformacion = repository.listarTecnicosHistoricosSupervisorNps(
+                    centralTemplate,
+                    supervisorObjetivo,
+                    sucursalObjetivo
+            );
+        }
+        filtrosTecnicos = tecnicosConformacion == null ? new ArrayList<Map<String, Object>>() : tecnicosConformacion;
+
+        // UX/Regla: para rol TECNICO se mantiene su supervisor, pero el filtro de tecnicos
+        // muestra todos los tecnicos del grupo resuelto por SP_tecnicos_NPS.
+        if ("TECNICO".equalsIgnoreCase(rolConsulta)) {
+            filtrosSupervisores = filtrarSupervisorTecnico(
+                    filtrosSupervisores,
+                    supervisorObjetivo,
+                    idUsuarioSesion
+            );
+        }
 
         Map<String, Object> filtros = new HashMap<String, Object>();
         filtros.put("supervisores", filtrosSupervisores);
         filtros.put("tecnicos", filtrosTecnicos);
         return filtros;
+    }
+
+    private List<Map<String, Object>> listarTecnicosFiltroSupervision(
+            JdbcTemplate sucursalTemplate,
+            JdbcTemplate gruposTemplate,
+            Integer idSucursal,
+            Integer idSupervisor,
+            Integer idUsuarioSesion
+    ) {
+        try {
+            List<Map<String, Object>> tecnicos = repository.listarTecnicosNps(
+                    gruposTemplate,
+                    idUsuarioSesion,
+                    idSucursal,
+                    idSupervisor
+            );
+            if (tecnicos != null && !tecnicos.isEmpty()) {
+                return tecnicos;
+            }
+        } catch (Exception ignored) {
+            // Mantener los fallbacks actuales si el SP nuevo aun no esta desplegado en la sucursal.
+        }
+        if (idSupervisor != null && idSupervisor > 0) {
+            String sucursalNombre = resolveSucursalNombre(idSucursal);
+            if (!isBlank(sucursalNombre)) {
+                try {
+                    List<Map<String, Object>> tecnicos = supervisionRepository.listarTecnicosPorSupervisor(idSupervisor, sucursalNombre);
+                    if (tecnicos != null && !tecnicos.isEmpty()) {
+                        return tecnicos;
+                    }
+                } catch (Exception ignored) {
+                    // Mantener fallback NPS si la consulta de supervision no esta disponible.
+                }
+            }
+        }
+        return repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, idSupervisor);
+    }
+
+    private List<Map<String, Object>> filtrarSupervisorTecnico(
+            List<Map<String, Object>> supervisores,
+            Integer idSupervisorObjetivo,
+            Integer idUsuarioSesion
+    ) {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        Integer idObjetivo = idSupervisorObjetivo == null ? idUsuarioSesion : idSupervisorObjetivo;
+        if (idObjetivo == null || supervisores == null) {
+            return out;
+        }
+        for (Map<String, Object> row : supervisores) {
+            Integer id = asInteger(find(row, "idSupervisor", "id_supervisor", "idUsuarioSupervisor", "id_usuario_supervisor"));
+            if (id == null || !id.equals(idObjetivo)) {
+                continue;
+            }
+            out.add(row);
+            break;
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> filtrarTecnicoPropio(
+            List<Map<String, Object>> tecnicos,
+            Map<String, Object> scope
+    ) {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        if (tecnicos == null || tecnicos.isEmpty()) {
+            return out;
+        }
+        Integer idTecnicoScope = asInteger(scope.get("idTecnico"));
+        String tecnicoNombreScope = asText(scope.get("tecnicoNombre"));
+        String tecnicoNombreScopeKey = normalizeKey(tecnicoNombreScope);
+        for (Map<String, Object> row : tecnicos) {
+            Integer id = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+            String nombre = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
+            String key = normalizeKey(nombre);
+            if (idTecnicoScope != null && id != null && idTecnicoScope.equals(id)) {
+                out.add(row);
+                break;
+            }
+            if (!isBlank(tecnicoNombreScopeKey) && tecnicoNombreScopeKey.equals(key)) {
+                out.add(row);
+                break;
+            }
+        }
+        return out;
+    }
+
+    private String resolveNombreTecnicoSesion(
+            JdbcTemplate sucursalTemplate,
+            Integer idSucursal,
+            Integer idSupervisor,
+            Integer idTecnicoScope,
+            Integer idUsuarioSesion
+    ) {
+        List<Map<String, Object>> tecnicos = repository.listarTecnicosPorSupervisor(
+                sucursalTemplate,
+                idSucursal,
+                idSupervisor == null ? 0 : idSupervisor
+        );
+        if (tecnicos == null || tecnicos.isEmpty()) return null;
+        for (Map<String, Object> row : tecnicos) {
+            Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+            String nombre = trimToNull(asText(find(row, "tecnico", "nombre", "tecnico_nombre")));
+            if (idTecnicoScope != null && idFila != null && idTecnicoScope.equals(idFila)) {
+                return nombre;
+            }
+            if (idFila != null && idUsuarioSesion != null && idUsuarioSesion.equals(idFila)) {
+                return nombre;
+            }
+        }
+        return null;
     }
 
     private Integer resolveSupervisorDelTecnico(JdbcTemplate centralTemplate, Integer idSucursal, Integer idTecnico) {
@@ -344,6 +582,17 @@ public class NpsService {
             }
         }
         throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Sucursal no encontrada: " + idSucursal);
+    }
+
+    private String resolveSucursalNombre(Integer idSucursal) {
+        if (idSucursal == null) return null;
+        List<SucursalResponse> sucursales = authService.listarSucursales();
+        for (SucursalResponse s : sucursales) {
+            if (s != null && idSucursal.equals(s.getIdSucursal())) {
+                return SucursalCanonicalizer.canonicalize(s.getSucursal());
+            }
+        }
+        return null;
     }
 
     private boolean isRol(AuthLoginResponse usuario, String valor) {
@@ -427,6 +676,13 @@ public class NpsService {
         Map<String, Map<String, Object>> baseConformacion = new LinkedHashMap<String, Map<String, Object>>();
         addTecnicos(baseConformacion, tecnicosConformacion);
 
+        // Fallback de negocio:
+        // si el catalogo NPS central no trae tecnicos para la sucursal, no vaciar filtros;
+        // usar los tecnicos de conformacion local del supervisor/sucursal.
+        if (tecnicosNps.isEmpty()) {
+            return new ArrayList<Map<String, Object>>(baseConformacion.values());
+        }
+
         List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
         Set<String> seen = new HashSet<String>();
         if (candidatos != null) {
@@ -443,7 +699,7 @@ public class NpsService {
             }
         }
 
-        // Fallback: si no hubo candidatos, usar toda la interseccion conformacion ∩ NPS
+        // Fallback: si no hubo candidatos, usar toda la interseccion conformacion âˆ© NPS
         if (out.isEmpty()) {
             for (Map.Entry<String, Map<String, Object>> e : baseConformacion.entrySet()) {
                 if (!tecnicosNps.contains(e.getKey())) continue;
@@ -458,10 +714,23 @@ public class NpsService {
             JdbcTemplate sucursalTemplate,
             Integer idSucursal,
             Integer idSupervisor,
+            String tecnicoSeleccionado,
             List<Map<String, Object>> rows) {
         if (rows == null || rows.isEmpty()) return rows == null ? new ArrayList<Map<String, Object>>() : rows;
         List<Map<String, Object>> tecnicosConformacion =
                 repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, idSupervisor == null ? 0 : idSupervisor);
+        if ((tecnicosConformacion == null || tecnicosConformacion.isEmpty()) && idSupervisor != null) {
+            // Fallback para supervisor: usar historico central cuando no existe relacion local.
+            tecnicosConformacion = repository.listarTecnicosHistoricosSupervisorNps(
+                    centralTemplate,
+                    idSupervisor,
+                    idSucursal
+            );
+        }
+        if (tecnicosConformacion == null || tecnicosConformacion.isEmpty()) {
+            // Ultimo fallback: no filtrar para evitar dejar dashboard en blanco por falta de catalogo local.
+            return rows;
+        }
         List<Map<String, Object>> interseccion =
                 interseccionTecnicosConNps(centralTemplate, idSucursal, tecnicosConformacion, tecnicosConformacion);
         Set<String> allowed = new HashSet<String>();
@@ -469,11 +738,21 @@ public class NpsService {
             String nombre = asText(find(t, "tecnico", "nombre", "tecnico_nombre", "idTecnico", "id_tecnico"));
             if (!isBlank(nombre)) allowed.add(normalizeKey(nombre));
         }
-        if (allowed.isEmpty()) return new ArrayList<Map<String, Object>>();
+        String tecnicoSeleccionadoKey = normalizeKey(tecnicoSeleccionado);
+        if (allowed.isEmpty() && isBlank(tecnicoSeleccionadoKey)) return new ArrayList<Map<String, Object>>();
         List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
         for (Map<String, Object> row : rows) {
             String tecnico = asText(find(row, "tecnico_nombre", "tecnico", "nombre"));
-            if (allowed.contains(normalizeKey(tecnico))) out.add(row);
+            String tecnicoKey = normalizeKey(tecnico);
+            if (allowed.contains(tecnicoKey)) {
+                out.add(row);
+                continue;
+            }
+            if (!isBlank(tecnicoSeleccionadoKey) && tecnicoSeleccionadoKey.equals(tecnicoKey)) {
+                Map<String, Object> clone = new LinkedHashMap<String, Object>(row);
+                clone.put("_npsHistorico", true);
+                out.add(clone);
+            }
         }
         return out;
     }
@@ -522,7 +801,10 @@ public class NpsService {
     }
 
     private String normalizeKey(String value) {
-        return value == null ? "" : value.trim().toLowerCase();
+        if (value == null) return "";
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFD);
+        normalized = normalized.replaceAll("\\p{InCombiningDiacriticalMarks}+", "");
+        return normalized.trim().toLowerCase();
     }
 
     private String trimToNull(String value) {

@@ -25,12 +25,14 @@ BEGIN
         SELECT idUsuarioSupervisor AS idSupervisor, id_tecnico AS idTecnico
         FROM dbo.tbl_ConformacionCuadrillaDiario
         WHERE ISNULL(e_eliminado,0)=0
+          AND CONVERT(date, fecha)=CONVERT(date, GETDATE())
 
         UNION ALL
 
         SELECT idUsuarioSupervisor AS idSupervisor, id_tecnicoAuxiliar AS idTecnico
         FROM dbo.tbl_ConformacionCuadrillaDiario
         WHERE ISNULL(e_eliminado,0)=0
+          AND CONVERT(date, fecha)=CONVERT(date, GETDATE())
     ),
     filtrada AS (
         SELECT DISTINCT idTecnico

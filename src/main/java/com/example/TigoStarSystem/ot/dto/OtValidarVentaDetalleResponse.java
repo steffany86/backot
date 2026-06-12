@@ -6,6 +6,8 @@ public class OtValidarVentaDetalleResponse {
     private final LocalDate fecha;
     private final Integer nroOT;
     private final Integer numeroCliente;
+    private final Long idVenta;
+    private final Integer idRuta;
     private final Boolean existeVenta;
     private final Integer cantidadVentas;
     private final Boolean tieneDetalle;
@@ -18,6 +20,8 @@ public class OtValidarVentaDetalleResponse {
             LocalDate fecha,
             Integer nroOT,
             Integer numeroCliente,
+            Long idVenta,
+            Integer idRuta,
             Boolean existeVenta,
             Integer cantidadVentas,
             Boolean tieneDetalle,
@@ -28,6 +32,8 @@ public class OtValidarVentaDetalleResponse {
         this.fecha = fecha;
         this.nroOT = nroOT;
         this.numeroCliente = numeroCliente;
+        this.idVenta = idVenta;
+        this.idRuta = idRuta;
         this.existeVenta = existeVenta;
         this.cantidadVentas = cantidadVentas;
         this.tieneDetalle = tieneDetalle;
@@ -47,6 +53,14 @@ public class OtValidarVentaDetalleResponse {
 
     public Integer getNumeroCliente() {
         return numeroCliente;
+    }
+
+    public Long getIdVenta() {
+        return idVenta;
+    }
+
+    public Integer getIdRuta() {
+        return idRuta;
     }
 
     public Boolean getExisteVenta() {

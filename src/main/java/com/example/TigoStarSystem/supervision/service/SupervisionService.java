@@ -5,6 +5,7 @@ import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.supervision.dto.SupervisionCrearRequest;
+import com.example.TigoStarSystem.supervision.dto.SupervisionCrearPendienteRequest;
 import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervision.repository.SupervisionRepository;
 import org.springframework.dao.DataAccessException;
@@ -40,9 +41,33 @@ public class SupervisionService {
         return repository.listar(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite);
     }
 
+    public List<Map<String, Object>> listarPendientes(
+            LocalDate fechaDesde,
+            LocalDate fechaHasta,
+            Integer limite,
+            String token) {
+        validarRangoFechas(fechaDesde, fechaHasta);
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+        return repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite);
+    }
+
+    public List<Map<String, Object>> listarBackofficePorEstado(
+            String estadoSup,
+            LocalDate fechaDesde,
+            LocalDate fechaHasta,
+            Integer limite,
+            String token) {
+        authService.me(token);
+        validarRangoFechas(fechaDesde, fechaHasta);
+        String estado = normalizarEstadoSup(estadoSup);
+        return repository.listarPorEstado(estado, null, fechaDesde, fechaHasta, limite);
+    }
+
     public Map<String, Object> obtenerDetalle(String idSupervision, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
+        String sucursal = resolveSucursalNombre(me);
         Map<String, Object> detalle = repository.obtenerDetalle(idSupervision, String.valueOf(idSupervisor));
         if (detalle == null) {
             throw new ApiException(
@@ -51,7 +76,7 @@ public class SupervisionService {
                     "No se encontro la nota de supervision indicada."
             );
         }
-        return detalle;
+        return repository.enriquecerDetalleConNombres(detalle, sucursal);
     }
 
     public Map<String, Object> registrar(SupervisionCrearRequest request, String token) {
@@ -95,6 +120,47 @@ public class SupervisionService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("idSupervision", idGenerado);
         out.put("idUsuarioSesion", idSupervisor);
+        return out;
+    }
+
+    public Map<String, Object> realizarPendiente(String idSupervision, SupervisionCrearRequest request, String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+
+        if (isBlank(idSupervision)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idSupervision es requerido.");
+        }
+        if (request == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Request de supervision es requerido.");
+        }
+        if (isBlank(request.getUbicacion())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "ubicacion es requerido.");
+        }
+
+        int updated = repository.realizarPendiente(
+                idSupervision,
+                idSupervisor,
+                request.getFotoBoletaSupervision(),
+                request.getFotoCanalesPilos(),
+                request.getFotoNivelesDocsis(),
+                request.getFotoMedicionRuido(),
+                request.getFotoBarridoCanales(),
+                request.getFotoObservacion1(),
+                request.getFotoObservacion2(),
+                request.getFotoObservacion3(),
+                request.getFotoObservacion4(),
+                request.getObservacion(),
+                request.getDescripcionAdicionalObservacion(),
+                request.getUbicacion()
+        );
+        if (updated <= 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro supervision pendiente para realizar.");
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idSupervision", idSupervision);
+        out.put("idUsuarioSesion", idSupervisor);
+        out.put("estadoSup", "completado");
         return out;
     }
 
@@ -212,6 +278,23 @@ public class SupervisionService {
         }
     }
 
+    private String normalizarEstadoSup(String estadoSup) {
+        String estado = estadoSup == null ? "pendiente" : estadoSup.trim().toLowerCase();
+        if ("pendientes".equals(estado)) {
+            estado = "pendiente";
+        } else if ("completados".equals(estado) || "completada".equals(estado) || "completadas".equals(estado)) {
+            estado = "completado";
+        }
+        if (!"pendiente".equals(estado) && !"completado".equals(estado)) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "estado debe ser pendiente o completado."
+            );
+        }
+        return estado;
+    }
+
     private String resolveSucursalNombre(AuthMeResponse me) {
         Integer idSucursal = me != null && me.getUsuario() != null ? me.getUsuario().getIdSucursal() : null;
         if (idSucursal == null) return null;
@@ -222,6 +305,78 @@ public class SupervisionService {
             }
         }
         return null;
+    }
+
+    public Map<String, Object> registrarPendiente(SupervisionCrearPendienteRequest request, String token) {
+        authService.me(token);
+
+        if (request == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Request de supervision es requerido."
+            );
+        }
+
+        String idGenerado = repository.registrarPendiente(
+                request.getIdSupervisorAsignado(),
+                request.getIdTecnicoPrincipal(),
+                request.getIdTecnicoAuxiliar(),
+                request.getIdTipoSupervision(),
+                request.getIdTipoTrabajo(),
+                request.getIdTipoPenalizacion(),
+                request.getSupervisionPor(),
+                request.getTecnologia(),
+                request.getCodigo(),
+                request.getOrdenTrabajo(),
+                request.getTipoRevision(),
+                request.getFotoBoletaSupervision(),
+                request.getFotoCanalesPilos(),
+                request.getFotoNivelesDocsis(),
+                request.getFotoMedicionRuido(),
+                request.getFotoBarridoCanales(),
+                request.getFotoObservacion1(),
+                request.getFotoObservacion2(),
+                request.getFotoObservacion3(),
+                request.getFotoObservacion4(),
+                request.getObservacion(),
+                request.getDescripcionAdicionalObservacion(),
+                request.getUbicacion()
+        );
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idSupervision", idGenerado);
+        out.put("idSupervisorAsignado", request.getIdSupervisorAsignado());
+        return out;
+    }
+
+    public List<Map<String, Object>> listarSupervisores(String sucursal, String token) {
+        AuthMeResponse me = authService.me(token);
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(
+                isBlank(sucursal) ? resolveSucursalNombre(me) : sucursal
+        );
+        try {
+            return repository.listarSupervisores(sucursalResuelta);
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    public List<Map<String, Object>> listarTecnicosPorSupervisorBackoffice(Integer idSupervisor, String sucursal) {
+        return listarTecnicosPorSupervisorBackoffice(idSupervisor, sucursal, null);
+    }
+
+    public List<Map<String, Object>> listarTecnicosPorSupervisorBackoffice(Integer idSupervisor, String sucursal, String supervisor) {
+        try {
+            String sucursalResuelta = SucursalCanonicalizer.canonicalize(sucursal);
+            return repository.listarTecnicosPorSupervisorBackoffice(idSupervisor, sucursalResuelta, supervisor);
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
     }
 
 }

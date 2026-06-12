@@ -24,7 +24,7 @@ public final class SucursalCanonicalizer {
 
         String normalized = normalize(trimmed);
         if ("santacruz".equals(normalized)) {
-            return "SantaCruz";
+            return "Santa_Cruz";
         }
         if ("sucre".equals(normalized)) {
             return "Sucre";
@@ -39,4 +39,3 @@ public final class SucursalCanonicalizer {
         return normalized.toLowerCase(Locale.ROOT);
     }
 }
-

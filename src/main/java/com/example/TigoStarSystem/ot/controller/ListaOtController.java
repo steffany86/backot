@@ -5,6 +5,8 @@ import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.ot.service.ListaOtService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
@@ -20,6 +22,7 @@ import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @Validated
@@ -31,6 +34,7 @@ import java.util.Map;
         "/spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO"
 })
 public class ListaOtController {
+    private static final Logger logger = LoggerFactory.getLogger(ListaOtController.class);
     private final ListaOtService listaOtService;
     private final AuthService authService;
 
@@ -64,6 +68,20 @@ public class ListaOtController {
             tecnicoExacto = true;
             idUsuarioFiltro = idUsuarioSesion != null ? idUsuarioSesion : idUsuario;
         }
+
+        Map<String, Object> flujo = new LinkedHashMap<>();
+        flujo.put("evento", "LISTA_OT_FLUJO");
+        flujo.put("fecha", String.valueOf(fechaFiltro));
+        flujo.put("rolResuelto", rolResuelto);
+        flujo.put("tecnicoRol", tecnicoRol);
+        flujo.put("idUsuarioSesion", idUsuarioSesion);
+        flujo.put("idUsuarioFiltro", idUsuarioFiltro);
+        flujo.put("idSucursalSesion", extractIdSucursal(me));
+        flujo.put("nombreSesion", me != null && me.getUsuario() != null ? me.getUsuario().getNombre() : null);
+        flujo.put("tecnicoRecibidoQuery", tecnico);
+        flujo.put("tecnicoUsadoFinal", tecnicoFiltro);
+        flujo.put("estados", resolveEstados(estado, estados));
+        logger.info("{}", flujo);
 
         List<String> estadosFiltro = resolveEstados(estado, estados);
         List<Map<String, Object>> data = listaOtService.listar(

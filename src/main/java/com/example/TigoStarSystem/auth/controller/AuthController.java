@@ -1,6 +1,7 @@
 package com.example.TigoStarSystem.auth.controller;
 
 import com.example.TigoStarSystem.auth.dto.AuthLoginRequest;
+import com.example.TigoStarSystem.auth.dto.AuthLoginPayload;
 import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
 import com.example.TigoStarSystem.auth.dto.ChangePasswordRequest;
@@ -33,12 +34,13 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<ApiResponse<AuthLoginResponse>> login(@Valid @RequestBody AuthLoginRequest request) {
+    public ResponseEntity<ApiResponse<AuthLoginPayload>> login(@Valid @RequestBody AuthLoginRequest request) {
         AuthSession session = authService.login(request);
         logger.info("User {} logged in successfully.");
+        AuthLoginPayload payload = new AuthLoginPayload(session.getUsuario(), session.getToken());
         return ResponseEntity.ok()
                 .header("X-Session-Token", session.getToken())
-                .body(ApiResponse.of(session.getUsuario(), "Login exitoso."));
+                .body(ApiResponse.of(payload, "Login exitoso."));
     }
 
     @GetMapping("/sucursales")

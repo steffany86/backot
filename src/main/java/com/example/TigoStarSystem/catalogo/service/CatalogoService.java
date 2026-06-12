@@ -191,6 +191,58 @@ public class CatalogoService {
         return catalogoRepository.traerChipIdPorSerie(serie.trim(), idSucursal);
     }
 
+    public List<Map<String, Object>> sugerirSeriesPorPrefijo(String q, Integer limite, Integer idProducto, Integer idSucursal) {
+        return sugerirSeriesPorPrefijo(q, limite, idProducto, null, null, null, idSucursal);
+    }
+
+    public List<Map<String, Object>> sugerirSeriesPorPrefijo(
+            String q,
+            Integer limite,
+            Integer idProducto,
+            Integer idRuta,
+            Integer tipoMaterial,
+            String tipoMaterialNombre,
+            Integer idSucursal) {
+        String prefijo = q == null ? "" : q.trim();
+        if (esTipoMaterialRetirado(tipoMaterial, tipoMaterialNombre)) {
+            if (prefijo.length() < 1) {
+                return new ArrayList<>();
+            }
+            return catalogoRepository.sugerirSeriesPorPrefijo(prefijo, limite, idProducto, idSucursal);
+        }
+        if (esTipoMaterialInstalado(tipoMaterial, tipoMaterialNombre) || tieneFiltroSaldo(idRuta, idProducto)) {
+            if (idRuta == null || idRuta <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idRuta es requerido para sugerir saldo instalado.");
+            }
+            if (idProducto == null || idProducto <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idProducto es requerido para sugerir saldo instalado.");
+            }
+            return catalogoRepository.sugerirSeriesSaldoInstalado(prefijo, limite, idRuta, idProducto, idSucursal);
+        }
+        if (prefijo.length() < 1) {
+            return new ArrayList<>();
+        }
+        return catalogoRepository.sugerirSeriesPorPrefijo(prefijo, limite, idProducto, idSucursal);
+    }
+
+    private boolean esTipoMaterialInstalado(Integer tipoMaterial, String tipoMaterialNombre) {
+        if (tipoMaterial != null && tipoMaterial == 1) {
+            return true;
+        }
+        return tipoMaterialNombre != null && tipoMaterialNombre.trim().equalsIgnoreCase("Instalado");
+    }
+
+    private boolean esTipoMaterialRetirado(Integer tipoMaterial, String tipoMaterialNombre) {
+        if (tipoMaterial != null && (tipoMaterial == 2 || tipoMaterial == 5)) {
+            return true;
+        }
+        return tipoMaterialNombre != null && tipoMaterialNombre.trim().equalsIgnoreCase("Retirado");
+    }
+
+    private boolean tieneFiltroSaldo(Integer idRuta, Integer idProducto) {
+        return idRuta != null && idRuta > 0 && idProducto != null && idProducto > 0;
+    }
+
     /**
      * Valida que serie y chipId correspondan al mismo registro.
      */

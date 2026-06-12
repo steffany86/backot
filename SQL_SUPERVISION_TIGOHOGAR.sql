@@ -14,7 +14,7 @@ GO
 CREATE OR ALTER PROC dbo.spx_RegistrarSupervisionManual
     @Id_Supervisor NVARCHAR(50),
     @Id_TecnicoPrincipal NVARCHAR(50),
-    @Id_TecnicoAuxiliar NVARCHAR(50),
+    @Id_TecnicoAuxiliar NVARCHAR(150),
     @Id_TipoSupervision NVARCHAR(50),
     @Id_TipoTrabajo NVARCHAR(50),
     @Id_TipoPenalizacion NVARCHAR(50),
@@ -65,7 +65,7 @@ BEGIN
         N'@IdSupervision NVARCHAR(50),
           @Id_Supervisor NVARCHAR(50),
           @Id_TecnicoPrincipal NVARCHAR(50),
-          @Id_TecnicoAuxiliar NVARCHAR(50),
+          @Id_TecnicoAuxiliar NVARCHAR(150),
           @Id_TipoSupervision NVARCHAR(50),
           @Id_TipoTrabajo NVARCHAR(50),
           @Id_TipoPenalizacion NVARCHAR(50),

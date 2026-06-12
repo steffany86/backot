@@ -31,13 +31,15 @@ public class LlamadaAtencionRepository {
             String idTecnico,
             LocalDate fechaDesde,
             LocalDate fechaHasta,
-            Integer limite) {
+            Integer limite,
+            Integer idSucursal) {
         return tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.spx_ListarLlamadaAtencion ?, ?, ?, ?",
+                "EXEC dbo.spx_ListarLlamadaAtencion ?, ?, ?, ?, ?",
                 trimToNull(idTecnico),
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
                 fechaHasta == null ? null : Date.valueOf(fechaHasta),
-                resolveLimit(limite)
+                resolveLimit(limite),
+                idSucursal
         );
     }
 
@@ -50,11 +52,15 @@ public class LlamadaAtencionRepository {
             String descripcion,
             String comentarioColaborador,
             String acuerdos,
+            String testigo,
             LocalDateTime fechaSeguimiento,
             String firmaTecnico,
-            String firmaTestigo) {
+            String firmaTestigo,
+            Integer idSucursal,
+            String sucursal,
+            String tecnicoNombre) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.spx_RegistrarLlamadaAtencion ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+                "EXEC dbo.spx_RegistrarLlamadaAtencion ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                 trimToNull(idTecnico),
                 trimToNull(codEmpleado),
                 idUsuarioSupervisor,
@@ -63,9 +69,13 @@ public class LlamadaAtencionRepository {
                 trimToNull(descripcion),
                 trimToNull(comentarioColaborador),
                 trimToNull(acuerdos),
+                trimToNull(testigo),
                 fechaSeguimiento == null ? null : Timestamp.valueOf(fechaSeguimiento),
                 trimToNull(firmaTecnico),
-                trimToNull(firmaTestigo)
+                trimToNull(firmaTestigo),
+                idSucursal,
+                trimToNull(sucursal),
+                trimToNull(tecnicoNombre)
         );
 
         if (rows != null && !rows.isEmpty()) {
@@ -123,4 +133,5 @@ public class LlamadaAtencionRepository {
         }
         return value.replace("_", "").trim().toLowerCase(Locale.ROOT);
     }
+
 }

@@ -35,6 +35,7 @@ import java.math.BigDecimal;
 import java.sql.SQLException;
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -185,13 +186,43 @@ public class OtService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idVenta es requerido.");
         }
 
-        List<Map<String, Object>> cabeceraRows = otRepository.obtenerOrdenTrabajoPorIdVenta(idVenta, idSucursal);
+        Long idVentaResuelto = idVenta;
+        List<Map<String, Object>> cabeceraRows = otRepository.obtenerOrdenTrabajoPorIdVenta(idVentaResuelto, idSucursal);
         if (cabeceraRows == null || cabeceraRows.isEmpty()) {
             throw notFound("No se encontro registro en tbl_venta para idVenta: " + idVenta);
         }
 
+        Map<String, Object> cabeceraInicial = cabeceraRows.get(0);
+        Integer ordenTrabajo = toInteger(findValue(cabeceraInicial, "OrdenTrabajo", "ordenTrabajo", "orden_trabajo", "ot"));
+        Integer codigoCliente = toInteger(findValue(cabeceraInicial, "CodigoCliente", "codigoCliente", "codigo_cliente", "cliente_nro"));
+        LocalDate fechaHoy = LocalDate.now(ZoneId.of("America/La_Paz"));
+        if (ordenTrabajo != null && ordenTrabajo > 0 && codigoCliente != null && codigoCliente > 0) {
+            Map<String, Object> ventaHoy = otRepository.obtenerVentaPorFechaOrdenYCliente(
+                    fechaHoy,
+                    ordenTrabajo,
+                    codigoCliente,
+                    idSucursal
+            );
+            Long idVentaHoy = toLong(findValue(ventaHoy, "idVenta", "Id_Venta", "id_venta", "idventa"));
+            if (idVentaHoy != null && idVentaHoy > 0 && !idVentaHoy.equals(idVentaResuelto)) {
+                logger.warn(
+                        "obtenerRegistroCompletoPorIdVenta: id_venta ajustado por OT+cliente+fecha. solicitado={}, resuelto={}, OT={}, cliente={}, fecha={}",
+                        idVentaResuelto,
+                        idVentaHoy,
+                        ordenTrabajo,
+                        codigoCliente,
+                        fechaHoy
+                );
+                idVentaResuelto = idVentaHoy;
+                cabeceraRows = otRepository.obtenerOrdenTrabajoPorIdVenta(idVentaResuelto, idSucursal);
+                if (cabeceraRows == null || cabeceraRows.isEmpty()) {
+                    throw notFound("No se encontro registro en tbl_venta para idVenta resuelto: " + idVentaResuelto);
+                }
+            }
+        }
+
         Map<String, Object> cabecera = new LinkedHashMap<>(cabeceraRows.get(0));
-        List<Map<String, Object>> estadoRows = otRepository.obtenerEstadoCierrePorIdVenta(idVenta, idSucursal);
+        List<Map<String, Object>> estadoRows = otRepository.obtenerEstadoCierrePorIdVenta(idVentaResuelto, idSucursal);
         if (estadoRows != null && !estadoRows.isEmpty()) {
             Map<String, Object> estadoRow = estadoRows.get(0);
             Integer idEstadoCierre = toInteger(findValue(estadoRow, "IdEstadoCierre", "idestadocierre", "Id_Estado", "id_estado"));
@@ -207,10 +238,12 @@ public class OtService {
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idVentaSolicitado", idVenta);
+        out.put("idVentaResuelto", idVentaResuelto);
         out.put("cabecera", cabecera);
-        out.put("instalados", otRepository.obtenerDetalleInstalado(idVenta, idSucursal));
-        out.put("retirados", otRepository.obtenerDetalleRetirado(idVenta, idSucursal));
-        out.put("cargoUsuario", otRepository.obtenerDetalleCargoUsuario(idVenta, idSucursal));
+        out.put("instalados", otRepository.obtenerDetalleInstalado(idVentaResuelto, idSucursal));
+        out.put("retirados", otRepository.obtenerDetalleRetirado(idVentaResuelto, idSucursal));
+        out.put("cargoUsuario", otRepository.obtenerDetalleCargoUsuario(idVentaResuelto, idSucursal));
         return out;
     }
 
@@ -378,6 +411,7 @@ public class OtService {
         );
     }
 
+    @Transactional
     public OtRegistrarVentaResponse registrarVentaParaRegistroOtWb(
             OtRegistrarVentaRequest request,
             Integer idSucursalSesion,
@@ -400,6 +434,13 @@ public class OtService {
                 request.getIdVendedor(),
                 idSucursalResolucion
         );
+        if (otRepository.existeVentaPorOrdenTrabajo(request.getOrdenTrabajo(), idSucursalFinal)) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "VALIDATION_ERROR",
+                    "Ya existe una OT registrada con el mismo numero de orden."
+            );
+        }
         LocalDate fechaTrabajo = LocalDate.now();
         validarBloqueosRegistroOtManual(
                 fechaTrabajo,
@@ -427,14 +468,42 @@ public class OtService {
                     request.getTieneObservacion(),
                     request.getLatitud(),
                     request.getLongitud(),
-                    idSucursalSesion
+                    idSucursalResolucion
             );
 
             Integer idVentaRegistro = toInteger(findValue(result, "Id_Venta", "id_venta", "idventa"));
-            String rutaPdf = otVentaPdfStorageService.guardarPdfVenta(pdf, request.getOrdenTrabajo(), request.getCodigoCliente());
+            Map<String, Object> ventaDelDia = otRepository.obtenerVentaPorFechaOrdenYCliente(
+                    fechaTrabajo,
+                    request.getOrdenTrabajo(),
+                    request.getCodigoCliente(),
+                    idSucursalFinal
+            );
+            Long idVentaDelDia = toLong(findValue(ventaDelDia, "idVenta", "Id_Venta", "id_venta", "idventa"));
+            if (idVentaDelDia != null && idVentaDelDia > 0) {
+                Integer idVentaDelDiaInt = idVentaDelDia.intValue();
+                if (idVentaRegistro == null || !idVentaDelDiaInt.equals(idVentaRegistro)) {
+                    logger.warn(
+                            "registrarVentaParaRegistroOtWb: id_venta ajustado por OT+cliente+fecha. sp={}, resuelto={}, OT={}, cliente={}, fecha={}",
+                            idVentaRegistro,
+                            idVentaDelDiaInt,
+                            request.getOrdenTrabajo(),
+                            request.getCodigoCliente(),
+                            fechaTrabajo
+                    );
+                    idVentaRegistro = idVentaDelDiaInt;
+                }
+            }
+
+            String nombreSucursalPdf = resolverNombreSucursalParaPdf(idSucursalFinal);
+            String rutaPdf = otVentaPdfStorageService.guardarPdfVenta(
+                    pdf,
+                    request.getOrdenTrabajo(),
+                    request.getCodigoCliente(),
+                    nombreSucursalPdf
+            );
             if (idVentaRegistro != null && idVentaRegistro > 0 && rutaPdf != null) {
                 try {
-                    int filas = otRepository.actualizarRutaPdfVenta(idVentaRegistro.longValue(), rutaPdf, idSucursalSesion);
+                    int filas = otRepository.actualizarRutaPdfVenta(idVentaRegistro.longValue(), rutaPdf, idSucursalResolucion);
                     if (filas <= 0) {
                         throw new ApiException(
                                 HttpStatus.INTERNAL_SERVER_ERROR,
@@ -466,7 +535,7 @@ public class OtService {
                             tap,
                             nodoRamalTap,
                             boca,
-                            idSucursalSesion
+                            idSucursalResolucion
                     );
                     if (filas <= 0) {
                         throw new ApiException(
@@ -491,7 +560,7 @@ public class OtService {
                         int filas = otRepository.actualizarTipoTecnologiaVenta(
                                 idVentaRegistro.longValue(),
                                 tipoTecnologia,
-                                idSucursalSesion
+                                idSucursalResolucion
                         );
                         if (filas <= 0) {
                             throw new ApiException(
@@ -516,7 +585,7 @@ public class OtService {
                             idVentaRegistro.longValue(),
                             request.getCheckPlantaExterna(),
                             request.getTieneDetalle(),
-                            idSucursalSesion
+                            idSucursalResolucion
                     );
                     if (filas <= 0) {
                         throw new ApiException(
@@ -699,36 +768,18 @@ public class OtService {
 
         try {
             boolean agendaMatch = incluirManual && existeRegistroEnAgenda(fechaParsed, nroOT, numeroCliente, idSucursal);
+            // Importante:
+            // No promover automaticamente MANUAL->OT_WEB en validaciones.
+            // Esta ruta debe validar, no modificar Origen.
             if (incluirManual && (desdeAgenda || agendaMatch)) {
-                try {
-                    int actualizados = otRepository.promoverOrigenManualAOtWeb(
-                            fechaParsed,
-                            nroOT,
-                            numeroCliente,
-                            idSucursal
-                    );
-                    if (actualizados > 0) {
-                        logger.info(
-                                "Ventas manuales promovidas a OT_WEB por cruce agenda. fecha={}, nroOT={}, cliente={}, filas={}, desdeAgenda={}, agendaMatch={}",
-                                fechaParsed,
-                                nroOT,
-                                numeroCliente,
-                                actualizados,
-                                desdeAgenda,
-                                agendaMatch
-                        );
-                    }
-                } catch (DataAccessException ex) {
-                    logger.warn(
-                            "No se pudo promover origen MANUAL->OT_WEB por cruce agenda (fecha={}, nroOT={}, cliente={}, desdeAgenda={}, agendaMatch={})",
-                            fechaParsed,
-                            nroOT,
-                            numeroCliente,
-                            desdeAgenda,
-                            agendaMatch,
-                            ex
-                    );
-                }
+                logger.debug(
+                        "Cruce agenda detectado (sin promocion automatica de origen). fecha={}, nroOT={}, cliente={}, desdeAgenda={}, agendaMatch={}",
+                        fechaParsed,
+                        nroOT,
+                        numeroCliente,
+                        desdeAgenda,
+                        agendaMatch
+                );
             }
 
             Map<String, Object> row = otRepository.validarVentaYDetalleWb(
@@ -780,8 +831,18 @@ public class OtService {
             Map<String, Object> ventaRegistrada = otRepository.obtenerUltimaVentaPorOrdenYCliente(
                     nroOT,
                     numeroCliente,
+                    fechaParsed,
                     idSucursal
             );
+            Map<String, Object> ventaExacta = otRepository.obtenerVentaPorFechaOrdenYCliente(
+                    fechaParsed,
+                    nroOT,
+                    numeroCliente,
+                    idSucursal
+            );
+            if (ventaExacta == null) {
+                ventaExacta = ventaRegistrada;
+            }
             if (incluirManual && esVentaManual(ventaRegistrada)) {
                 Long idVentaManual = toLong(findValue(ventaRegistrada, "idVenta", "Id_Venta", "id_venta"));
                 int totalDetallesManual = otRepository.contarDetallesPorIdVenta(idVentaManual, idSucursal);
@@ -804,6 +865,8 @@ public class OtService {
                     toLocalDate(findValue(row, "Fecha", "fecha")),
                     toInteger(findValue(row, "NroOT", "nroot")),
                     toInteger(findValue(row, "NumeroCliente", "numerocliente", "codigoCliente")),
+                    toLong(findValue(ventaExacta, "idVenta", "Id_Venta", "id_venta", "idventa")),
+                    toInteger(findValue(ventaExacta, "idRuta", "Id_Ruta", "id_ruta", "idruta")),
                     existeVenta,
                     cantidadVentas,
                     tieneDetalle,
@@ -878,7 +941,10 @@ public class OtService {
      */
     public OtRegistroAgendaValidacionResponse validarRegistroAgenda(LocalDate fecha, Integer idSucursal) {
         LocalDate fechaEvaluada = fecha == null ? LocalDate.now() : fecha;
-        reconciliarVentasManualConAgenda(fechaEvaluada, idSucursal);
+        // Importante:
+        // NO reconciliar origen MANUAL->OT_WEB de forma global en esta validacion,
+        // porque puede modificar registros inventados/test sin cruce operativo explicito.
+        // La promocion a OT_WEB debe ocurrir solo en flujos puntuales con cruce agenda.
 
         List<Map<String, Object>> cierreRows = otRepository.existeCierreAlmacenHoy(fechaEvaluada, idSucursal);
         Integer cierreCodigo = obtenerCodigoResultado(cierreRows);
@@ -1007,18 +1073,101 @@ public class OtService {
     public OtRegistrarDetalleAgendaResponse registrarDetalleAgenda(
             OtRegistrarDetalleAgendaRequest request,
             Integer idSucursal) {
+        logger.info(
+                "registrarDetalleAgenda:start idSucursal={}, numeroOrden={}, codigoCliente={}, fechaEjecucion={}, materialesCount={}",
+                idSucursal,
+                request == null ? null : request.getNumeroOrden(),
+                request == null ? null : request.getCodigoCliente(),
+                request == null ? null : request.getFechaEjecucion(),
+                request == null || request.getMateriales() == null ? 0 : request.getMateriales().size()
+        );
         if (request == null) {
+            logger.warn("registrarDetalleAgenda: request nulo. idSucursal={}", idSucursal);
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El cuerpo de la solicitud es requerido.");
         }
         String numeroOrden = request.getNumeroOrden() == null ? "" : request.getNumeroOrden().trim();
         if (numeroOrden.isEmpty()) {
+            logger.warn("registrarDetalleAgenda: numeroOrden vacio. idSucursal={}, codigoCliente={}", idSucursal, request.getCodigoCliente());
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "numeroOrden es requerido.");
         }
         if (request.getMateriales() == null || request.getMateriales().isEmpty()) {
+            logger.warn(
+                    "registrarDetalleAgenda: materiales vacios. idSucursal={}, numeroOrden={}, codigoCliente={}",
+                    idSucursal,
+                    numeroOrden,
+                    request.getCodigoCliente()
+            );
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Debe enviar al menos un material.");
         }
 
-        Map<String, Object> venta = obtenerPorNumero(numeroOrden, idSucursal);
+        Map<String, Object> venta = null;
+        Integer ordenTrabajoRequest = toInteger(numeroOrden);
+        Integer codigoClienteRequest = request.getCodigoCliente();
+        String fechaEjecucionRequest = request.getFechaEjecucion();
+        boolean tieneParametrosExactos =
+                ordenTrabajoRequest != null && ordenTrabajoRequest > 0
+                        && codigoClienteRequest != null && codigoClienteRequest > 0
+                        && fechaEjecucionRequest != null && !fechaEjecucionRequest.trim().isEmpty();
+        if (!tieneParametrosExactos) {
+            logger.warn(
+                    "registrarDetalleAgenda:parametros incompletos idSucursal={}, numeroOrdenRaw={}, numeroOrdenParsed={}, codigoCliente={}, fechaEjecucion={}",
+                    idSucursal,
+                    request.getNumeroOrden(),
+                    ordenTrabajoRequest,
+                    codigoClienteRequest,
+                    fechaEjecucionRequest
+            );
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Para registrar detalle se requiere fechaEjecucion, numeroOrden y codigoCliente."
+            );
+        }
+
+        // Regla principal: resolver siempre por fecha + OT + cliente para evitar
+        // tomar una venta historica cuando existen registros duplicados por OT/cliente.
+        LocalDate fechaRequest = parseFechaFlexible(fechaEjecucionRequest);
+        LocalDate fechaHoy = LocalDate.now(ZoneId.of("America/La_Paz"));
+        LocalDate fechaBusqueda = fechaHoy;
+        if (!fechaHoy.equals(fechaRequest)) {
+            logger.warn(
+                    "registrarDetalleAgenda: fecha payload {} distinta a fecha actual {}; se usara fecha actual para resolver id_venta. OT={}, cliente={}",
+                    fechaRequest,
+                    fechaHoy,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest
+            );
+        }
+        Map<String, Object> ventaExacta = otRepository.obtenerVentaPorFechaOrdenYCliente(
+                fechaBusqueda,
+                ordenTrabajoRequest,
+                codigoClienteRequest,
+                idSucursal
+        );
+        Long idVentaExacta = toLong(findValue(ventaExacta, "idVenta", "Id_Venta", "id_venta", "idventa"));
+        if (idVentaExacta == null || idVentaExacta <= 0) {
+            logger.warn(
+                    "registrarDetalleAgenda:venta no encontrada por fecha+ot+cliente. idSucursal={}, fechaBusqueda={}, numeroOrden={}, codigoCliente={}, ventaExacta={}",
+                    idSucursal,
+                    fechaBusqueda,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest,
+                    ventaExacta
+            );
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "VENTA_NO_ENCONTRADA_FECHA_OT_CLIENTE",
+                    "No se encontro una venta para la combinacion fecha del dia + OT + codigo cliente."
+            );
+        }
+        venta = obtenerPorId(idVentaExacta, idSucursal);
+        logger.info(
+                "registrarDetalleAgenda: id_venta resuelto={} para OT={}, cliente={}, fechaBusqueda={}",
+                idVentaExacta,
+                ordenTrabajoRequest,
+                codigoClienteRequest,
+                fechaBusqueda
+        );
         Long idVenta = toLong(findValue(venta, "Id_Venta", "id_venta", "idventa", "id"));
         Integer idRuta = toInteger(findValue(venta, "Id_Ruta", "id_ruta", "idruta"));
         Integer idUsuario = toInteger(findValue(venta, "Id_Usuario", "id_usuario", "idusuario"));
@@ -1028,18 +1177,95 @@ public class OtService {
         LocalDate fechaEjecucion = toLocalDate(findValue(venta, "Fecha_Ejecucion", "fecha_ejecucion", "fecha"));
 
         if (idVenta == null || idVenta <= 0 || idRuta == null || idRuta <= 0 || idUsuario == null || idUsuario <= 0) {
+            logger.warn(
+                    "registrarDetalleAgenda:venta invalida idSucursal={}, idVenta={}, idRuta={}, idUsuario={}, idVendedor={}, codigoCliente={}, ordenTrabajo={}, venta={}",
+                    idSucursal,
+                    idVenta,
+                    idRuta,
+                    idUsuario,
+                    idVendedor,
+                    codigoCliente,
+                    ordenTrabajo,
+                    venta
+            );
             throw new ApiException(HttpStatus.CONFLICT, "VENTA_INVALIDA", "La venta encontrada no tiene datos suficientes para registrar detalle.");
+        }
+
+        // Capa extra de seguridad: resolver nuevamente el id_venta por OT+cliente+fecha del dia
+        // justo antes de persistir detalle para evitar guardar en una venta historica.
+        Map<String, Object> ventaParaPersistencia = otRepository.obtenerVentaPorFechaOrdenYCliente(
+                fechaBusqueda,
+                ordenTrabajoRequest,
+                codigoClienteRequest,
+                idSucursal
+        );
+        Long idVentaPersistencia = toLong(findValue(ventaParaPersistencia, "idVenta", "Id_Venta", "id_venta", "idventa"));
+        if (idVentaPersistencia == null || idVentaPersistencia <= 0) {
+            logger.warn(
+                    "registrarDetalleAgenda:venta persistencia no encontrada. idSucursal={}, fechaBusqueda={}, numeroOrden={}, codigoCliente={}, ventaParaPersistencia={}",
+                    idSucursal,
+                    fechaBusqueda,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest,
+                    ventaParaPersistencia
+            );
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "VENTA_NO_ENCONTRADA_FECHA_OT_CLIENTE",
+                    "No se pudo resolver id_venta de persistencia por fecha del dia + OT + codigo cliente."
+            );
+        }
+        if (!idVentaPersistencia.equals(idVenta)) {
+            logger.warn(
+                    "registrarDetalleAgenda: id_venta ajustado para persistencia. previo={}, nuevo={}, OT={}, cliente={}, fecha={}",
+                    idVenta,
+                    idVentaPersistencia,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest,
+                    fechaBusqueda
+            );
+            idVenta = idVentaPersistencia;
+            try {
+                venta = obtenerPorId(idVenta, idSucursal);
+                idRuta = toInteger(findValue(venta, "Id_Ruta", "id_ruta", "idruta"));
+                idUsuario = toInteger(findValue(venta, "Id_Usuario", "id_usuario", "idusuario"));
+                idVendedor = toInteger(findValue(venta, "Id_Vendedor", "id_vendedor", "idvendedor"));
+                codigoCliente = toInteger(findValue(venta, "CodigoCliente", "codigo_cliente", "cliente_nro", "clientenro"));
+                ordenTrabajo = toInteger(findValue(venta, "OrdenTrabajo", "orden_trabajo", "ot"));
+                LocalDate fechaEjecucionPersistencia = toLocalDate(findValue(venta, "Fecha_Ejecucion", "fecha_ejecucion", "fecha"));
+                if (fechaEjecucionPersistencia != null) {
+                    fechaEjecucion = fechaEjecucionPersistencia;
+                }
+            } catch (Exception ex) {
+                logger.warn("registrarDetalleAgenda: no se pudo recargar cabecera para id_venta ajustado={}", idVentaPersistencia, ex);
+            }
         }
 
         LocalDate fechaTrabajo = fechaEjecucion == null ? LocalDate.now() : fechaEjecucion;
         OtRegistroAgendaValidacionResponse bloqueo = validarRegistroAgenda(fechaTrabajo, idSucursal);
         if (bloqueo.isBloqueado()) {
+            logger.warn(
+                    "registrarDetalleAgenda:registro bloqueado. idSucursal={}, fechaTrabajo={}, numeroOrden={}, codigoCliente={}, motivo={}",
+                    idSucursal,
+                    fechaTrabajo,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest,
+                    bloqueo.getMensaje()
+            );
             throw new ApiException(HttpStatus.CONFLICT, "REGISTRO_BLOQUEADO", bloqueo.getMensaje());
         }
 
         List<Map<String, Object>> cuadreRows = otRepository.validarCuadreRuta(idRuta, fechaTrabajo, idSucursal);
         Boolean existeCuadre = coerceFirstBoolean(cuadreRows);
         if (Boolean.TRUE.equals(existeCuadre)) {
+            logger.warn(
+                    "registrarDetalleAgenda:cuadre ya registrado. idSucursal={}, idRuta={}, fechaTrabajo={}, numeroOrden={}, codigoCliente={}",
+                    idSucursal,
+                    idRuta,
+                    fechaTrabajo,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest
+            );
             throw new ApiException(HttpStatus.CONFLICT, "CUADRE_REGISTRADO", "No se puede registrar el detalle porque la ruta ya realizo cuadre.");
         }
 
@@ -1059,12 +1285,28 @@ public class OtService {
             }
             if (!Boolean.TRUE.equals(ventaDetalle.getHabilitarCargarMaterial())) {
                 if (cantidadDetalles > 0) {
+                    logger.warn(
+                            "registrarDetalleAgenda:detalle ya registrado (ventaDetalle). idSucursal={}, numeroOrden={}, codigoCliente={}, fechaTrabajo={}, cantidadDetalles={}",
+                            idSucursal,
+                            ordenTrabajo,
+                            codigoCliente,
+                            fechaTrabajo,
+                            cantidadDetalles
+                    );
                     throw new ApiException(HttpStatus.CONFLICT, "DETALLE_YA_REGISTRADO", "La OT ya tiene detalle registrado en codigo venta.");
                 }
                 // Compatibilidad operativa:
                 // si la venta ya existe (OT_WEB o reconciliada desde Manual) y aun no tiene detalle,
                 // permitir la carga para evitar bloqueo de cierre por estado.
                 if (!existeVenta) {
+                    logger.warn(
+                            "registrarDetalleAgenda:estado no permite cargar material. idSucursal={}, numeroOrden={}, codigoCliente={}, fechaTrabajo={}, existeVenta={}",
+                            idSucursal,
+                            ordenTrabajo,
+                            codigoCliente,
+                            fechaTrabajo,
+                            existeVenta
+                    );
                     throw new ApiException(
                             HttpStatus.CONFLICT,
                             "ESTADO_NO_PERMITE_CARGAR_MATERIAL",
@@ -1073,97 +1315,130 @@ public class OtService {
                 }
             }
             if (cantidadDetalles > 0) {
+                logger.warn(
+                        "registrarDetalleAgenda:detalle ya registrado. idSucursal={}, numeroOrden={}, codigoCliente={}, fechaTrabajo={}, cantidadDetalles={}",
+                        idSucursal,
+                        ordenTrabajo,
+                        codigoCliente,
+                        fechaTrabajo,
+                        cantidadDetalles
+                );
                 throw new ApiException(HttpStatus.CONFLICT, "DETALLE_YA_REGISTRADO", "La OT ya tiene detalle registrado en codigo venta.");
             }
         }
 
         validarMaterialesDetalle(request.getMateriales(), idRuta, idSucursal);
-
-        int inserted = 0;
-        List<OtDetalleMaterialRequest> devoluciones = new ArrayList<>();
-        for (OtDetalleMaterialRequest material : request.getMateriales()) {
-            otRepository.insertarCodigoVenta(
-                    idVenta,
-                    material.getIdProducto(),
-                    material.getIdTipoMaterial(),
-                    clean(material.getSerie()),
-                    clean(material.getChipId()),
-                    material.getCantidad(),
-                    idSucursal
-            );
-            inserted++;
-            otRepository.ejecutarRegModProducto(
-                    clean(material.getSerie()),
-                    clean(material.getChipId()),
-                    idRuta,
-                    material.getIdProducto(),
-                    3,
-                    idVenta,
-                    idUsuario,
-                    material.getIdTipoMaterial(),
-                    fechaTrabajo,
-                    idSucursal
-            );
-            if (material.getIdTipoMaterial() != null && (material.getIdTipoMaterial() == 2 || material.getIdTipoMaterial() == 5)) {
-                devoluciones.add(material);
-            }
-        }
-
-        int devolucionCount = 0;
-        if (!devoluciones.isEmpty() && idVendedor != null && codigoCliente != null && ordenTrabajo != null) {
-            Integer idDevolucion = otRepository.insertarDevolucion(
-                    idUsuario,
-                    idRuta,
-                    idVendedor,
-                    ordenTrabajo + " - " + codigoCliente,
-                    fechaTrabajo,
-                    request.getObservacion(),
-                    idVenta,
-                    idSucursal
-            );
-            if (idDevolucion != null) {
-                for (OtDetalleMaterialRequest material : devoluciones) {
-                    otRepository.insertarDetalleDevolucion(
-                            idDevolucion,
-                            material.getIdProducto(),
-                            material.getIdTipoMaterial(),
-                            clean(material.getSerie()),
-                            clean(material.getChipId()),
-                            material.getCantidad(),
-                            material.getEntregado(),
-                            idSucursal
-                    );
-                    otRepository.ejecutarRegModProducto(
-                            clean(material.getSerie()),
-                            clean(material.getChipId()),
-                            idRuta,
-                            material.getIdProducto(),
-                            Boolean.TRUE.equals(material.getEntregado()) ? 4 : 35,
-                            idDevolucion.longValue(),
-                            idUsuario,
-                            material.getIdTipoMaterial(),
-                            fechaTrabajo,
-                            idSucursal
-                    );
-                    devolucionCount++;
+        final Long idVentaFinal = idVenta;
+        final Integer idRutaFinal = idRuta;
+        final Integer idUsuarioFinal = idUsuario;
+        final Integer idVendedorFinal = idVendedor;
+        final Integer codigoClienteFinal = codigoCliente;
+        final Integer ordenTrabajoFinal = ordenTrabajo;
+        final LocalDate fechaTrabajoFinal = fechaTrabajo;
+        final String numeroOrdenFinal = numeroOrden;
+        return ejecutarEnTransaccionSucursal(idSucursal, () -> {
+            int inserted = 0;
+            List<OtDetalleMaterialRequest> devoluciones = new ArrayList<>();
+            for (OtDetalleMaterialRequest material : request.getMateriales()) {
+                otRepository.insertarCodigoVenta(
+                        idVentaFinal,
+                        material.getIdProducto(),
+                        material.getIdTipoMaterial(),
+                        clean(material.getSerie()),
+                        clean(material.getChipId()),
+                        material.getCantidad(),
+                        idSucursal
+                );
+                inserted++;
+                otRepository.ejecutarRegModProducto(
+                        clean(material.getSerie()),
+                        clean(material.getChipId()),
+                        idRutaFinal,
+                        material.getIdProducto(),
+                        3,
+                        idVentaFinal,
+                        idUsuarioFinal,
+                        material.getIdTipoMaterial(),
+                        fechaTrabajoFinal,
+                        idSucursal
+                );
+                if (material.getIdTipoMaterial() != null && (material.getIdTipoMaterial() == 2 || material.getIdTipoMaterial() == 5)) {
+                    devoluciones.add(material);
                 }
             }
-        }
 
-        if (request.getIdEstado() != null && request.getIdEstado() > 0) {
-            otRepository.modificarOtRealizada(
-                    request.getObservacion() == null ? "" : request.getObservacion().trim(),
-                    request.getIdEstado(),
-                    numeroOrden,
-                    idSucursal
+            int devolucionCount = 0;
+            if (!devoluciones.isEmpty() && idVendedorFinal != null && codigoClienteFinal != null && ordenTrabajoFinal != null) {
+                Integer idDevolucion = otRepository.insertarDevolucion(
+                        idUsuarioFinal,
+                        idRutaFinal,
+                        idVendedorFinal,
+                        ordenTrabajoFinal + " - " + codigoClienteFinal,
+                        fechaTrabajoFinal,
+                        request.getObservacion(),
+                        idVentaFinal,
+                        idSucursal
+                );
+                if (idDevolucion != null) {
+                    for (OtDetalleMaterialRequest material : devoluciones) {
+                        otRepository.insertarDetalleDevolucion(
+                                idDevolucion,
+                                material.getIdProducto(),
+                                material.getIdTipoMaterial(),
+                                clean(material.getSerie()),
+                                clean(material.getChipId()),
+                                material.getCantidad(),
+                                material.getEntregado(),
+                                idSucursal
+                        );
+                        otRepository.ejecutarRegModProducto(
+                                clean(material.getSerie()),
+                                clean(material.getChipId()),
+                                idRutaFinal,
+                                material.getIdProducto(),
+                                Boolean.TRUE.equals(material.getEntregado()) ? 4 : 35,
+                                idDevolucion.longValue(),
+                                idUsuarioFinal,
+                                material.getIdTipoMaterial(),
+                                fechaTrabajoFinal,
+                                idSucursal
+                        );
+                        devolucionCount++;
+                    }
+                }
+            }
+
+            if (request.getIdEstado() != null && request.getIdEstado() > 0) {
+                otRepository.modificarOtRealizada(
+                        request.getObservacion() == null ? "" : request.getObservacion().trim(),
+                        request.getIdEstado(),
+                        numeroOrdenFinal,
+                        idSucursal
+                );
+            }
+
+            if (inserted > 0) {
+                otRepository.actualizarFechaHoraDetalleVenta(idVentaFinal, idSucursal);
+            }
+
+            return new OtRegistrarDetalleAgendaResponse(idVentaFinal, ordenTrabajoFinal, inserted, devolucionCount);
+        });
+    }
+
+    private <T> T ejecutarEnTransaccionSucursal(Integer idSucursal, java.util.function.Supplier<T> callback) {
+        javax.sql.DataSource dataSource = otRepository.dataSource(idSucursal);
+        if (dataSource == null) {
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "DB_CONNECTION_ERROR",
+                    "No se pudo resolver datasource para la sucursal."
             );
         }
-
-        if (inserted > 0) {
-            otRepository.actualizarFechaHoraDetalleVenta(idVenta, idSucursal);
-        }
-
-        return new OtRegistrarDetalleAgendaResponse(idVenta, ordenTrabajo, inserted, devolucionCount);
+        org.springframework.jdbc.datasource.DataSourceTransactionManager txManager =
+                new org.springframework.jdbc.datasource.DataSourceTransactionManager(dataSource);
+        org.springframework.transaction.support.TransactionTemplate txTemplate =
+                new org.springframework.transaction.support.TransactionTemplate(txManager);
+        return txTemplate.execute(status -> callback.get());
     }
 
     /**
@@ -1199,12 +1474,26 @@ public class OtService {
         boolean filtrarPendientes = pendiente == null || pendiente;
         boolean filtrarUsuario = esTecnico(rol) && idUsuario != null;
         String tecnicoNombreNorm = normalizeText(tecnicoNombre);
+        Set<String> tecnicosAliasNorm = new HashSet<>();
+        if (tecnicoNombreNorm != null && !tecnicoNombreNorm.isEmpty()) {
+            tecnicosAliasNorm.add(tecnicoNombreNorm);
+        }
         Set<Integer> idsVendedorTecnico = Collections.emptySet();
         if (filtrarUsuario) {
             try {
                 idsVendedorTecnico = new HashSet<>(otRepository.obtenerIdsVendedorPorIdUsuario(idUsuario, idSucursal));
             } catch (DataAccessException ex) {
                 logger.warn("No se pudo resolver ids vendedor para idUsuario={}. Se aplica filtro directo por ids en fila.", idUsuario, ex);
+            }
+            try {
+                for (String alias : listaOtRepository.obtenerSalesforcePorIdUsuario(idUsuario, idSucursal)) {
+                    String aliasNorm = normalizeText(alias);
+                    if (aliasNorm != null && !aliasNorm.isEmpty()) {
+                        tecnicosAliasNorm.add(aliasNorm);
+                    }
+                }
+            } catch (Exception ex) {
+                logger.warn("No se pudo resolver salesforce por idUsuario={} para filtro OT.", idUsuario, ex);
             }
         }
 
@@ -1217,7 +1506,7 @@ public class OtService {
             if (filtrarPendientes && !esPendiente(row)) {
                 continue;
             }
-            if (filtrarUsuario && !perteneceUsuario(row, idUsuario, idsVendedorTecnico, tecnicoNombreNorm)) {
+            if (filtrarUsuario && !perteneceUsuario(row, idUsuario, idsVendedorTecnico, tecnicosAliasNorm)) {
                 continue;
             }
             result.add(row);
@@ -1295,7 +1584,7 @@ public class OtService {
             Map<String, Object> row,
             Integer idUsuario,
             Set<Integer> idsVendedorTecnico,
-            String tecnicoNombreNorm) {
+            Set<String> tecnicosAliasNorm) {
         if (coincideConAlguno(row, idUsuario,
                 "idusuario", "id_usuario", "iduser", "usuarioid",
                 "id_tecnico", "idtecnico", "tecnicoid",
@@ -1312,7 +1601,7 @@ public class OtService {
             }
         }
 
-        if (tecnicoNombreNorm == null || tecnicoNombreNorm.isEmpty()) {
+        if (tecnicosAliasNorm == null || tecnicosAliasNorm.isEmpty()) {
             return false;
         }
 
@@ -1326,9 +1615,17 @@ public class OtService {
         if (tecnicoFilaNorm == null || tecnicoFilaNorm.isEmpty()) {
             return false;
         }
-        return tecnicoFilaNorm.equals(tecnicoNombreNorm)
-                || tecnicoFilaNorm.contains(tecnicoNombreNorm)
-                || tecnicoNombreNorm.contains(tecnicoFilaNorm);
+        for (String tecnicoNombreNorm : tecnicosAliasNorm) {
+            if (tecnicoNombreNorm == null || tecnicoNombreNorm.isEmpty()) {
+                continue;
+            }
+            if (tecnicoFilaNorm.equals(tecnicoNombreNorm)
+                    || tecnicoFilaNorm.contains(tecnicoNombreNorm)
+                    || tecnicoNombreNorm.contains(tecnicoFilaNorm)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1437,6 +1734,9 @@ public class OtService {
      * Busca el primer valor disponible por aliases de columna.
      */
     private Object findValue(Map<String, Object> row, String... candidates) {
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
         Map<String, Object> normalized = new HashMap<>();
         for (Map.Entry<String, Object> entry : row.entrySet()) {
             String key = normalizeKey(entry.getKey());
@@ -1540,8 +1840,8 @@ public class OtService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "longitud fuera de rango (-180 a 180).");
         }
         String nodo = request.getNodo() == null ? "" : request.getNodo().trim().toUpperCase(Locale.ROOT);
-        if (!nodo.matches("^[A-Z]{3}\\d{3}$")) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "nodo debe tener formato 3 letras y 3 numeros. Ej: SCZ123.");
+        if (!nodo.matches("^[A-Z]{3}\\d{3,4}$")) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "nodo debe tener formato 3 letras y 3 o 4 numeros. Ej: SCZ123 o SCZ1234.");
         }
         String ramal = request.getRamal() == null ? "" : request.getRamal().trim();
         if (ramal.isEmpty()) {
@@ -1650,16 +1950,25 @@ public class OtService {
     private void validarMaterialesDetalle(List<OtDetalleMaterialRequest> materiales, Integer idRuta, Integer idSucursal) {
         List<String> repetidos = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
+        logger.info(
+                "validarMaterialesDetalle:start idSucursal={}, idRuta={}, materialesCount={}",
+                idSucursal,
+                idRuta,
+                materiales == null ? 0 : materiales.size()
+        );
         Map<Integer, ProductoDigitos> digitosPorProducto = cargarDigitosPorProducto(materiales, idSucursal);
         for (int i = 0; i < materiales.size(); i++) {
             OtDetalleMaterialRequest material = materiales.get(i);
             if (material.getIdProducto() == null || material.getIdProducto() <= 0) {
+                logger.warn("validarMaterialesDetalle:item {} sin idProducto valido. material={}", i + 1, material);
                 throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir idProducto valido.");
             }
             if (material.getIdTipoMaterial() == null || material.getIdTipoMaterial() <= 0) {
+                logger.warn("validarMaterialesDetalle:item {} sin idTipoMaterial valido. material={}", i + 1, material);
                 throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir idTipoMaterial valido.");
             }
             if (material.getCantidad() == null || material.getCantidad().compareTo(BigDecimal.ZERO) <= 0) {
+                logger.warn("validarMaterialesDetalle:item {} sin cantidad valida. cantidad={}, material={}", i + 1, material.getCantidad(), material);
                 throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir cantidad mayor a 0.");
             }
             String serie = clean(material.getSerie());
@@ -1670,6 +1979,14 @@ public class OtService {
             ProductoDigitos caracteristicas = digitosPorProducto.get(material.getIdProducto());
             boolean omitirIdentificacion = requiereOmitirIdentificacion(caracteristicas);
             if (requiereIdentificacion && !omitirIdentificacion && serie.isEmpty() && chipId.isEmpty()) {
+                logger.warn(
+                        "validarMaterialesDetalle:item {} sin serie/chipId. idProducto={}, idTipoMaterial={}, requiereIdentificacion={}, omitirIdentificacion={}",
+                        i + 1,
+                        material.getIdProducto(),
+                        material.getIdTipoMaterial(),
+                        requiereIdentificacion,
+                        omitirIdentificacion
+                );
                 throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Cada material debe incluir serie o chipId.");
             }
             if (!serie.isEmpty()) {
@@ -1686,7 +2003,7 @@ public class OtService {
             }
 
             if (!serie.isEmpty() && !chipId.isEmpty()) {
-                Map<String, Object> unicidad = otRepository.validarSerieChipIdUnicos(serie, chipId);
+                Map<String, Object> unicidad = otRepository.validarSerieChipIdUnicos(serie, chipId, idSucursal);
                 if (!Boolean.TRUE.equals(unicidad.get("sePuede"))) {
                     String observacionUnicidad = asString(unicidad.get("observacion"));
                     boolean serieExiste = Boolean.TRUE.equals(unicidad.get("serieExiste"));
@@ -1934,6 +2251,12 @@ public class OtService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "fecha es requerida.");
         }
         String value = fecha.trim();
+        if (value.length() >= 10) {
+            String prefix = value.substring(0, 10);
+            if (prefix.matches("\\d{4}-\\d{2}-\\d{2}") || prefix.matches("\\d{2}/\\d{2}/\\d{4}")) {
+                value = prefix;
+            }
+        }
         DateTimeFormatter[] formatters = new DateTimeFormatter[] {
                 DateTimeFormatter.ISO_LOCAL_DATE,
                 DateTimeFormatter.ofPattern("dd/MM/yyyy"),
@@ -2242,6 +2565,22 @@ public class OtService {
             logger.warn("No se pudo resolver catalogo de sucursales para normalizar cabecera OT.", ex);
             return Collections.emptyMap();
         }
+    }
+
+    private String resolverNombreSucursalParaPdf(Integer idSucursal) {
+        if (idSucursal == null || idSucursal <= 0) {
+            return "SinSucursal";
+        }
+        try {
+            Map<Integer, String> sucursales = cargarSucursalesPorId();
+            String nombre = trimToNull(sucursales.get(idSucursal));
+            if (nombre != null) {
+                return nombre;
+            }
+        } catch (Exception ex) {
+            logger.warn("No se pudo resolver nombre de sucursal para ruta PDF. idSucursal={}", idSucursal, ex);
+        }
+        return "Sucursal_" + idSucursal;
     }
 
     private String trimToNull(String value) {

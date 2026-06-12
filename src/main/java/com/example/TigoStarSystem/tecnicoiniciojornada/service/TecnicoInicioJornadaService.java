@@ -16,6 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -43,10 +44,29 @@ public class TecnicoInicioJornadaService {
         AuthLoginResponse tecnico = requireUsuarioInicioJornada(token);
         repository.marcarNoCierreAtrasado(tigohogarJdbcTemplate, tecnico.getIdUsuario());
         boolean existe = repository.existeRegistroHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario());
+        String sucursalResuelta = resolveSucursalNombre(sucursal, tecnico);
+        JdbcTemplate tecnicosTemplate = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
+        Map<String, Object> encargadoActual = repository.buscarEncargadoActualPorTecnico(
+                dbConnectionManager.connDb("central"),
+                tecnicosTemplate,
+                sucursalResuelta,
+                tecnico.getIdUsuario(),
+                tecnico.getNombre()
+        );
         Map<String, Object> out = new HashMap<>();
         out.put("idTecnico", tecnico.getIdUsuario());
         out.put("pendiente", !existe);
         out.put("fechaServidor", java.time.OffsetDateTime.now().toString());
+        if (encargadoActual != null) {
+            String encargado = valueAsString(encargadoActual.get("encargado"));
+            String idEncargado = valueAsString(encargadoActual.get("idEncargado"));
+            if (!isBlank(encargado)) {
+                out.put("encargado", encargado);
+            }
+            if (!isBlank(idEncargado)) {
+                out.put("idEncargado", idEncargado);
+            }
+        }
         return out;
     }
 
@@ -69,7 +89,15 @@ public class TecnicoInicioJornadaService {
         AuthLoginResponse tecnico = requireUsuarioInicioJornada(token);
         String sucursalResuelta = resolveSucursalNombre(sucursal, tecnico);
         JdbcTemplate tecnicosTemplate = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
-        return repository.listarEncargados(tecnicosTemplate);
+        List<Map<String, Object>> encargados = repository.listarEncargados(tecnicosTemplate);
+        Map<String, Object> encargadoActual = repository.buscarEncargadoActualPorTecnico(
+                dbConnectionManager.connDb("central"),
+                tecnicosTemplate,
+                sucursalResuelta,
+                tecnico.getIdUsuario(),
+                tecnico.getNombre()
+        );
+        return ensureEncargadoActualEnLista(encargados, encargadoActual);
     }
 
     public Map<String, Object> registrar(String token, TecnicoInicioJornadaCreateRequest request) {
@@ -144,7 +172,14 @@ public class TecnicoInicioJornadaService {
         if (rows == null || rows.isEmpty()) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "NO_DATA", "No se pudo registrar inicio de jornada.");
         }
-        return rows.get(0);
+        Map<String, Object> result = rows.get(0);
+        Integer idInicio = toPositiveInteger(
+                result.get("idInicio") != null ? result.get("idInicio") : result.get("id_inicio")
+        );
+        if (idInicio != null && !isBlank(request.getUbicacionGeoRef())) {
+            repository.actualizarUbicacionInicio(tigohogarJdbcTemplate, idInicio, request.getUbicacionGeoRef().trim());
+        }
+        return result;
     }
 
     public Map<String, Object> cerrarJornada(String token, TecnicoCierreJornadaRequest request) {
@@ -305,5 +340,37 @@ public class TecnicoInicioJornadaService {
         if (value == null) return null;
         String text = String.valueOf(value).trim();
         return text.isEmpty() ? null : text;
+    }
+
+    private List<Map<String, Object>> ensureEncargadoActualEnLista(
+            List<Map<String, Object>> encargados,
+            Map<String, Object> encargadoActual
+    ) {
+        if (encargados == null) {
+            encargados = new java.util.ArrayList<>();
+        }
+        if (encargadoActual == null) {
+            return encargados;
+        }
+        String idActual = valueAsString(encargadoActual.get("idEncargado"));
+        String nombreActual = valueAsString(encargadoActual.get("encargado"));
+        if (isBlank(idActual)) {
+            return encargados;
+        }
+        boolean exists = false;
+        for (Map<String, Object> row : encargados) {
+            String idRow = valueAsString(row == null ? null : row.get("idEncargado"));
+            if (idActual.equals(idRow)) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idEncargado", idActual);
+            item.put("encargado", isBlank(nombreActual) ? ("Supervisor " + idActual) : nombreActual);
+            encargados.add(0, item);
+        }
+        return encargados;
     }
 }

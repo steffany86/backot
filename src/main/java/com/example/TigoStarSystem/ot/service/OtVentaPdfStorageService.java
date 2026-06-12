@@ -30,14 +30,15 @@ public class OtVentaPdfStorageService {
         ensureDirectory(this.baseDir);
     }
 
-    public String guardarPdfVenta(MultipartFile pdf, Integer ordenTrabajo, Integer codigoCliente) {
+    public String guardarPdfVenta(MultipartFile pdf, Integer ordenTrabajo, Integer codigoCliente, String sucursalNombre) {
         if (pdf == null || pdf.isEmpty()) {
             return null;
         }
         validarPdf(pdf);
 
+        String sucursalFolder = sanitizeFolderName(sucursalNombre);
         String datePath = DATE_PARTITION.format(LocalDate.now());
-        Path targetDir = baseDir.resolve("venta").resolve(datePath);
+        Path targetDir = baseDir.resolve("venta").resolve(sucursalFolder).resolve(datePath);
         ensureDirectory(targetDir);
 
         String fileName = buildFileName(pdf, ordenTrabajo, codigoCliente);
@@ -51,7 +52,7 @@ public class OtVentaPdfStorageService {
                     "No se pudo guardar el PDF en disco."
             );
         }
-        return "venta/" + datePath + "/" + fileName;
+        return targetPath.toAbsolutePath().normalize().toString();
     }
 
     private void validarPdf(MultipartFile pdf) {
@@ -121,5 +122,17 @@ public class OtVentaPdfStorageService {
                     "No se pudo crear/validar carpeta de PDFs: " + dir
             );
         }
+    }
+
+    private String sanitizeFolderName(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "SinSucursal";
+        }
+        String cleaned = value.trim().replaceAll("[\\\\/:*?\"<>|]", " ");
+        cleaned = cleaned.replaceAll("\\s+", " ").trim();
+        if (cleaned.isEmpty()) {
+            return "SinSucursal";
+        }
+        return cleaned;
     }
 }

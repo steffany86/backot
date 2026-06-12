@@ -6,6 +6,7 @@ import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.ot.dto.OtCrearRequest;
 import com.example.TigoStarSystem.ot.dto.OtCrearResponse;
+import com.example.TigoStarSystem.ot.dto.OtDetalleMaterialRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaRequest;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarDetalleAgendaResponse;
 import com.example.TigoStarSystem.ot.dto.OtRegistrarCargoUsuarioRequest;
@@ -18,6 +19,8 @@ import com.example.TigoStarSystem.ot.dto.OtRegistrarVentaResponse;
 import com.example.TigoStarSystem.ot.dto.OtRealizadaRequest;
 import com.example.TigoStarSystem.ot.dto.OtValidarVentaDetalleResponse;
 import com.example.TigoStarSystem.ot.service.OtService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpStatus;
@@ -36,6 +39,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/ot")
 public class OtController {
+    private static final Logger logger = LoggerFactory.getLogger(OtController.class);
     private final OtService otService;
     private final AuthService authService;
 
@@ -80,8 +84,43 @@ public class OtController {
             @RequestHeader(value = "X-Session-Token", required = false) String token,
             @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
             @RequestBody OtRegistrarDetalleAgendaRequest request) {
-        OtRegistrarDetalleAgendaResponse response = otService.registrarDetalleAgenda(request, resolveIdSucursal(token, idSucursal));
-        return ResponseEntity.ok(ApiResponse.of(response, "Detalle de OT registrado correctamente."));
+        Map<String, Object> snapshot = buildDetalleMaterialesSnapshot(request);
+        logger.info(
+                "POST /ot/detalle-materiales request tokenPresent={}, idSucursalParam={}, payload={}",
+                !isBlank(token),
+                idSucursal,
+                snapshot
+        );
+        try {
+            Integer idSucursalResolved = resolveIdSucursal(token, idSucursal);
+            logger.info(
+                    "POST /ot/detalle-materiales resolved idSucursal={} tokenPresent={}",
+                    idSucursalResolved,
+                    !isBlank(token)
+            );
+            OtRegistrarDetalleAgendaResponse response = otService.registrarDetalleAgenda(request, idSucursalResolved);
+            return ResponseEntity.ok(ApiResponse.of(response, "Detalle de OT registrado correctamente."));
+        } catch (ApiException ex) {
+            logger.error(
+                    "POST /ot/detalle-materiales error code={} status={} message={} tokenPresent={} idSucursalParam={} payload={}",
+                    ex.getCode(),
+                    ex.getStatus(),
+                    ex.getMessage(),
+                    !isBlank(token),
+                    idSucursal,
+                    snapshot
+            );
+            throw ex;
+        } catch (RuntimeException ex) {
+            logger.error(
+                    "POST /ot/detalle-materiales runtime error tokenPresent={} idSucursalParam={} payload={}",
+                    !isBlank(token),
+                    idSucursal,
+                    snapshot,
+                    ex
+            );
+            throw ex;
+        }
     }
 
     @PostMapping("/cargo-usuario")
@@ -119,6 +158,7 @@ public class OtController {
     @GetMapping
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarOt(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursalParam,
             @RequestParam(value = "fecha", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
             @RequestParam(value = "inicio", required = false)
@@ -129,7 +169,7 @@ public class OtController {
             @RequestParam(value = "rol", required = false) String rol,
             @RequestParam(value = "pendiente", required = false) Boolean pendiente) {
         AuthMeResponse me = resolveSession(token);
-        Integer idSucursal = extractIdSucursal(me);
+        Integer idSucursal = resolveIdSucursal(token, idSucursalParam);
 
         Integer idUsuarioFiltro = idUsuario;
         String rolFiltro = rol;
@@ -414,15 +454,7 @@ public class OtController {
 
     private Integer resolveIdSucursal(String token, Integer idSucursalFallback) {
         if (idSucursalFallback != null && idSucursalFallback > 0) {
-            try {
-                Integer idSucursalSesion = resolveIdSucursal(token);
-                return idSucursalSesion != null ? idSucursalSesion : idSucursalFallback;
-            } catch (ApiException ex) {
-                if (isSesionNoDisponible(ex)) {
-                    return idSucursalFallback;
-                }
-                throw ex;
-            }
+            return idSucursalFallback;
         }
         Integer idSucursalSesion = resolveIdSucursal(token);
         if (idSucursalSesion != null) {
@@ -463,5 +495,36 @@ public class OtController {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private Map<String, Object> buildDetalleMaterialesSnapshot(OtRegistrarDetalleAgendaRequest request) {
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        if (request == null) {
+            out.put("request", null);
+            return out;
+        }
+        out.put("numeroOrden", request.getNumeroOrden());
+        out.put("codigoCliente", request.getCodigoCliente());
+        out.put("fechaEjecucion", request.getFechaEjecucion());
+        out.put("idEstado", request.getIdEstado());
+        out.put("observacion", request.getObservacion());
+        List<Map<String, Object>> materiales = new java.util.ArrayList<>();
+        if (request.getMateriales() != null) {
+            for (OtDetalleMaterialRequest item : request.getMateriales()) {
+                Map<String, Object> row = new java.util.LinkedHashMap<>();
+                if (item != null) {
+                    row.put("idProducto", item.getIdProducto());
+                    row.put("idTipoMaterial", item.getIdTipoMaterial());
+                    row.put("cantidad", item.getCantidad());
+                    row.put("serie", item.getSerie());
+                    row.put("chipId", item.getChipId());
+                    row.put("requiereIdentificacion", item.getRequiereIdentificacion());
+                    row.put("entregado", item.getEntregado());
+                }
+                materiales.add(row);
+            }
+        }
+        out.put("materiales", materiales);
+        return out;
     }
 }

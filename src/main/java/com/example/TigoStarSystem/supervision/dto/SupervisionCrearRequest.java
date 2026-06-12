@@ -7,7 +7,7 @@ public class SupervisionCrearRequest {
     @NotBlank(message = "idTecnicoPrincipal es requerido")
     private String idTecnicoPrincipal;
 
-    @NotBlank(message = "idTecnicoAuxiliar es requerido")
+    @Size(max = 150, message = "idTecnicoAuxiliar no puede exceder 150 caracteres")
     private String idTecnicoAuxiliar;
 
     @NotBlank(message = "idTipoSupervision es requerido")
@@ -62,7 +62,7 @@ public class SupervisionCrearRequest {
     public String getIdTecnicoPrincipal() { return idTecnicoPrincipal; }
     public void setIdTecnicoPrincipal(String idTecnicoPrincipal) { this.idTecnicoPrincipal = idTecnicoPrincipal; }
     public String getIdTecnicoAuxiliar() { return idTecnicoAuxiliar; }
-    public void setIdTecnicoAuxiliar(String idTecnicoAuxiliar) { this.idTecnicoAuxiliar = idTecnicoAuxiliar; }
+    public void setIdTecnicoAuxiliar(String idTecnicoAuxiliar) { this.idTecnicoAuxiliar = normalizeUpper(idTecnicoAuxiliar); }
     public String getIdTipoSupervision() { return idTipoSupervision; }
     public void setIdTipoSupervision(String idTipoSupervision) { this.idTipoSupervision = idTipoSupervision; }
     public String getIdTipoTrabajo() { return idTipoTrabajo; }
@@ -103,4 +103,10 @@ public class SupervisionCrearRequest {
     public void setDescripcionAdicionalObservacion(String descripcionAdicionalObservacion) { this.descripcionAdicionalObservacion = descripcionAdicionalObservacion; }
     public String getUbicacion() { return ubicacion; }
     public void setUbicacion(String ubicacion) { this.ubicacion = ubicacion; }
+
+    private String normalizeUpper(String value) {
+        if (value == null) return null;
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed.toUpperCase();
+    }
 }

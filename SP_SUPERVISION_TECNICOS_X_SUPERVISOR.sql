@@ -5,11 +5,17 @@ GO
 
 /*
   SP: spx_ListarTecnicosSupervisorConformacionCuadrilla
-  Objetivo: listar tecnicos/auxiliares asociados a un supervisor
-            segun la conformacion de cuadrillas.
-  Uso de prueba: EXEC dbo.spx_ListarTecnicosSupervisorConformacionCuadrilla 87
+  Regla:
+    - El supervisor logueado envia su Id_Usuario como @IdSupervisor.
+    - Se buscan las filas de hoy en BD Ordenes.dbo.tbl_ConformacionCuadrillaDiario
+      donde idUsuarioSupervisor = @IdSupervisor (id encargado en esta BD).
+    - Se devuelven tecnico principal y auxiliar de esas filas.
 */
-CREATE OR ALTER PROCEDURE dbo.spx_ListarTecnicosSupervisorConformacionCuadrilla
+IF OBJECT_ID(N'dbo.spx_ListarTecnicosSupervisorConformacionCuadrilla', N'P') IS NOT NULL
+    DROP PROCEDURE dbo.spx_ListarTecnicosSupervisorConformacionCuadrilla;
+GO
+
+CREATE PROCEDURE dbo.spx_ListarTecnicosSupervisorConformacionCuadrilla
     @IdSupervisor INT
 AS
 BEGIN
@@ -22,65 +28,38 @@ BEGIN
         RETURN;
     END;
 
-    DECLARE @sql NVARCHAR(MAX) = N'';
-
-    IF OBJECT_ID(N'dbo.tbl_ConformacionCuadrillaDiario', N'U') IS NOT NULL
-    BEGIN
-        SET @sql = @sql + N'
-        SELECT id_usuarioSupervisor AS idSupervisor, id_tecnico AS idTecnico
-        FROM dbo.tbl_ConformacionCuadrillaDiario
-        UNION ALL
-        SELECT id_usuarioSupervisor AS idSupervisor, id_tecnicoAuxiliar AS idTecnico
-        FROM dbo.tbl_ConformacionCuadrillaDiario
-        ';
-    END;
-
-    IF OBJECT_ID(N'dbo.tbl_ConformacionCuadrillaDiarioWeb', N'U') IS NOT NULL
-    BEGIN
-        SET @sql = @sql + CASE WHEN LEN(@sql) > 0 THEN N' UNION ALL ' ELSE N'' END + N'
-        SELECT id_usuarioSupervisor AS idSupervisor, id_tecnico AS idTecnico
-        FROM dbo.tbl_ConformacionCuadrillaDiarioWeb
-        UNION ALL
-        SELECT id_usuarioSupervisor AS idSupervisor, id_tecnicoAuxiliar AS idTecnico
-        FROM dbo.tbl_ConformacionCuadrillaDiarioWeb
-        ';
-    END;
-
-    IF OBJECT_ID(N'dbo.conformacion_cuadrillas', N'U') IS NOT NULL
-    BEGIN
-        SET @sql = @sql + CASE WHEN LEN(@sql) > 0 THEN N' UNION ALL ' ELSE N'' END + N'
-        SELECT id_supervisor AS idSupervisor, id_tecnico_principal AS idTecnico
-        FROM dbo.conformacion_cuadrillas
-        UNION ALL
-        SELECT id_supervisor AS idSupervisor, id_tecnico_auxiliar AS idTecnico
-        FROM dbo.conformacion_cuadrillas
-        ';
-    END;
-
-    IF LEN(@sql) = 0
-    BEGIN
-        SELECT CAST(NULL AS INT) AS idTecnico, CAST(NULL AS NVARCHAR(200)) AS tecnico
-        WHERE 1 = 0;
-        RETURN;
-    END;
-
-    SET @sql = N'
     ;WITH base AS (
-      ' + @sql + N'
-    ),
-    filtrada AS (
-      SELECT DISTINCT idTecnico
-      FROM base
-      WHERE idSupervisor = @IdSupervisor
-        AND idTecnico IS NOT NULL
-    )
-    SELECT f.idTecnico,
-           COALESCE(NULLIF(LTRIM(RTRIM(u.Nombre)), ''''), CONCAT(''Tecnico '', f.idTecnico)) AS tecnico
-    FROM filtrada f
-    LEFT JOIN dbo.tbl_Usuario u
-      ON u.Id_Usuario = f.idTecnico
-    ORDER BY tecnico, f.idTecnico;';
+        SELECT
+            id_tecnico AS idTecnico,
+            tecnico AS tecnico
+        FROM dbo.tbl_ConformacionCuadrillaDiario
+        WHERE ISNULL(e_eliminado,0)=0
+          AND CONVERT(date, fecha)=CONVERT(date, GETDATE())
+          AND idUsuarioSupervisor = @IdSupervisor
 
-    EXEC sp_executesql @sql, N'@IdSupervisor INT', @IdSupervisor = @IdSupervisor;
+        UNION
+
+        SELECT
+            id_tecnicoAuxiliar AS idTecnico,
+            auxiliar AS tecnico
+        FROM dbo.tbl_ConformacionCuadrillaDiario
+        WHERE ISNULL(e_eliminado,0)=0
+          AND CONVERT(date, fecha)=CONVERT(date, GETDATE())
+          AND idUsuarioSupervisor = @IdSupervisor
+    )
+    SELECT DISTINCT
+           b.idTecnico,
+           COALESCE(
+               NULLIF(LTRIM(RTRIM(v.Nombre)), ''),
+               NULLIF(LTRIM(RTRIM(b.tecnico)), ''),
+               'Tecnico ' + CONVERT(NVARCHAR(20), b.idTecnico)
+           ) AS tecnico
+    FROM base b
+    LEFT JOIN dbo.tbl_Vendedor v
+      ON v.Id_Vendedor = b.idTecnico
+     AND ISNULL(v.E_Eliminado,0)=0
+    WHERE b.idTecnico IS NOT NULL
+      AND b.idTecnico > 0
+    ORDER BY tecnico, b.idTecnico;
 END
 GO

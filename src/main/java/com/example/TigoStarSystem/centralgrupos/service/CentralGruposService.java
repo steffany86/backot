@@ -35,7 +35,7 @@ public class CentralGruposService {
     }
 
     public List<Map<String, Object>> listarGrupos(String token, String sucursal) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
         if (isBlank(sucursalResuelta)) {
             return new ArrayList<>();
@@ -47,19 +47,19 @@ public class CentralGruposService {
     }
 
     public List<Map<String, Object>> listarSupervisoresFiltro(String token, String sucursal) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         return repository.listarSupervisoresFiltro(template);
     }
 
     public List<Map<String, Object>> listarTecnicosFiltro(String token, String sucursal) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         return repository.listarTecnicosFiltro(template);
     }
 
     public Map<String, Object> crearGrupo(String token, String sucursal, String nombre) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         List<Map<String, Object>> rows = repository.crearGrupo(template, usuario.getIdUsuario(), nombre);
         if (rows == null || rows.isEmpty()) {
@@ -73,7 +73,7 @@ public class CentralGruposService {
             String sucursal,
             Integer idGrupo,
             Integer idUsuarioSupervisor) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -121,7 +121,7 @@ public class CentralGruposService {
             String sucursal,
             Integer idGrupo,
             Integer idUsuarioTecnico) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         List<Map<String, Object>> rows = repository.asignarTecnico(template, usuario.getIdUsuario(), idGrupo, idUsuarioTecnico);
         if (rows == null || rows.isEmpty()) {
@@ -135,7 +135,7 @@ public class CentralGruposService {
             String sucursal,
             Integer idGrupo,
             Integer idUsuarioTecnico) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         List<Map<String, Object>> rows = repository.quitarTecnico(template, usuario.getIdUsuario(), idGrupo, idUsuarioTecnico);
         if (rows == null || rows.isEmpty()) {
@@ -148,7 +148,7 @@ public class CentralGruposService {
             String token,
             String sucursal,
             Integer idGrupo) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         List<Map<String, Object>> rows = repository.eliminarGrupo(template, usuario.getIdUsuario(), idGrupo);
         if (rows == null || rows.isEmpty()) {
@@ -162,7 +162,7 @@ public class CentralGruposService {
             String sucursal,
             Integer idGrupo,
             Integer idUsuarioTecnico) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         List<Map<String, Object>> rows = repository.marcarSupervisorAusente(template, usuario.getIdUsuario(), idGrupo, idUsuarioTecnico);
         if (rows == null || rows.isEmpty()) {
@@ -175,7 +175,7 @@ public class CentralGruposService {
             String token,
             String sucursal,
             Integer idGrupo) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         List<Map<String, Object>> rows = repository.restaurarSupervisor(template, usuario.getIdUsuario(), idGrupo);
         if (rows == null || rows.isEmpty()) {
@@ -189,7 +189,7 @@ public class CentralGruposService {
             String sucursal,
             Integer idGrupo,
             Integer idUsuarioTecnico) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         List<Map<String, Object>> rows = repository.cambiarColaboradorBackup(template, usuario.getIdUsuario(), idGrupo, idUsuarioTecnico);
         if (rows == null || rows.isEmpty()) {
@@ -204,7 +204,7 @@ public class CentralGruposService {
             Integer idSupervisorOrigen,
             Integer idSupervisorDestino,
             List<Integer> idGrupos) {
-        AuthLoginResponse usuario = requireCentral(token);
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
         String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
 
@@ -332,15 +332,19 @@ public class CentralGruposService {
         return "";
     }
 
-    private AuthLoginResponse requireCentral(String token) {
+    private AuthLoginResponse requireCentralOrBackOffice(String token) {
         AuthMeResponse me = authService.me(token);
         AuthLoginResponse usuario = me.getUsuario();
         String rol = normalize(usuario == null ? null : usuario.getRol());
-        if (!"central".equals(rol)) {
+        if (!"central".equals(rol)
+                && !"back office".equals(rol)
+                && !"backoffice".equals(rol)
+                && !"backoffice_v".equals(rol)
+                && !"backup".equals(rol)) {
             throw new ApiException(
                     HttpStatus.FORBIDDEN,
-                    "FORBIDDEN_CENTRAL_ONLY",
-                    "Esta funcionalidad es solo para rol Central."
+                    "FORBIDDEN_CENTRAL_OR_BACKOFFICE_ONLY",
+                    "Esta funcionalidad es solo para rol Central o Back Office."
             );
         }
         return usuario;

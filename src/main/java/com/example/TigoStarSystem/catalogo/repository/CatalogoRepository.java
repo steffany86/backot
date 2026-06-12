@@ -2,6 +2,8 @@ package com.example.TigoStarSystem.catalogo.repository;
 
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import org.springframework.beans.factory.annotation.Value;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ColumnMapRowMapper;
 import org.springframework.jdbc.core.ConnectionCallback;
@@ -13,12 +15,14 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
 @Repository
 public class CatalogoRepository {
+    private static final Logger logger = LoggerFactory.getLogger(CatalogoRepository.class);
     private final JdbcTemplate jdbcTemplate;
     private final CatalogoDbSupport dbSupport;
 
@@ -590,7 +594,29 @@ public class CatalogoRepository {
     }
 
     public List<Map<String, Object>> listarProductosPorRuta(Integer idRuta, Integer idSucursal) {
-        return template(idSucursal).queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", idRuta);
+        JdbcTemplate target = template(idSucursal);
+        List<Map<String, Object>> rows = target.queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", idRuta);
+        if ((rows == null || rows.isEmpty()) && idSucursal != null) {
+            try {
+                List<Map<String, Object>> fallback = jdbcTemplate.queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", idRuta);
+                if (fallback != null && !fallback.isEmpty()) {
+                    logger.warn(
+                            "TraerTodosLosProductos_x_IdRutaWeb vacio en sucursal id={} para rutaId={}. Usando fallback DB principal.",
+                            idSucursal,
+                            idRuta
+                    );
+                    return fallback;
+                }
+            } catch (DataAccessException ex) {
+                logger.warn(
+                        "Fallback DB principal fallo para TraerTodosLosProductos_x_IdRutaWeb idSucursal={} rutaId={}: {}",
+                        idSucursal,
+                        idRuta,
+                        ex.getMessage()
+                );
+            }
+        }
+        return rows;
     }
 
     public List<Map<String, Object>> listarProductosCargoUsuarioWeb() {
@@ -626,6 +652,105 @@ public class CatalogoRepository {
 
     public List<Map<String, Object>> traerChipIdPorSerie(String serie, Integer idSucursal) {
         return template(idSucursal).queryForList("EXEC spx_TraerChipID2 ?", serie);
+    }
+
+    public List<Map<String, Object>> sugerirSeriesPorPrefijo(String prefijo, Integer limite, Integer idProducto, Integer idSucursal) {
+        int top = (limite == null || limite <= 0) ? 10 : Math.min(limite, 50);
+        String text = prefijo == null ? "" : prefijo.trim();
+        if (text.isEmpty()) {
+            return new java.util.ArrayList<>();
+        }
+        Integer productoFiltro = idProducto != null && idProducto > 0 ? idProducto : null;
+        String prefixValue = text + "%";
+        String containsValue = "%" + text + "%";
+        return template(idSucursal).queryForList(
+                "SELECT TOP " + top + " " +
+                        "LTRIM(RTRIM(ISNULL(p.Serial, ''))) AS serial, " +
+                        "LTRIM(RTRIM(ISNULL(p.ChipID, ''))) AS chipId, " +
+                        "p.Id_Productos AS idProductos, " +
+                        "p.Id_Producto AS idProducto, " +
+                        "prod.Nombre AS producto, " +
+                        "p.Id_EstadoProducto AS idEstadoProducto, " +
+                        "ep.Nombre AS estadoProducto, " +
+                        "p.Id_Ruta AS idRuta, " +
+                        "r.Nombre AS ruta, " +
+                        "CASE " +
+                        "  WHEN UPPER(LTRIM(RTRIM(ISNULL(p.Serial, '')))) LIKE UPPER(?) THEN 'serial' " +
+                        "  ELSE 'chipId' " +
+                        "END AS coincidencia " +
+                        "FROM dbo.tbl_productos p " +
+                        "LEFT JOIN dbo.tbl_producto prod ON prod.Id_Producto = p.Id_Producto " +
+                        "LEFT JOIN dbo.tbl_estadoproducto ep ON ep.Id_EstadoProducto = p.Id_EstadoProducto " +
+                        "LEFT JOIN dbo.tbl_ruta r ON r.Id_Ruta = p.Id_Ruta " +
+                        "WHERE ISNULL(p.e_eliminado, 0) = 0 " +
+                        "AND p.Id_EstadoProducto = 2 " +
+                        "AND (? IS NULL OR p.Id_Producto = ?) " +
+                        "AND ( " +
+                        "  (LTRIM(RTRIM(ISNULL(p.Serial, ''))) <> '' AND UPPER(LTRIM(RTRIM(ISNULL(p.Serial, '')))) LIKE UPPER(?)) " +
+                        "  OR (LTRIM(RTRIM(ISNULL(p.ChipID, ''))) <> '' AND UPPER(LTRIM(RTRIM(ISNULL(p.ChipID, '')))) LIKE UPPER(?)) " +
+                        ") " +
+                        "ORDER BY " +
+                        "  CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(p.Serial, '')))) LIKE UPPER(?) THEN 0 ELSE 1 END, " +
+                        "  p.Id_Productos DESC",
+                prefixValue,
+                productoFiltro,
+                productoFiltro,
+                containsValue,
+                containsValue,
+                prefixValue
+        );
+    }
+
+    public List<Map<String, Object>> sugerirSeriesSaldoInstalado(
+            String prefijo,
+            Integer limite,
+            Integer idRuta,
+            Integer idProducto,
+            Integer idSucursal) {
+        int top = (limite == null || limite <= 0) ? 10 : Math.min(limite, 50);
+        String text = prefijo == null ? "" : prefijo.trim();
+
+        List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                "EXEC dbo.spx_ObtenerSaldoTarjetasSugeridoswb ?, ?",
+                idRuta,
+                idProducto
+        );
+
+        String normalizedText = normalizeText(text);
+        List<Map<String, Object>> prefixMatches = new ArrayList<>();
+        List<Map<String, Object>> containsMatches = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> normalized = normalizarSugerenciaSaldo(row);
+            String serial = normalizeText(asString(normalized.get("serial")));
+            String chipId = normalizeText(asString(normalized.get("chipId")));
+            if (normalizedText.isEmpty()) {
+                prefixMatches.add(normalized);
+                continue;
+            }
+            boolean serialPrefix = !serial.isEmpty() && serial.startsWith(normalizedText);
+            boolean chipPrefix = !chipId.isEmpty() && chipId.startsWith(normalizedText);
+            boolean serialContains = !serial.isEmpty() && serial.contains(normalizedText);
+            boolean chipContains = !chipId.isEmpty() && chipId.contains(normalizedText);
+
+            if (serialPrefix || chipPrefix) {
+                normalized.put("coincidencia", serialPrefix ? "serial" : "chipId");
+                prefixMatches.add(normalized);
+            } else if (serialContains || chipContains) {
+                normalized.put("coincidencia", serialContains ? "serial" : "chipId");
+                containsMatches.add(normalized);
+            }
+        }
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : prefixMatches) {
+            if (out.size() >= top) break;
+            out.add(row);
+        }
+        for (Map<String, Object> row : containsMatches) {
+            if (out.size() >= top) break;
+            out.add(row);
+        }
+        return out;
     }
 
     public Map<String, Object> validarSerieChipUnico(String serie, String chipId) {
@@ -743,6 +868,37 @@ public class CatalogoRepository {
             return "";
         }
         return value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private Map<String, Object> normalizarSugerenciaSaldo(Map<String, Object> row) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        String serial = asString(valueIgnoreCase(row, "serial", "Serial", "SERIAL"));
+        String chipId = asString(valueIgnoreCase(row, "chipId", "ChipID", "chipid", "CHIPID"));
+        out.put("serial", serial == null ? "" : serial.trim());
+        out.put("chipId", chipId == null ? "" : chipId.trim());
+        out.put("idProductos", valueIgnoreCase(row, "idProductos", "Id_Productos", "id_productos", "ID_PRODUCTOS"));
+        out.put("idProducto", valueIgnoreCase(row, "idProducto", "Id_Producto", "id_producto", "ID_PRODUCTO"));
+        out.put("producto", valueIgnoreCase(row, "producto", "Producto", "Nombre", "nombre"));
+        out.put("idEstadoProducto", valueIgnoreCase(row, "idEstadoProducto", "Id_EstadoProducto", "id_estadoproducto"));
+        out.put("estadoProducto", valueIgnoreCase(row, "estadoProducto", "EstadoProducto"));
+        out.put("idRuta", valueIgnoreCase(row, "idRuta", "Id_Ruta", "id_ruta"));
+        out.put("ruta", valueIgnoreCase(row, "ruta", "Ruta"));
+        return out;
+    }
+
+    private Object valueIgnoreCase(Map<String, Object> row, String... keys) {
+        if (row == null || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            if (key == null) continue;
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(key)) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return null;
     }
 
     private List<Map<String, Object>> readFirstResultSet(CallableStatement statement) throws SQLException {

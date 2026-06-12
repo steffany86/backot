@@ -21,11 +21,11 @@ BEGIN
     IF OBJECT_ID(N''dbo.tbl_ConformacionCuadrillaDiario'', N''U'') IS NOT NULL
     BEGIN
         SET @sql = @sql + N''
-        SELECT idUsuarioSupervisor AS idSupervisor, id_tecnico AS idTecnico
+        SELECT id_encargado AS idSupervisor, id_tecnico AS idTecnico
         FROM dbo.tbl_ConformacionCuadrillaDiario
         WHERE ISNULL(e_eliminado,0)=0
         UNION ALL
-        SELECT idUsuarioSupervisor AS idSupervisor, id_tecnicoAuxiliar AS idTecnico
+        SELECT id_encargado AS idSupervisor, id_tecnico_auxiliar AS idTecnico
         FROM dbo.tbl_ConformacionCuadrillaDiario
         WHERE ISNULL(e_eliminado,0)=0
         '';
@@ -34,11 +34,11 @@ BEGIN
     IF OBJECT_ID(N''dbo.tbl_ConformacionCuadrillaDiarioWeb'', N''U'') IS NOT NULL
     BEGIN
         SET @sql = @sql + CASE WHEN LEN(@sql) > 0 THEN N'' UNION ALL '' ELSE N'''' END + N''
-        SELECT id_usuario_supervisor AS idSupervisor, id_tecnico AS idTecnico
+        SELECT id_encargado AS idSupervisor, id_tecnico AS idTecnico
         FROM dbo.tbl_ConformacionCuadrillaDiarioWeb
         WHERE ISNULL(e_eliminado,0)=0
         UNION ALL
-        SELECT id_usuario_supervisor AS idSupervisor, id_tecnico_auxiliar AS idTecnico
+        SELECT id_encargado AS idSupervisor, id_tecnico_auxiliar AS idTecnico
         FROM dbo.tbl_ConformacionCuadrillaDiarioWeb
         WHERE ISNULL(e_eliminado,0)=0
         '';

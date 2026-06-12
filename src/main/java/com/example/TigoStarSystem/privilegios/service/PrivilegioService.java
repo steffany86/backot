@@ -31,6 +31,9 @@ public class PrivilegioService {
     private static final Logger logger = LoggerFactory.getLogger(PrivilegioService.class);
     private static final List<Integer> MENU_IDS_PRESET_SUPERVISOR_CUADRILLAS =
             java.util.Arrays.asList(7, 8, 9, 10, 60, 62);
+    private static final int ROL_ID_BACK_OFFICE = 1;
+    private static final int ROL_ID_BACKOFFICE_V = 6;
+    private static final int ROL_ID_BACKUP = 11;
     private static final int ROL_ID_SUPERVISOR = 9;
     private static final int ROL_ID_SISTEMAS = 4;
     private final PrivilegioRepository repository;
@@ -293,7 +296,12 @@ public class PrivilegioService {
         if (menus == null || menus.isEmpty()) {
             return menus;
         }
-        boolean puedeVerCentralGrupos = administrador || sesionCentral || equalsRol(idRolPermisos, ROL_ID_SISTEMAS);
+        boolean puedeVerCentralGrupos = administrador
+                || sesionCentral
+                || equalsRol(idRolPermisos, ROL_ID_SISTEMAS)
+                || equalsRol(idRolPermisos, ROL_ID_BACK_OFFICE)
+                || equalsRol(idRolPermisos, ROL_ID_BACKOFFICE_V)
+                || equalsRol(idRolPermisos, ROL_ID_BACKUP);
         boolean puedeVerSupervision = administrador
                 || sesionCentral
                 || equalsRol(idRolPermisos, ROL_ID_SISTEMAS)

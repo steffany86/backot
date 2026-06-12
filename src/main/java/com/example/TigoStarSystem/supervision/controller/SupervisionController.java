@@ -44,6 +44,20 @@ public class SupervisionController {
         ));
     }
 
+    @GetMapping("/agenda")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarAgenda(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fechaDesde", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
+            @RequestParam(value = "fechaHasta", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
+            @RequestParam(value = "limite", required = false) Integer limite) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarPendientes(fechaDesde, fechaHasta, limite, token),
+                "Listado de supervisiones pendientes (agenda)."
+        ));
+    }
+
     @GetMapping("/{idSupervision}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerDetalle(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
@@ -61,6 +75,17 @@ public class SupervisionController {
         return ResponseEntity.ok(ApiResponse.of(
                 service.registrar(request, token),
                 "Nota de supervision registrada."
+        ));
+    }
+
+    @PostMapping("/{idSupervision}/realizar")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> realizarPendiente(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idSupervision") String idSupervision,
+            @Valid @RequestBody SupervisionCrearRequest request) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.realizarPendiente(idSupervision, request, token),
+                "Supervision pendiente realizada."
         ));
     }
 

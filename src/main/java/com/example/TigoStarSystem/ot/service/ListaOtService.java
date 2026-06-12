@@ -14,6 +14,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.LinkedHashSet;
 import java.util.Set;
 
 @Service
@@ -34,28 +35,9 @@ public class ListaOtService {
             Integer idSucursal) {
         List<Map<String, Object>> rowsSp = repository.listarPorFecha(fecha, tecnico, idSucursal, idUsuario);
         Set<String> agendaKeys = buildAgendaMatchKeys(rowsSp);
-        if (!agendaKeys.isEmpty()) {
-            try {
-                List<Map<String, Object>> rowsManualDelDia = repository.listarVentasManualPorFecha(fecha, idSucursal);
-                List<Long> idsVentaParaPromover = collectManualSaleIdsToPromote(rowsManualDelDia, agendaKeys);
-                if (!idsVentaParaPromover.isEmpty()) {
-                    int actualizados = repository.promoverVentasManualAOtWebPorIds(idsVentaParaPromover, idSucursal);
-                    logger.info(
-                            "Promocion MANUAL->OT_WEB por cruce agenda. fecha={}, filasMatch={}, filasActualizadas={}",
-                            fecha,
-                            idsVentaParaPromover.size(),
-                            actualizados
-                    );
-                }
-            } catch (Exception ex) {
-                logger.warn(
-                        "No se pudo promover ventas MANUAL -> OT_WEB por ids en listado. fecha={}, idUsuario={}",
-                        fecha,
-                        idUsuario,
-                        ex
-                );
-            }
-        }
+        // Importante:
+        // No cambiar Origen en flujo de lectura/listado.
+        // El listado debe ser solo consulta, sin efectos colaterales en BD.
 
         List<Integer> idsVendedor = repository.obtenerIdsVendedorPorIdUsuario(idUsuario, idSucursal);
         List<Map<String, Object>> rowsManual = repository.listarVentasManualPorFechaYVendedores(fecha, idsVendedor, idUsuario, idSucursal);
@@ -130,9 +112,58 @@ public class ListaOtService {
         if (exacto) {
             return tecnico.equals(tecnicoNorm)
                     || tecnico.contains(tecnicoNorm)
-                    || tecnicoNorm.contains(tecnico);
+                    || tecnicoNorm.contains(tecnico)
+                    || matchTecnicoTokens(tecnico, tecnicoNorm);
         }
         return tecnico.contains(tecnicoNorm);
+    }
+
+    private boolean matchTecnicoTokens(String tecnicoRowNorm, String tecnicoFiltroNorm) {
+        if (tecnicoRowNorm == null || tecnicoRowNorm.isEmpty() || tecnicoFiltroNorm == null || tecnicoFiltroNorm.isEmpty()) {
+            return false;
+        }
+        Set<String> tokensRow = splitTokens(tecnicoRowNorm);
+        Set<String> tokensFiltro = splitTokens(tecnicoFiltroNorm);
+        if (tokensRow.isEmpty() || tokensFiltro.isEmpty()) {
+            return false;
+        }
+
+        int overlap = 0;
+        for (String token : tokensRow) {
+            if (tokensFiltro.contains(token)) {
+                overlap++;
+            }
+        }
+
+        int minTokens = Math.min(tokensRow.size(), tokensFiltro.size());
+        if (minTokens <= 0) {
+            return false;
+        }
+
+        // Reglas de tolerancia:
+        // - nombres cortos: al menos 2 tokens coincidentes
+        // - nombres mas largos: al menos 3 tokens o 75% del menor conjunto
+        if (minTokens <= 2) {
+            return overlap >= 2;
+        }
+        int umbralPorcentaje = (int) Math.ceil(minTokens * 0.75);
+        int umbral = Math.min(3, umbralPorcentaje);
+        return overlap >= umbral;
+    }
+
+    private Set<String> splitTokens(String value) {
+        Set<String> out = new LinkedHashSet<>();
+        if (value == null || value.isEmpty()) {
+            return out;
+        }
+        String[] parts = value.split("\\s+");
+        for (String part : parts) {
+            String token = part == null ? "" : part.trim();
+            if (token.length() >= 2) {
+                out.add(token);
+            }
+        }
+        return out;
     }
 
     private boolean hasTecnicoValue(Map<String, Object> row) {

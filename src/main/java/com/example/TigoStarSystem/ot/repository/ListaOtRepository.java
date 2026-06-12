@@ -1,6 +1,8 @@
 package com.example.TigoStarSystem.ot.repository;
 
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
@@ -22,6 +24,7 @@ import java.util.Set;
 
 @Repository
 public class ListaOtRepository {
+    private static final Logger logger = LoggerFactory.getLogger(ListaOtRepository.class);
     private static final DateTimeFormatter LEGACY_DATE_FORMAT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private final JdbcTemplate centralJdbcTemplate;
     private final JdbcTemplate localJdbcTemplate;
@@ -59,21 +62,35 @@ public class ListaOtRepository {
     }
 
     public List<Map<String, Object>> listarPorFecha(LocalDate fecha, String tecnico, Integer idSucursal, Integer idUsuario) {
-        JdbcTemplate template = template(idSucursal);
+        JdbcTemplate templateSucursal = template(idSucursal);
+        JdbcTemplate templateOt = templateSucursal;
         Date fechaSql = Date.valueOf(fecha);
         String fechaLegacy = fecha.format(LEGACY_DATE_FORMAT);
         String tecnicoParam = isBlank(tecnico) ? null : tecnico.trim();
         LinkedHashMap<String, Map<String, Object>> mergedRows = new LinkedHashMap<>();
 
-        if (tecnicoParam != null) {
-            List<String> tecnicoVariantes = buildTecnicoVariantes(tecnicoParam);
+        if (tecnicoParam != null || (idUsuario != null && idUsuario > 0)) {
+            List<String> salesforceDesdeUsuario = obtenerSalesforcePorIdUsuario(idUsuario, idSucursal, fecha);
+            logger.info("{{\"evento\":\"LISTA_OT_FLUJO_USUARIO_CONFORMACION\",\"idUsuario\":{},\"idSucursal\":{},\"fecha\":\"{}\",\"tecnicoSesion\":\"{}\",\"salesforce\":{}}}",
+                    idUsuario, idSucursal, fecha, tecnicoParam, salesforceDesdeUsuario);
+
+            LinkedHashSet<String> tecnicoVariantesSet = new LinkedHashSet<>();
+            for (String salesforce : salesforceDesdeUsuario) {
+                tecnicoVariantesSet.addAll(buildTecnicoVariantes(salesforce));
+            }
+            if (tecnicoVariantesSet.isEmpty() && tecnicoParam != null) {
+                tecnicoVariantesSet.addAll(buildTecnicoVariantes(tecnicoParam));
+            }
+            List<String> tecnicoVariantes = new ArrayList<>(tecnicoVariantesSet);
             for (String tecnicoVariante : tecnicoVariantes) {
                 try {
-                    List<Map<String, Object>> rows = template.queryForList(
+                    List<Map<String, Object>> rows = templateOt.queryForList(
                             "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
                             fechaSql,
                             tecnicoVariante
                     );
+                    logger.info("{{\"evento\":\"LISTA_OT_SP_EJECUCION\",\"fecha\":\"{}\",\"tecnicoEnviado\":\"{}\",\"rows\":{},\"formato\":\"sqlDate\"}}",
+                            fechaSql, tecnicoVariante, rows == null ? 0 : rows.size());
                     mergeRows(mergedRows, rows);
                 } catch (DataAccessException ex) {
                     if (!shouldFallback(ex)) {
@@ -81,11 +98,13 @@ public class ListaOtRepository {
                     }
                 }
                 try {
-                    List<Map<String, Object>> rows = template.queryForList(
+                    List<Map<String, Object>> rows = templateOt.queryForList(
                             "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
                             fechaLegacy,
                             tecnicoVariante
                     );
+                    logger.info("{{\"evento\":\"LISTA_OT_SP_EJECUCION\",\"fecha\":\"{}\",\"tecnicoEnviado\":\"{}\",\"rows\":{},\"formato\":\"legacy\"}}",
+                            fechaLegacy, tecnicoVariante, rows == null ? 0 : rows.size());
                     mergeRows(mergedRows, rows);
                 } catch (DataAccessException ex) {
                     if (!shouldFallback(ex)) {
@@ -93,10 +112,17 @@ public class ListaOtRepository {
                     }
                 }
             }
+
+            if (mergedRows.isEmpty()) {
+                mergeRows(mergedRows, listarDesdeCentralConTecnico(fechaSql, fechaLegacy, tecnicoParam, idSucursal, idUsuario));
+                if (!mergedRows.isEmpty()) {
+                    return new ArrayList<>(mergedRows.values());
+                }
+            }
         }
 
         try {
-            List<Map<String, Object>> rows = template.queryForList(
+            List<Map<String, Object>> rows = templateOt.queryForList(
                     "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?",
                     fechaSql
             );
@@ -107,7 +133,7 @@ public class ListaOtRepository {
             }
         }
         try {
-            List<Map<String, Object>> rows = template.queryForList(
+            List<Map<String, Object>> rows = templateOt.queryForList(
                     "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?",
                     fechaLegacy
             );
@@ -122,17 +148,10 @@ public class ListaOtRepository {
             return new ArrayList<>(mergedRows.values());
         }
 
-        // Fallback de negocio: cuando la sucursal no devuelve filas, buscar tecnico/salesforce
-        // en BDControlOrdenes por id_vendedor (desde id_usuario local) y ejecutar el SP central.
-        mergeRows(mergedRows, listarDesdeCentralConTecnico(fechaSql, fechaLegacy, tecnicoParam, idSucursal, idUsuario));
-        if (!mergedRows.isEmpty()) {
-            return new ArrayList<>(mergedRows.values());
-        }
-
         try {
-            List<Map<String, Object>> rows = template.queryForList(
+            List<Map<String, Object>> rows = templateOt.queryForList(
                     "EXEC dbo.sp_ObtenerListaOrdenesTrabajo_OTWEB ?",
-                    fechaSql
+                    fechaLegacy
             );
             mergeRows(mergedRows, rows);
             if (!mergedRows.isEmpty()) {
@@ -144,11 +163,20 @@ public class ListaOtRepository {
             }
         }
 
-        mergeRows(mergedRows, template.queryForList(
-                "EXEC dbo.sp_ObtenerListaOrdenesTrabajo ?",
-                fechaSql
-        ));
-        return new ArrayList<>(mergedRows.values());
+        try {
+            mergeRows(mergedRows, templateOt.queryForList(
+                    "EXEC dbo.sp_ObtenerListaOrdenesTrabajo ?",
+                    fechaLegacy
+            ));
+            return new ArrayList<>(mergedRows.values());
+        } catch (DataAccessException ex) {
+            if (!shouldFallback(ex)) {
+                throw ex;
+            }
+            logger.warn("{{\"evento\":\"LISTA_OT_SP_FALLBACK_FINAL_ERROR\",\"fecha\":\"{}\",\"idSucursal\":{},\"error\":\"{}\"}}",
+                    fechaSql, idSucursal, ex.getMessage());
+            return new ArrayList<>(mergedRows.values());
+        }
     }
 
     private List<Map<String, Object>> listarDesdeCentralConTecnico(
@@ -176,18 +204,16 @@ public class ListaOtRepository {
                     continue;
                 }
                 try {
-                    List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
+                    String sql =
                             "SELECT TOP 5 salesforce, tecnico " +
                                     "FROM dbo.tbl_ConformacionCuadrillaDiario " +
                                     "WHERE id_tecnico = ? " +
                                     "AND CONVERT(date, fecha) = CONVERT(date, ?) " +
-                                    "AND LOWER(LTRIM(RTRIM(ISNULL(sucursal, '')))) = LOWER(LTRIM(RTRIM(?))) " +
+                                    "AND LOWER(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), ' ', ''), '_', '')) = " +
+                                    "LOWER(REPLACE(REPLACE(LTRIM(RTRIM(?)), ' ', ''), '_', '')) " +
                                     "AND ISNULL(e_eliminado, 0) = 0 " +
-                                    "ORDER BY id DESC",
-                            idVendedor,
-                            fechaSql,
-                            sucursalNombre
-                    );
+                                    "ORDER BY id DESC";
+                    List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(sql, idVendedor, fechaSql, sucursalNombre);
                     for (Map<String, Object> row : rows) {
                         String salesforce = asTrimmedString(row.get("salesforce"));
                         if (!isBlank(salesforce)) {
@@ -435,6 +461,76 @@ public class ListaOtRepository {
         return Collections.emptyList();
     }
 
+    public List<String> obtenerSalesforcePorIdUsuario(Integer idUsuario, Integer idSucursal) {
+        return obtenerSalesforcePorIdUsuario(idUsuario, idSucursal, LocalDate.now());
+    }
+
+    public List<String> obtenerSalesforcePorIdUsuario(Integer idUsuario, Integer idSucursal, LocalDate fecha) {
+        if (idUsuario == null || idUsuario <= 0) {
+            return Collections.emptyList();
+        }
+        if (centralJdbcTemplate == null) {
+            logger.info("{{\"evento\":\"LISTA_OT_SALESFORCE_CONFORMACION_SIN_CENTRAL\",\"idUsuario\":{},\"idSucursal\":{}}}",
+                    idUsuario, idSucursal);
+            return Collections.emptyList();
+        }
+        List<Integer> idsVendedor = obtenerIdsVendedorPorIdUsuario(idUsuario, idSucursal);
+        if (idsVendedor == null || idsVendedor.isEmpty()) {
+            logger.info("{{\"evento\":\"LISTA_OT_SALESFORCE_CONFORMACION_SIN_VENDEDOR\",\"idUsuario\":{},\"idSucursal\":{}}}",
+                    idUsuario, idSucursal);
+            return Collections.emptyList();
+        }
+
+        LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
+        Date fechaSql = Date.valueOf(fechaConsulta);
+        String sucursalNombre = resolveSucursalNombre(idSucursal);
+        if (isBlank(sucursalNombre)) {
+            logger.info("{{\"evento\":\"LISTA_OT_SALESFORCE_CONFORMACION_SIN_SUCURSAL\",\"idUsuario\":{},\"idSucursal\":{},\"fecha\":\"{}\",\"idsVendedor\":{}}}",
+                    idUsuario, idSucursal, fechaConsulta, idsVendedor);
+            return Collections.emptyList();
+        }
+        String sqlBase =
+                "SELECT DISTINCT LTRIM(RTRIM(ISNULL(salesforce, ''))) AS salesForce " +
+                "FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                "WHERE id_tecnico = ? " +
+                "AND CONVERT(date, fecha) = CONVERT(date, ?) " +
+                "AND ISNULL(e_eliminado, 0) = 0 ";
+        try {
+            LinkedHashSet<String> salesforceList = new LinkedHashSet<>();
+            for (Integer idVendedor : idsVendedor) {
+                if (idVendedor == null || idVendedor <= 0) {
+                    continue;
+                }
+                List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
+                        sqlBase +
+                                "AND LOWER(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), ' ', ''), '_', '')) = " +
+                                "LOWER(REPLACE(REPLACE(LTRIM(RTRIM(?)), ' ', ''), '_', ''))",
+                        idVendedor,
+                        fechaSql,
+                        sucursalNombre
+                );
+                for (Map<String, Object> row : rows) {
+                    String salesForce = asTrimmedString(row.get("salesForce"));
+                    if (!isBlank(salesForce)) {
+                        salesforceList.add(salesForce);
+                    }
+                }
+            }
+            if (salesforceList.isEmpty()) {
+                logger.info("{{\"evento\":\"LISTA_OT_SALESFORCE_CONFORMACION_VACIO\",\"idUsuario\":{},\"idSucursal\":{},\"fecha\":\"{}\",\"idsVendedor\":{}}}",
+                        idUsuario, idSucursal, fechaConsulta, idsVendedor);
+                return Collections.emptyList();
+            }
+            logger.info("{{\"evento\":\"LISTA_OT_SALESFORCE_CONFORMACION_OK\",\"idUsuario\":{},\"idSucursal\":{},\"fecha\":\"{}\",\"idsVendedor\":{},\"salesforce\":{}}}",
+                    idUsuario, idSucursal, fechaConsulta, idsVendedor, salesforceList);
+            return new ArrayList<>(salesforceList);
+        } catch (DataAccessException ex) {
+            logger.warn("{{\"evento\":\"LISTA_OT_SALESFORCE_CONFORMACION_ERROR\",\"idUsuario\":{},\"idSucursal\":{},\"fecha\":\"{}\",\"error\":\"{}\"}}",
+                    idUsuario, idSucursal, fechaConsulta, ex.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
     public List<Map<String, Object>> listarVentasManualPorFechaYVendedores(
             LocalDate fecha,
             List<Integer> idsVendedor,
@@ -628,121 +724,17 @@ public class ListaOtRepository {
             List<Integer> idsVendedor,
             Integer idUsuario,
             Integer idSucursal) {
-        if (fecha == null || agendaKeys == null || agendaKeys.isEmpty()) {
-            return 0;
-        }
-
-        List<Integer> idsValidos = new ArrayList<>();
-        if (idsVendedor != null) {
-            for (Integer id : idsVendedor) {
-                if (id != null && id > 0 && !idsValidos.contains(id)) {
-                    idsValidos.add(id);
-                }
-            }
-        }
-        boolean usuarioValido = idUsuario != null && idUsuario > 0;
-        Set<String> keysProcesadas = new HashSet<>();
-        int totalActualizado = 0;
-        JdbcTemplate target = template(idSucursal);
-
-        for (String key : agendaKeys) {
-            if (key == null || key.trim().isEmpty()) {
-                continue;
-            }
-            String normalizedKey = key.trim();
-            if (!keysProcesadas.add(normalizedKey)) {
-                continue;
-            }
-            int[] parsed = parseAgendaKey(normalizedKey);
-            if (parsed == null) {
-                continue;
-            }
-            Integer ordenTrabajo = parsed[0];
-            Integer codigoCliente = parsed[1];
-
-            StringBuilder sql = new StringBuilder();
-            sql.append("UPDATE dbo.tbl_Venta ")
-                    .append("SET Origen = 'OT_WEB' ")
-                    .append("WHERE CONVERT(DATE, Fecha_Ejecucion) = ? ")
-                    .append("AND OrdenTrabajo = ? ")
-                    .append("AND CodigoCliente = ? ")
-                    .append("AND ISNULL(E_Eliminado, 0) = 0 ")
-                    .append("AND UPPER(LTRIM(RTRIM(ISNULL(Origen, '')))) = 'MANUAL' ");
-
-            List<Object> params = new ArrayList<>();
-            params.add(Date.valueOf(fecha));
-            params.add(ordenTrabajo);
-            params.add(codigoCliente);
-
-            boolean filtroAplicado = false;
-            if (!idsValidos.isEmpty()) {
-                sql.append("AND Id_Vendedor IN (");
-                for (int i = 0; i < idsValidos.size(); i++) {
-                    if (i > 0) {
-                        sql.append(", ");
-                    }
-                    sql.append("?");
-                }
-                sql.append(") ");
-                params.addAll(idsValidos);
-                filtroAplicado = true;
-            } else if (usuarioValido) {
-                sql.append("AND Id_Usuario = ? ");
-                params.add(idUsuario);
-                filtroAplicado = true;
-            }
-
-            int updated = target.update(sql.toString(), params.toArray());
-            // Fallback: si no actualizo nada con filtro de usuario/vendedor, repetir sin filtro
-            // para asegurar reconciliacion OT_WEB cuando ya existe agenda.
-            if (updated == 0 && filtroAplicado) {
-                String sqlFallback = "UPDATE dbo.tbl_Venta " +
-                        "SET Origen = 'OT_WEB' " +
-                        "WHERE CONVERT(DATE, Fecha_Ejecucion) = ? " +
-                        "AND OrdenTrabajo = ? " +
-                        "AND CodigoCliente = ? " +
-                        "AND ISNULL(E_Eliminado, 0) = 0 " +
-                        "AND UPPER(LTRIM(RTRIM(ISNULL(Origen, '')))) = 'MANUAL'";
-                updated = target.update(sqlFallback, Date.valueOf(fecha), ordenTrabajo, codigoCliente);
-            }
-
-            totalActualizado += updated;
-        }
-
-        return totalActualizado;
+        // Deshabilitado por requerimiento funcional:
+        // no modificar automaticamente el campo Origen.
+        return 0;
     }
 
     public int promoverVentasManualAOtWebPorIds(
             List<Long> idsVenta,
             Integer idSucursal) {
-        if (idsVenta == null || idsVenta.isEmpty()) {
-            return 0;
-        }
-        List<Long> idsValidos = new ArrayList<>();
-        for (Long id : idsVenta) {
-            if (id != null && id > 0 && !idsValidos.contains(id)) {
-                idsValidos.add(id);
-            }
-        }
-        if (idsValidos.isEmpty()) {
-            return 0;
-        }
-
-        StringBuilder inClause = new StringBuilder();
-        for (int i = 0; i < idsValidos.size(); i++) {
-            if (i > 0) {
-                inClause.append(", ");
-            }
-            inClause.append("?");
-        }
-
-        String sql = "UPDATE dbo.tbl_Venta " +
-                "SET Origen = 'OT_WEB' " +
-                "WHERE Id_Venta IN (" + inClause + ") " +
-                "AND ISNULL(E_Eliminado, 0) = 0 " +
-                "AND UPPER(LTRIM(RTRIM(ISNULL(Origen, '')))) = 'MANUAL'";
-
-        return template(idSucursal).update(sql, idsValidos.toArray());
+        // Deshabilitado por requerimiento funcional:
+        // no modificar automaticamente el campo Origen.
+        return 0;
     }
 
     private JdbcTemplate template(Integer idSucursal) {

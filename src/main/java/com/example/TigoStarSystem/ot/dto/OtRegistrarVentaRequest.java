@@ -46,7 +46,7 @@ public class OtRegistrarVentaRequest {
     private BigDecimal longitud;
 
     @NotBlank(message = "nodo es requerido")
-    @Pattern(regexp = "^[A-Za-z]{3}\\d{3}$", message = "nodo debe tener formato 3 letras y 3 numeros, ejemplo SCZ123")
+    @Pattern(regexp = "^[A-Za-z]{3}\\d{3,4}$", message = "nodo debe tener formato 3 letras y 3 o 4 numeros, ejemplo SCZ123 o SCZ1234")
     private String nodo;
 
     @NotBlank(message = "ramal es requerido")
