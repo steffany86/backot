@@ -86,20 +86,6 @@ public class ListaOtRepository {
                 try {
                     List<Map<String, Object>> rows = templateOt.queryForList(
                             "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
-                            fechaSql,
-                            tecnicoVariante
-                    );
-                    logger.info("{{\"evento\":\"LISTA_OT_SP_EJECUCION\",\"fecha\":\"{}\",\"tecnicoEnviado\":\"{}\",\"rows\":{},\"formato\":\"sqlDate\"}}",
-                            fechaSql, tecnicoVariante, rows == null ? 0 : rows.size());
-                    mergeRows(mergedRows, rows);
-                } catch (DataAccessException ex) {
-                    if (!shouldFallback(ex)) {
-                        throw ex;
-                    }
-                }
-                try {
-                    List<Map<String, Object>> rows = templateOt.queryForList(
-                            "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
                             fechaLegacy,
                             tecnicoVariante
                     );
@@ -124,17 +110,6 @@ public class ListaOtRepository {
         try {
             List<Map<String, Object>> rows = templateOt.queryForList(
                     "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?",
-                    fechaSql
-            );
-            mergeRows(mergedRows, rows);
-        } catch (DataAccessException ex) {
-            if (!shouldFallback(ex)) {
-                throw ex;
-            }
-        }
-        try {
-            List<Map<String, Object>> rows = templateOt.queryForList(
-                    "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?",
                     fechaLegacy
             );
             mergeRows(mergedRows, rows);
@@ -150,8 +125,8 @@ public class ListaOtRepository {
 
         try {
             List<Map<String, Object>> rows = templateOt.queryForList(
-                    "EXEC dbo.sp_ObtenerListaOrdenesTrabajo_OTWEB ?",
-                    fechaLegacy
+                    "EXEC dbo.sp_ObtenerListaOrdenesTrabajo_OTWEB_clon_paginacion ?",
+                    fechaSql
             );
             mergeRows(mergedRows, rows);
             if (!mergedRows.isEmpty()) {
@@ -165,8 +140,8 @@ public class ListaOtRepository {
 
         try {
             mergeRows(mergedRows, templateOt.queryForList(
-                    "EXEC dbo.sp_ObtenerListaOrdenesTrabajo ?",
-                    fechaLegacy
+                    "EXEC dbo.sp_ObtenerListaOrdenesTrabajo_clon_paginacion ?",
+                    fechaSql
             ));
             return new ArrayList<>(mergedRows.values());
         } catch (DataAccessException ex) {
@@ -238,17 +213,6 @@ public class ListaOtRepository {
         }
 
         for (String candidato : candidatosUnicos) {
-            try {
-                mergeRows(merged, centralJdbcTemplate.queryForList(
-                        "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
-                        fechaSql,
-                        candidato
-                ));
-            } catch (DataAccessException ex) {
-                if (!shouldFallback(ex)) {
-                    throw ex;
-                }
-            }
             try {
                 mergeRows(merged, centralJdbcTemplate.queryForList(
                         "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?",
@@ -554,93 +518,8 @@ public class ListaOtRepository {
             return Collections.emptyList();
         }
 
-        StringBuilder filtroVendedor = new StringBuilder();
-        if (vendedoresValidos) {
-            for (int i = 0; i < idsValidos.size(); i++) {
-                if (i > 0) {
-                    filtroVendedor.append(", ");
-                }
-                filtroVendedor.append("?");
-            }
-        }
-
-        List<String> filtrosUsuario = new ArrayList<>();
-        if (usuarioValido) {
-            filtrosUsuario.add("v.Id_Usuario = ?");
-            filtrosUsuario.add("v.id_usuario = ?");
-            filtrosUsuario.add("v.IdUsuario = ?");
-            filtrosUsuario.add("v.idusuario = ?");
-        }
-
-        List<String> filtrosCombinados = new ArrayList<>();
-        if (vendedoresValidos) {
-            filtrosCombinados.add("v.Id_Vendedor IN (" + filtroVendedor + ")");
-            filtrosCombinados.add("v.id_vendedor IN (" + filtroVendedor + ")");
-            filtrosCombinados.add("v.IdVendedor IN (" + filtroVendedor + ")");
-            filtrosCombinados.add("v.idvendedor IN (" + filtroVendedor + ")");
-        }
-        filtrosCombinados.addAll(filtrosUsuario);
-
-        RuntimeException lastError = null;
         JdbcTemplate target = template(idSucursal);
-        for (String filtro : filtrosCombinados) {
-            String sql = "SELECT " +
-                    "v.Id_Venta AS id, " +
-                    "v.Id_Venta AS idVenta, " +
-                    "v.Id_Venta AS id_venta, " +
-                    "v.OrdenTrabajo AS codigo, " +
-                    "v.OrdenTrabajo AS Codigo, " +
-                    "v.OrdenTrabajo AS ordenTrabajo, " +
-                    "v.OrdenTrabajo AS OT, " +
-                    "v.CodigoCliente AS cliente_nro, " +
-                    "v.CodigoCliente AS Cliente_Nro, " +
-                    "v.CodigoCliente AS codigo_cliente, " +
-                    "v.CodigoCliente AS codigoCliente, " +
-                    "v.Fecha_Ejecucion AS fecha, " +
-                    "v.Fecha_Ejecucion AS Fecha, " +
-                    "v.Fecha_Ejecucion AS fechaEjecucion, " +
-                    "v.Fecha_Ejecucion AS Fecha_Ejecucion, " +
-                    "v.Id_Vendedor AS id_vendedor, " +
-                    "v.Id_Vendedor AS idVendedor, " +
-                    "v.Id_Vendedor AS Id_Vendedor, " +
-                    "v.Id_TipoServicio AS id_tiposervicio, " +
-                    "v.Id_TipoServicio AS idTipoServicio, " +
-                    "ts.Nombre AS tipoServicio, " +
-                    "v.Id_Estado AS id_estado, " +
-                    "v.Id_Estado AS idEstado, " +
-                    "e.Nombre AS estado, " +
-                    "e.Nombre AS Estado, " +
-                    "e.Nombre AS CIERRE, " +
-                    "v.Origen AS origen, " +
-                    "v.Origen AS Origen " +
-                    "FROM dbo.tbl_Venta v " +
-                    "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
-                    "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
-                    "WHERE CONVERT(DATE, v.Fecha_Ejecucion) = ? " +
-                    "AND ISNULL(v.E_Eliminado, 0) = 0 " +
-                    "AND UPPER(LTRIM(RTRIM(ISNULL(v.Origen, '')))) = 'MANUAL' " +
-                    "AND " + filtro + " " +
-                    "ORDER BY v.Id_Venta DESC";
-
-            List<Object> params = new ArrayList<>();
-            params.add(Date.valueOf(fecha));
-            if (filtro.contains("IN (")) {
-                params.addAll(idsValidos);
-            } else {
-                params.add(idUsuario);
-            }
-
-            try {
-                List<Map<String, Object>> rows = target.queryForList(sql, params.toArray());
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            } catch (DataAccessException ex) {
-                lastError = ex;
-            }
-        }
-
-        if (lastError != null && vendedoresValidos) {
+        if (vendedoresValidos) {
             StringBuilder inClause = new StringBuilder();
             for (int i = 0; i < idsValidos.size(); i++) {
                 if (i > 0) {
@@ -648,50 +527,72 @@ public class ListaOtRepository {
                 }
                 inClause.append("?");
             }
-            String sqlFallback = "SELECT " +
-                    "v.Id_Venta AS id, " +
-                    "v.Id_Venta AS idVenta, " +
-                    "v.Id_Venta AS id_venta, " +
-                    "v.OrdenTrabajo AS codigo, " +
-                    "v.OrdenTrabajo AS Codigo, " +
-                    "v.OrdenTrabajo AS ordenTrabajo, " +
-                    "v.OrdenTrabajo AS OT, " +
-                    "v.CodigoCliente AS cliente_nro, " +
-                    "v.CodigoCliente AS Cliente_Nro, " +
-                    "v.CodigoCliente AS codigo_cliente, " +
-                    "v.CodigoCliente AS codigoCliente, " +
-                    "v.Fecha_Ejecucion AS fecha, " +
-                    "v.Fecha_Ejecucion AS Fecha, " +
-                    "v.Fecha_Ejecucion AS fechaEjecucion, " +
-                    "v.Fecha_Ejecucion AS Fecha_Ejecucion, " +
-                    "v.Id_Vendedor AS id_vendedor, " +
-                    "v.Id_Vendedor AS idVendedor, " +
-                    "v.Id_Vendedor AS Id_Vendedor, " +
-                    "v.Id_TipoServicio AS id_tiposervicio, " +
-                    "v.Id_TipoServicio AS idTipoServicio, " +
-                    "ts.Nombre AS tipoServicio, " +
-                    "v.Id_Estado AS id_estado, " +
-                    "v.Id_Estado AS idEstado, " +
-                    "e.Nombre AS estado, " +
-                    "e.Nombre AS Estado, " +
-                    "e.Nombre AS CIERRE, " +
-                    "v.Origen AS origen, " +
-                    "v.Origen AS Origen " +
-                    "FROM dbo.tbl_Venta v " +
-                    "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
-                    "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
-                    "WHERE CONVERT(DATE, v.Fecha_Ejecucion) = ? " +
-                    "AND ISNULL(v.E_Eliminado, 0) = 0 " +
-                    "AND UPPER(LTRIM(RTRIM(ISNULL(v.Origen, '')))) = 'MANUAL' " +
-                    "AND v.Id_Vendedor IN (" + inClause + ") " +
-                    "ORDER BY v.Id_Venta DESC";
             List<Object> params = new ArrayList<>();
             params.add(Date.valueOf(fecha));
+            params.add(Date.valueOf(fecha.plusDays(1)));
             params.addAll(idsValidos);
-            return target.queryForList(sqlFallback, params.toArray());
+            List<Map<String, Object>> rows = target.queryForList(baseSqlManual("v.Id_Vendedor IN (" + inClause + ")"), params.toArray());
+            if (rows != null && !rows.isEmpty()) {
+                return rows;
+            }
+        }
+
+        if (usuarioValido) {
+            try {
+                return target.queryForList(
+                        baseSqlManual("v.Id_Usuario = ?"),
+                        Date.valueOf(fecha),
+                        Date.valueOf(fecha.plusDays(1)),
+                        idUsuario
+                );
+            } catch (DataAccessException ex) {
+                logger.warn("No se pudo listar ventas manuales por usuario. fecha={} idUsuario={} idSucursal={} error={}",
+                        fecha, idUsuario, idSucursal, ex.getMessage());
+            }
         }
 
         return Collections.emptyList();
+    }
+
+    private String baseSqlManual(String filtro) {
+        return "SELECT " +
+                "v.Id_Venta AS id, " +
+                "v.Id_Venta AS idVenta, " +
+                "v.Id_Venta AS id_venta, " +
+                "v.OrdenTrabajo AS codigo, " +
+                "v.OrdenTrabajo AS Codigo, " +
+                "v.OrdenTrabajo AS ordenTrabajo, " +
+                "v.OrdenTrabajo AS OT, " +
+                "v.CodigoCliente AS cliente_nro, " +
+                "v.CodigoCliente AS Cliente_Nro, " +
+                "v.CodigoCliente AS codigo_cliente, " +
+                "v.CodigoCliente AS codigoCliente, " +
+                "v.Fecha_Ejecucion AS fecha, " +
+                "v.Fecha_Ejecucion AS Fecha, " +
+                "v.Fecha_Ejecucion AS fechaEjecucion, " +
+                "v.Fecha_Ejecucion AS Fecha_Ejecucion, " +
+                "v.Id_Vendedor AS id_vendedor, " +
+                "v.Id_Vendedor AS idVendedor, " +
+                "v.Id_Vendedor AS Id_Vendedor, " +
+                "v.Id_TipoServicio AS id_tiposervicio, " +
+                "v.Id_TipoServicio AS idTipoServicio, " +
+                "ts.Nombre AS tipoServicio, " +
+                "v.Id_Estado AS id_estado, " +
+                "v.Id_Estado AS idEstado, " +
+                "e.Nombre AS estado, " +
+                "e.Nombre AS Estado, " +
+                "e.Nombre AS CIERRE, " +
+                "v.Origen AS origen, " +
+                "v.Origen AS Origen " +
+                "FROM dbo.tbl_Venta v " +
+                "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
+                "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
+                "WHERE v.Fecha_Ejecucion >= ? " +
+                "AND v.Fecha_Ejecucion < ? " +
+                "AND ISNULL(v.E_Eliminado, 0) = 0 " +
+                "AND UPPER(LTRIM(RTRIM(ISNULL(v.Origen, '')))) = 'MANUAL' " +
+                "AND " + filtro + " " +
+                "ORDER BY v.Id_Venta DESC";
     }
 
     public List<Map<String, Object>> listarVentasManualPorFecha(
@@ -735,6 +636,110 @@ public class ListaOtRepository {
         // Deshabilitado por requerimiento funcional:
         // no modificar automaticamente el campo Origen.
         return 0;
+    }
+
+    public List<Map<String, Object>> enriquecerValidacionVentaDetalle(
+            LocalDate fecha,
+            List<Map<String, Object>> rows,
+            Integer idSucursal) {
+        if (fecha == null || rows == null || rows.isEmpty()) {
+            return rows == null ? Collections.emptyList() : rows;
+        }
+
+        LinkedHashMap<String, int[]> keys = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            Integer ot = parsePositiveInt(firstNonNull(row, "OT", "ot", "OrdenTrabajo", "ordenTrabajo", "NroOT", "nroOT", "Codigo", "codigo"));
+            Integer cliente = parsePositiveInt(firstNonNull(row, "CODIGO", "codigo", "Codigo", "CodigoCliente", "codigoCliente", "NumeroCliente", "numeroCliente", "Cliente_Nro", "cliente_nro"));
+            if (ot != null && cliente != null) {
+                keys.putIfAbsent(ot + "|" + cliente, new int[] { ot, cliente });
+            }
+        }
+        if (keys.isEmpty()) {
+            return rows;
+        }
+
+        StringBuilder values = new StringBuilder();
+        List<Object> params = new ArrayList<>();
+        params.add(Date.valueOf(fecha));
+        int index = 0;
+        for (int[] key : keys.values()) {
+            if (index++ > 0) {
+                values.append(", ");
+            }
+            values.append("(?, ?)");
+            params.add(key[0]);
+            params.add(key[1]);
+        }
+
+        String sql =
+                "DECLARE @FechaInicio DATETIME = CONVERT(DATE, ?); " +
+                "DECLARE @FechaFin DATETIME = DATEADD(DAY, 1, @FechaInicio); " +
+                "WITH Solicitud(OrdenTrabajo, CodigoCliente) AS ( " +
+                "    SELECT * FROM (VALUES " + values + ") V(OrdenTrabajo, CodigoCliente) " +
+                "), Ventas AS ( " +
+                "    SELECT s.OrdenTrabajo, s.CodigoCliente, v.Id_Venta, v.Id_Estado, ISNULL(v.TieneDetalle, 0) AS TieneDetalle, " +
+                "           ROW_NUMBER() OVER (PARTITION BY s.OrdenTrabajo, s.CodigoCliente ORDER BY v.Id_Venta DESC) AS rn " +
+                "    FROM Solicitud s " +
+                "    LEFT JOIN dbo.tbl_Venta v ON v.OrdenTrabajo = s.OrdenTrabajo " +
+                "       AND v.CodigoCliente = s.CodigoCliente " +
+                "       AND v.Fecha_Ejecucion >= @FechaInicio " +
+                "       AND v.Fecha_Ejecucion < @FechaFin " +
+                "       AND ISNULL(v.E_Eliminado, 0) = 0 " +
+                "), Detalles AS ( " +
+                "    SELECT v.OrdenTrabajo, v.CodigoCliente, v.Id_Venta, v.Id_Estado, v.TieneDetalle, " +
+                "           ISNULL(cv.Cantidad, 0) + ISNULL(cu.Cantidad, 0) AS CantidadDetalles " +
+                "    FROM Ventas v " +
+                "    OUTER APPLY (SELECT COUNT(1) AS Cantidad FROM dbo.tbl_CodigoVenta cv WHERE cv.Id_Venta = v.Id_Venta AND ISNULL(cv.E_Eliminado, 0) = 0) cv " +
+                "    OUTER APPLY (SELECT COUNT(1) AS Cantidad FROM dbo.tbl_CodigoVentaCargoUsuario cu WHERE cu.Id_Venta = v.Id_Venta AND ISNULL(cu.E_Eliminado, 0) = 0) cu " +
+                "    WHERE v.rn = 1 " +
+                ") " +
+                "SELECT s.OrdenTrabajo, s.CodigoCliente, " +
+                "       CASE WHEN d.Id_Venta IS NULL THEN 0 ELSE 1 END AS ExisteVenta, " +
+                "       CASE WHEN d.Id_Venta IS NULL THEN 0 ELSE 1 END AS CantidadVentas, " +
+                "       CASE WHEN ISNULL(d.CantidadDetalles, 0) > 0 THEN 1 ELSE 0 END AS TieneDetalleEnCodigoVenta, " +
+                "       ISNULL(d.CantidadDetalles, 0) AS CantidadDetalles, " +
+                "       CASE WHEN d.Id_Estado IS NULL THEN 0 ELSE d.Id_Estado END AS IdEstado, " +
+                "       CASE WHEN ISNULL(e.AddMaterial_o_CargoUsuario, 0) = 1 THEN 1 ELSE 0 END AS AddMaterial_o_CargoUsuario, " +
+                "       CASE WHEN ISNULL(e.AddMaterial_o_CargoUsuario, 0) = 1 AND ISNULL(d.CantidadDetalles, 0) = 0 AND d.Id_Venta IS NOT NULL THEN 1 ELSE 0 END AS HabilitarCargarMaterial, " +
+                "       ISNULL(d.TieneDetalle, 0) AS TieneDetalle " +
+                "FROM Solicitud s " +
+                "LEFT JOIN Detalles d ON d.OrdenTrabajo = s.OrdenTrabajo AND d.CodigoCliente = s.CodigoCliente " +
+                "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = d.Id_Estado AND ISNULL(e.E_Eliminado, 0) = 0";
+
+        try {
+            List<Map<String, Object>> validationRows = template(idSucursal).queryForList(sql, params.toArray());
+            Map<String, Map<String, Object>> validationByKey = new LinkedHashMap<>();
+            for (Map<String, Object> validation : validationRows) {
+                Integer ot = parsePositiveInt(validation.get("OrdenTrabajo"));
+                Integer cliente = parsePositiveInt(validation.get("CodigoCliente"));
+                if (ot != null && cliente != null) {
+                    validationByKey.put(ot + "|" + cliente, validation);
+                }
+            }
+            for (Map<String, Object> row : rows) {
+                Integer ot = parsePositiveInt(firstNonNull(row, "OT", "ot", "OrdenTrabajo", "ordenTrabajo", "NroOT", "nroOT", "Codigo", "codigo"));
+                Integer cliente = parsePositiveInt(firstNonNull(row, "CODIGO", "codigo", "Codigo", "CodigoCliente", "codigoCliente", "NumeroCliente", "numeroCliente", "Cliente_Nro", "cliente_nro"));
+                if (ot == null || cliente == null) {
+                    continue;
+                }
+                Map<String, Object> validation = validationByKey.get(ot + "|" + cliente);
+                if (validation == null) {
+                    continue;
+                }
+                row.put("ExisteVenta", validation.get("ExisteVenta"));
+                row.put("CantidadVentas", validation.get("CantidadVentas"));
+                row.put("TieneDetalleEnCodigoVenta", validation.get("TieneDetalleEnCodigoVenta"));
+                row.put("CantidadDetalles", validation.get("CantidadDetalles"));
+                row.put("IdEstado", validation.get("IdEstado"));
+                row.put("AddMaterial_o_CargoUsuario", validation.get("AddMaterial_o_CargoUsuario"));
+                row.put("HabilitarCargarMaterial", validation.get("HabilitarCargarMaterial"));
+                row.put("TieneDetalle", validation.get("TieneDetalle"));
+            }
+        } catch (DataAccessException ex) {
+            logger.warn("No se pudo enriquecer validacion de venta/detalle para listado OT. fecha={} idSucursal={} error={}",
+                    fecha, idSucursal, ex.getMessage());
+        }
+        return rows;
     }
 
     private JdbcTemplate template(Integer idSucursal) {

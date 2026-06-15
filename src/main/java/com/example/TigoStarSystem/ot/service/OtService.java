@@ -47,14 +47,20 @@ import java.util.Map;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Service
 public class OtService {
     private static final Logger logger = LoggerFactory.getLogger(OtService.class);
+    private static final long REGISTRO_AGENDA_CACHE_TTL_MS = 30_000L;
     private final OtRepository otRepository;
     private final ListaOtRepository listaOtRepository;
     private final SucursalRepository sucursalRepository;
     private final OtVentaPdfStorageService otVentaPdfStorageService;
+    private final ConcurrentMap<String, RegistroAgendaCacheEntry> registroAgendaCache = new ConcurrentHashMap<>();
 
     /**
      * Inicializa el servicio principal de Ordenes de Trabajo.
@@ -416,6 +422,8 @@ public class OtService {
             OtRegistrarVentaRequest request,
             Integer idSucursalSesion,
             MultipartFile pdf) {
+        long totalStart = System.nanoTime();
+        long stepStart = totalStart;
         validarRegistroVentaRequest(request);
         if (pdf == null || pdf.isEmpty()) {
             throw new ApiException(
@@ -434,6 +442,8 @@ public class OtService {
                 request.getIdVendedor(),
                 idSucursalResolucion
         );
+        logRegistroOtWbTiming("resolver-vendedor", stepStart, totalStart, request);
+        stepStart = System.nanoTime();
         if (otRepository.existeVentaPorOrdenTrabajo(request.getOrdenTrabajo(), idSucursalFinal)) {
             throw new ApiException(
                     HttpStatus.CONFLICT,
@@ -441,6 +451,8 @@ public class OtService {
                     "Ya existe una OT registrada con el mismo numero de orden."
             );
         }
+        logRegistroOtWbTiming("validar-duplicado", stepStart, totalStart, request);
+        stepStart = System.nanoTime();
         LocalDate fechaTrabajo = LocalDate.now();
         validarBloqueosRegistroOtManual(
                 fechaTrabajo,
@@ -448,6 +460,8 @@ public class OtService {
                 idVendedorResuelto,
                 idSucursalFinal
         );
+        logRegistroOtWbTiming("validar-bloqueos", stepStart, totalStart, request);
+        stepStart = System.nanoTime();
 
         try {
             Map<String, Object> result = otRepository.registrarVentaParaRegistroOtWb(
@@ -470,6 +484,8 @@ public class OtService {
                     request.getLongitud(),
                     idSucursalResolucion
             );
+            logRegistroOtWbTiming("sp-registrar-venta", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
 
             Integer idVentaRegistro = toInteger(findValue(result, "Id_Venta", "id_venta", "idventa"));
             Map<String, Object> ventaDelDia = otRepository.obtenerVentaPorFechaOrdenYCliente(
@@ -493,6 +509,8 @@ public class OtService {
                     idVentaRegistro = idVentaDelDiaInt;
                 }
             }
+            logRegistroOtWbTiming("resolver-venta-dia", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
 
             String nombreSucursalPdf = resolverNombreSucursalParaPdf(idSucursalFinal);
             String rutaPdf = otVentaPdfStorageService.guardarPdfVenta(
@@ -501,6 +519,8 @@ public class OtService {
                     request.getCodigoCliente(),
                     nombreSucursalPdf
             );
+            logRegistroOtWbTiming("guardar-pdf-disco", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
             if (idVentaRegistro != null && idVentaRegistro > 0 && rutaPdf != null) {
                 try {
                     int filas = otRepository.actualizarRutaPdfVenta(idVentaRegistro.longValue(), rutaPdf, idSucursalResolucion);
@@ -519,6 +539,8 @@ public class OtService {
                     );
                 }
             }
+            logRegistroOtWbTiming("actualizar-ruta-pdf", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
 
             if (idVentaRegistro != null && idVentaRegistro > 0) {
                 String nodo = request.getNodo() == null ? null : request.getNodo().trim().toUpperCase(Locale.ROOT);
@@ -552,6 +574,8 @@ public class OtService {
                     );
                 }
             }
+            logRegistroOtWbTiming("actualizar-nodo-ramal", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
 
             if (idVentaRegistro != null && idVentaRegistro > 0) {
                 String tipoTecnologia = request.getTipoTecnologia() == null ? null : request.getTipoTecnologia().trim().toUpperCase(Locale.ROOT);
@@ -578,6 +602,8 @@ public class OtService {
                     }
                 }
             }
+            logRegistroOtWbTiming("actualizar-tecnologia", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
 
             if (idVentaRegistro != null && idVentaRegistro > 0) {
                 try {
@@ -602,6 +628,9 @@ public class OtService {
                     );
                 }
             }
+            logRegistroOtWbTiming("actualizar-checks", stepStart, totalStart, request);
+            logger.info("{{\"evento\":\"REGISTRO_OTWB_TIMING_TOTAL\",\"ot\":{},\"cliente\":{},\"elapsedMs\":{}}}",
+                    request.getOrdenTrabajo(), request.getCodigoCliente(), elapsedMs(totalStart));
 
             return new OtRegistrarVentaResponse(
                     idVentaRegistro,
@@ -616,6 +645,19 @@ public class OtService {
         } catch (DataAccessException ex) {
             throw traducirErrorRegistroVenta(ex, request);
         }
+    }
+
+    private void logRegistroOtWbTiming(String paso, long stepStart, long totalStart, OtRegistrarVentaRequest request) {
+        logger.info("{{\"evento\":\"REGISTRO_OTWB_TIMING\",\"paso\":\"{}\",\"ot\":{},\"cliente\":{},\"stepMs\":{},\"elapsedMs\":{}}}",
+                paso,
+                request == null ? null : request.getOrdenTrabajo(),
+                request == null ? null : request.getCodigoCliente(),
+                elapsedMs(stepStart),
+                elapsedMs(totalStart));
+    }
+
+    private long elapsedMs(long startNanos) {
+        return (System.nanoTime() - startNanos) / 1_000_000L;
     }
 
     private void validarBloqueosRegistroOtManual(
@@ -767,7 +809,9 @@ public class OtService {
         validarMayorCero(numeroCliente, "numeroCliente");
 
         try {
-            boolean agendaMatch = incluirManual && existeRegistroEnAgenda(fechaParsed, nroOT, numeroCliente, idSucursal);
+            boolean agendaMatch = incluirManual
+                    && !desdeAgenda
+                    && existeRegistroEnAgenda(fechaParsed, nroOT, numeroCliente, idSucursal);
             // Importante:
             // No promover automaticamente MANUAL->OT_WEB en validaciones.
             // Esta ruta debe validar, no modificar Origen.
@@ -941,25 +985,47 @@ public class OtService {
      */
     public OtRegistroAgendaValidacionResponse validarRegistroAgenda(LocalDate fecha, Integer idSucursal) {
         LocalDate fechaEvaluada = fecha == null ? LocalDate.now() : fecha;
+        String cacheKey = buildRegistroAgendaCacheKey(fechaEvaluada, idSucursal);
+        RegistroAgendaCacheEntry cached = registroAgendaCache.get(cacheKey);
+        long nowMs = System.currentTimeMillis();
+        if (cached != null && cached.expiresAtMs > nowMs) {
+            logger.info("{{\"evento\":\"REGISTRO_AGENDA_CACHE_HIT\",\"fecha\":\"{}\",\"idSucursal\":{},\"ttlRestanteMs\":{}}}",
+                    fechaEvaluada, idSucursal, cached.expiresAtMs - nowMs);
+            return cached.response;
+        }
+        if (cached != null) {
+            registroAgendaCache.remove(cacheKey, cached);
+        }
+
         // Importante:
         // NO reconciliar origen MANUAL->OT_WEB de forma global en esta validacion,
         // porque puede modificar registros inventados/test sin cruce operativo explicito.
         // La promocion a OT_WEB debe ocurrir solo en flujos puntuales con cruce agenda.
 
-        List<Map<String, Object>> cierreRows = otRepository.existeCierreAlmacenHoy(fechaEvaluada, idSucursal);
+        CompletableFuture<List<Map<String, Object>>> cierreFuture = CompletableFuture.supplyAsync(
+                () -> otRepository.existeCierreAlmacenHoy(fechaEvaluada, idSucursal)
+        );
+        CompletableFuture<List<Map<String, Object>>> cierrePrPdFuture = CompletableFuture.supplyAsync(
+                () -> otRepository.existeCierreAlmacenHoyPrPd(fechaEvaluada, idSucursal)
+        );
+        CompletableFuture<List<Map<String, Object>>> movimientosFuture = CompletableFuture.supplyAsync(
+                () -> otRepository.validaMovimientos(fechaEvaluada, idSucursal)
+        );
+
+        List<Map<String, Object>> cierreRows = joinValidationFuture(cierreFuture);
         Integer cierreCodigo = obtenerCodigoResultado(cierreRows);
         LocalDate fechaCierre = obtenerFechaResultado(cierreRows, fechaEvaluada);
         String cierreMensaje = construirMensajeCierreAlmacen(cierreCodigo, fechaCierre, cierreRows);
         boolean cierreBloqueado = cierreCodigo != null && cierreCodigo != 0;
 
-        List<Map<String, Object>> cierrePrPdRows = otRepository.existeCierreAlmacenHoyPrPd(fechaEvaluada, idSucursal);
+        List<Map<String, Object>> cierrePrPdRows = joinValidationFuture(cierrePrPdFuture);
         Integer cierrePrPdCodigo = obtenerCodigoResultado(cierrePrPdRows);
         LocalDate fechaPrPd = obtenerFechaResultado(cierrePrPdRows, fechaEvaluada);
         String cierrePrPdMensaje = construirMensajeCierrePrPd(cierrePrPdCodigo, fechaPrPd);
         boolean cierrePrPdBloqueado = cierrePrPdCodigo != null && cierrePrPdCodigo != 0;
 
         if (cierreBloqueado) {
-            return new OtRegistroAgendaValidacionResponse(
+            return cacheRegistroAgenda(cacheKey, fechaEvaluada, idSucursal, new OtRegistroAgendaValidacionResponse(
                     true,
                     "CIERRE_ALMACEN",
                     cierreMensaje,
@@ -974,11 +1040,11 @@ public class OtService {
                     false,
                     null,
                     Collections.emptyList()
-            );
+            ));
         }
 
         if (cierrePrPdBloqueado) {
-            return new OtRegistroAgendaValidacionResponse(
+            return cacheRegistroAgenda(cacheKey, fechaEvaluada, idSucursal, new OtRegistroAgendaValidacionResponse(
                     true,
                     "CIERRE_ALMACEN_PR_PD",
                     cierrePrPdMensaje,
@@ -993,10 +1059,10 @@ public class OtService {
                     false,
                     null,
                     Collections.emptyList()
-            );
+            ));
         }
 
-        List<Map<String, Object>> movimientosRows = otRepository.validaMovimientos(fechaEvaluada, idSucursal);
+        List<Map<String, Object>> movimientosRows = joinValidationFuture(movimientosFuture);
         List<String> movimientosDetalle = construirDetallesMovimientos(movimientosRows);
         boolean movimientosBloqueados = !movimientosDetalle.isEmpty();
         String movimientosMensaje = movimientosBloqueados
@@ -1006,7 +1072,7 @@ public class OtService {
                 + String.join("\n", movimientosDetalle)
                 : null;
 
-        return new OtRegistroAgendaValidacionResponse(
+        return cacheRegistroAgenda(cacheKey, fechaEvaluada, idSucursal, new OtRegistroAgendaValidacionResponse(
                 movimientosBloqueados,
                 movimientosBloqueados ? "MOVIMIENTOS_PENDIENTES" : "OK",
                 movimientosBloqueados ? movimientosMensaje : "Validacion ejecutada sin bloqueos.",
@@ -1021,7 +1087,47 @@ public class OtService {
                 movimientosBloqueados,
                 movimientosMensaje,
                 movimientosDetalle
-        );
+        ));
+    }
+
+    private List<Map<String, Object>> joinValidationFuture(CompletableFuture<List<Map<String, Object>>> future) {
+        try {
+            return future.join();
+        } catch (CompletionException ex) {
+            Throwable cause = ex.getCause();
+            if (cause instanceof RuntimeException) {
+                throw (RuntimeException) cause;
+            }
+            throw ex;
+        }
+    }
+
+    private String buildRegistroAgendaCacheKey(LocalDate fecha, Integer idSucursal) {
+        return fecha + "|" + (idSucursal == null ? 0 : idSucursal);
+    }
+
+    private OtRegistroAgendaValidacionResponse cacheRegistroAgenda(
+            String cacheKey,
+            LocalDate fecha,
+            Integer idSucursal,
+            OtRegistroAgendaValidacionResponse response) {
+        registroAgendaCache.put(cacheKey, new RegistroAgendaCacheEntry(
+                response,
+                System.currentTimeMillis() + REGISTRO_AGENDA_CACHE_TTL_MS
+        ));
+        logger.info("{{\"evento\":\"REGISTRO_AGENDA_CACHE_PUT\",\"fecha\":\"{}\",\"idSucursal\":{},\"ttlMs\":{},\"codigo\":\"{}\"}}",
+                fecha, idSucursal, REGISTRO_AGENDA_CACHE_TTL_MS, response.getCodigoBloqueo());
+        return response;
+    }
+
+    private static class RegistroAgendaCacheEntry {
+        private final OtRegistroAgendaValidacionResponse response;
+        private final long expiresAtMs;
+
+        private RegistroAgendaCacheEntry(OtRegistroAgendaValidacionResponse response, long expiresAtMs) {
+            this.response = response;
+            this.expiresAtMs = expiresAtMs;
+        }
     }
 
     private void reconciliarVentasManualConAgenda(LocalDate fecha, Integer idSucursal) {

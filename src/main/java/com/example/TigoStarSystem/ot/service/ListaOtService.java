@@ -99,9 +99,9 @@ public class ListaOtService {
         // Fallback defensivo: algunos SP devuelven columnas/aliases distintos para tecnico
         // y el filtro posterior puede vaciar el listado aun cuando el SP retorno filas.
         if (result.isEmpty() && !filtrarUsuario && filtrarTecnico && tecnicoExacto && rowsSp != null && !rowsSp.isEmpty()) {
-            return rowsSp;
+            return repository.enriquecerValidacionVentaDetalle(fecha, rowsSp, idSucursal);
         }
-        return result;
+        return repository.enriquecerValidacionVentaDetalle(fecha, result, idSucursal);
     }
 
     private boolean matchTecnico(Map<String, Object> row, String tecnicoNorm, boolean exacto) {

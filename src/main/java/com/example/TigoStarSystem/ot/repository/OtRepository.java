@@ -60,12 +60,12 @@ public class OtRepository {
         Date fechaSql = sqlDate(fecha);
         try {
             return target.queryForList(
-                    "EXEC sp_ObtenerListaOrdenesTrabajo_OTWEB ?",
+                    "EXEC sp_ObtenerListaOrdenesTrabajo_OTWEB_clon_paginacion ?",
                     fechaSql
             );
         } catch (DataAccessException ex) {
             return target.queryForList(
-                    "EXEC sp_ObtenerListaOrdenesTrabajo ?",
+                    "EXEC sp_ObtenerListaOrdenesTrabajo_clon_paginacion ?",
                     fechaSql
             );
         }
@@ -1043,7 +1043,7 @@ public class OtRepository {
             Integer numeroCliente,
             Integer idSucursal) {
         List<Map<String, Object>> rows = template(idSucursal).queryForList(
-                "EXEC dbo.spx_ValidarVentaYDetallewb ?, ?, ?",
+                "EXEC dbo.spx_ValidarVentaYDetallewb_clon_paginacion ?, ?, ?",
                 sqlDate(fecha),
                 nroOT,
                 numeroCliente
