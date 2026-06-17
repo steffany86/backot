@@ -16,7 +16,11 @@ import org.springframework.stereotype.Service;
 
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -153,6 +157,7 @@ public class NpsService {
                     data
             );
         }
+        data = deduplicarNpsPorTransaccion(data, fechaInicioConsulta, fechaFinConsulta, !modoInvitado);
         boolean permitirFallbackFechas =
                 supervisorObjetivo == null
                 && tecnicoObjetivo == null
@@ -193,6 +198,7 @@ public class NpsService {
                         data
                 );
             }
+            data = deduplicarNpsPorTransaccion(data, null, null, !modoInvitado);
             fallbackUltimaFecha = !data.isEmpty();
         }
 
@@ -617,8 +623,127 @@ public class NpsService {
     private boolean isRolCentral(AuthLoginResponse usuario) {
         String rol = usuario == null ? null : usuario.getRol();
         if (rol == null) return false;
-        String n = rol.trim().toLowerCase();
-        return n.contains("central") || n.contains("sistema") || n.contains("admin");
+        String n = normalizeRole(rol);
+        return n.contains("central")
+                || n.contains("sistema")
+                || n.contains("admin")
+                || n.equals("backofficev");
+    }
+
+    private List<Map<String, Object>> deduplicarNpsPorTransaccion(
+            List<Map<String, Object>> rows,
+            LocalDate fechaInicio,
+            LocalDate fechaFin,
+            boolean filtrarFechaCarga) {
+        if (rows == null || rows.isEmpty()) {
+            return rows == null ? new ArrayList<Map<String, Object>>() : rows;
+        }
+        Map<String, Map<String, Object>> latestByTransaction = new LinkedHashMap<String, Map<String, Object>>();
+        for (Map<String, Object> row : rows) {
+            if (row == null) continue;
+            String key = firstNonBlank(
+                    asText(find(row, "id_transaccion", "idTransaccion", "surveyid_for_internal_use")),
+                    asText(find(row, "nro_orden", "ordennro")),
+                    asText(find(row, "id_NPS_RESPUESTAS_MAKIRO", "idNpsRespuestasMakiro"))
+            );
+            if (isBlank(key)) {
+                key = "row-" + latestByTransaction.size();
+            }
+            Map<String, Object> current = latestByTransaction.get(key);
+            if (current == null || compareNpsRecency(row, current) > 0) {
+                latestByTransaction.put(key, row);
+            }
+        }
+
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> row : latestByTransaction.values()) {
+            if (filtrarFechaCarga && (fechaInicio != null || fechaFin != null)) {
+                LocalDate fechaCarga = parseNpsDate(find(row, "fecha_carga", "fechaCarga"));
+                if (fechaCarga != null && !isBetween(fechaCarga, fechaInicio, fechaFin)) {
+                    continue;
+                }
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    private int compareNpsRecency(Map<String, Object> left, Map<String, Object> right) {
+        LocalDateTime leftDate = parseNpsDateTime(find(left, "fecha_carga", "fechaCarga"));
+        LocalDateTime rightDate = parseNpsDateTime(find(right, "fecha_carga", "fechaCarga"));
+        if (leftDate != null && rightDate != null) {
+            int byDate = leftDate.compareTo(rightDate);
+            if (byDate != 0) return byDate;
+        } else if (leftDate != null) {
+            return 1;
+        } else if (rightDate != null) {
+            return -1;
+        }
+        Integer leftId = asInteger(find(left, "id_NPS_RESPUESTAS_MAKIRO", "idNpsRespuestasMakiro"));
+        Integer rightId = asInteger(find(right, "id_NPS_RESPUESTAS_MAKIRO", "idNpsRespuestasMakiro"));
+        if (leftId != null && rightId != null) return leftId.compareTo(rightId);
+        if (leftId != null) return 1;
+        if (rightId != null) return -1;
+        return 0;
+    }
+
+    private LocalDate parseNpsDate(Object value) {
+        LocalDateTime dateTime = parseNpsDateTime(value);
+        return dateTime == null ? null : dateTime.toLocalDate();
+    }
+
+    private LocalDateTime parseNpsDateTime(Object value) {
+        if (value == null) return null;
+        if (value instanceof java.sql.Date) return ((java.sql.Date) value).toLocalDate().atStartOfDay();
+        if (value instanceof java.sql.Timestamp) return ((java.sql.Timestamp) value).toLocalDateTime();
+        if (value instanceof java.util.Date) {
+            return new java.sql.Timestamp(((java.util.Date) value).getTime()).toLocalDateTime();
+        }
+        String text = asText(value);
+        if (isBlank(text)) return null;
+        for (DateTimeFormatter formatter : Arrays.asList(
+                DateTimeFormatter.ofPattern("d/M/yyyy H:mm:ss"),
+                DateTimeFormatter.ofPattern("d/M/yyyy H:mm"),
+                DateTimeFormatter.ISO_LOCAL_DATE_TIME)) {
+            try {
+                return LocalDateTime.parse(text, formatter);
+            } catch (DateTimeParseException ignored) {
+                // intentar siguiente formato
+            }
+        }
+        String dateOnly = text.split(" ")[0];
+        for (DateTimeFormatter formatter : Arrays.asList(
+                DateTimeFormatter.ofPattern("d/M/yyyy"),
+                DateTimeFormatter.ISO_LOCAL_DATE)) {
+            try {
+                return LocalDate.parse(dateOnly, formatter).atStartOfDay();
+            } catch (DateTimeParseException ignored) {
+                // intentar siguiente formato
+            }
+        }
+        return null;
+    }
+
+    private boolean isBetween(LocalDate value, LocalDate start, LocalDate end) {
+        if (value == null) return false;
+        if (start != null && value.isBefore(start)) return false;
+        if (end != null && value.isAfter(end)) return false;
+        return true;
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) return "";
+        for (String value : values) {
+            if (!isBlank(value)) return value;
+        }
+        return "";
+    }
+
+    private String normalizeRole(String value) {
+        if (value == null) return "";
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{InCombiningDiacriticalMarks}+", "");
+        return normalized.trim().toLowerCase().replaceAll("[\\s_]+", "");
     }
 
     private AuthLoginResponse requireUsuario(AuthMeResponse me) {

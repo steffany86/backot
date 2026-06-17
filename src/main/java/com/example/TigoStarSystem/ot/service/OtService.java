@@ -548,7 +548,7 @@ public class OtService {
                 Integer tap = request.getTap();
                 Integer boca = request.getBoca();
                 String tapPadded = tap == null ? "" : String.format(Locale.ROOT, "%03d", tap);
-                String nodoRamalTap = "NODO " + nodo + " RAMAL " + ramal + " TAP " + tapPadded + " BOCA " + boca;
+                String nodoRamalTap = "NODO " + nodo + " RAMAL " + ramal + " " + tapPadded + " BOCA " + boca;
                 try {
                     int filas = otRepository.actualizarDatosNodoRamalTapBocaVenta(
                             idVentaRegistro.longValue(),

@@ -12,6 +12,7 @@ import com.example.TigoStarSystem.tecnicoiniciojornada.dto.TecnicoCierreJornadaR
 import com.example.TigoStarSystem.tecnicoiniciojornada.repository.TecnicoInicioJornadaRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -27,17 +28,23 @@ public class TecnicoInicioJornadaService {
     private final JdbcTemplate tigohogarJdbcTemplate;
     private final AuthService authService;
     private final DbConnectionManager dbConnectionManager;
+    private final String defaultDbUsername;
+    private final String defaultDbPassword;
 
     public TecnicoInicioJornadaService(
             TecnicoInicioJornadaRepository repository,
             @Qualifier("tigohogarJdbcTemplate") JdbcTemplate tigohogarJdbcTemplate,
             AuthService authService,
-            DbConnectionManager dbConnectionManager
+            DbConnectionManager dbConnectionManager,
+            @Value("${spring.datasource.username}") String defaultDbUsername,
+            @Value("${spring.datasource.password}") String defaultDbPassword
     ) {
         this.repository = repository;
         this.tigohogarJdbcTemplate = tigohogarJdbcTemplate;
         this.authService = authService;
         this.dbConnectionManager = dbConnectionManager;
+        this.defaultDbUsername = defaultDbUsername;
+        this.defaultDbPassword = defaultDbPassword;
     }
 
     public Map<String, Object> estado(String token, String sucursal) {
@@ -45,7 +52,7 @@ public class TecnicoInicioJornadaService {
         repository.marcarNoCierreAtrasado(tigohogarJdbcTemplate, tecnico.getIdUsuario());
         boolean existe = repository.existeRegistroHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario());
         String sucursalResuelta = resolveSucursalNombre(sucursal, tecnico);
-        JdbcTemplate tecnicosTemplate = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
+        JdbcTemplate tecnicosTemplate = resolveTecnicosTemplate(sucursalResuelta, tecnico);
         Map<String, Object> encargadoActual = repository.buscarEncargadoActualPorTecnico(
                 dbConnectionManager.connDb("central"),
                 tecnicosTemplate,
@@ -88,7 +95,7 @@ public class TecnicoInicioJornadaService {
     public List<Map<String, Object>> listarEncargados(String token, String sucursal) {
         AuthLoginResponse tecnico = requireUsuarioInicioJornada(token);
         String sucursalResuelta = resolveSucursalNombre(sucursal, tecnico);
-        JdbcTemplate tecnicosTemplate = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
+        JdbcTemplate tecnicosTemplate = resolveTecnicosTemplate(sucursalResuelta, tecnico);
         List<Map<String, Object>> encargados = repository.listarEncargados(tecnicosTemplate);
         Map<String, Object> encargadoActual = repository.buscarEncargadoActualPorTecnico(
                 dbConnectionManager.connDb("central"),
@@ -117,7 +124,7 @@ public class TecnicoInicioJornadaService {
             throw new ApiException(HttpStatus.CONFLICT, "ALREADY_REGISTERED", "Ya registraste inicio de jornada hoy.");
         }
         String sucursalResuelta = resolveSucursalNombre(request.getSucursal(), tecnico);
-        JdbcTemplate tecnicosTemplate = dbConnectionManager.connDb(resolveTecnicosDb(sucursalResuelta));
+        JdbcTemplate tecnicosTemplate = resolveTecnicosTemplate(sucursalResuelta, tecnico);
         Map<String, Object> encargadoActual = repository.buscarEncargadoActualPorTecnico(
                 dbConnectionManager.connDb("central"),
                 tecnicosTemplate,
@@ -292,12 +299,49 @@ public class TecnicoInicioJornadaService {
         }
     }
 
+    private JdbcTemplate resolveTecnicosTemplate(String sucursal, AuthLoginResponse usuarioSesion) {
+        SucursalResponse sucursalInfo = resolveSucursalInfo(sucursal, usuarioSesion);
+        if (sucursalInfo != null && !isBlank(sucursalInfo.getIp()) && !isBlank(sucursalInfo.getBaseDeDatos())) {
+            return dbConnectionManager.connDb(
+                    "inicio-jornada-" + sucursalInfo.getIdSucursal(),
+                    sucursalInfo.getIp(),
+                    sucursalInfo.getBaseDeDatos(),
+                    defaultDbUsername,
+                    defaultDbPassword
+            );
+        }
+        return dbConnectionManager.connDb(resolveTecnicosDb(sucursal));
+    }
+
     private String resolveTecnicosDb(String sucursal) {
         String normalized = normalize(sucursal);
         if (normalized.contains("sucre")) {
             return "sucre";
         }
         return "operativa";
+    }
+
+    private SucursalResponse resolveSucursalInfo(String sucursal, AuthLoginResponse usuarioSesion) {
+        List<SucursalResponse> sucursales = authService.listarSucursales();
+        Integer idSucursal = usuarioSesion == null ? null : usuarioSesion.getIdSucursal();
+        if (idSucursal != null) {
+            for (SucursalResponse item : sucursales) {
+                if (item != null && idSucursal.equals(item.getIdSucursal())) {
+                    return item;
+                }
+            }
+        }
+        if (!isBlank(sucursal)) {
+            String canonTarget = SucursalCanonicalizer.canonicalize(sucursal);
+            for (SucursalResponse item : sucursales) {
+                if (item == null) continue;
+                String canon = SucursalCanonicalizer.canonicalize(item.getSucursal());
+                if (canonTarget.equalsIgnoreCase(canon)) {
+                    return item;
+                }
+            }
+        }
+        return null;
     }
 
     private String resolveSucursalNombre(String sucursal, AuthLoginResponse usuarioSesion) {
