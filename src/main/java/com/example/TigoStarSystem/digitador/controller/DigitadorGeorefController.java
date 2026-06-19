@@ -1,12 +1,14 @@
 package com.example.TigoStarSystem.digitador.controller;
 
 import com.example.TigoStarSystem.common.ApiResponse;
+import com.example.TigoStarSystem.digitador.dto.DigitadorGeorefConfirmRequest;
 import com.example.TigoStarSystem.digitador.service.DigitadorGeorefService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,9 +41,10 @@ public class DigitadorGeorefController {
     @PostMapping("/distancias/{id}/confirmar")
     public ResponseEntity<ApiResponse<Integer>> confirmar(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
-            @PathVariable("id") Long id) {
+            @PathVariable("id") Long id,
+            @RequestBody(required = false) DigitadorGeorefConfirmRequest request) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.confirmar(token, id),
+                service.confirmar(token, id, request),
                 "Registro confirmado correctamente."
         ));
     }

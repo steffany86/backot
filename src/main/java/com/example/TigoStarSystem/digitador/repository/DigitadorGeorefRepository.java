@@ -12,55 +12,68 @@ import java.util.Map;
 
 @Repository
 public class DigitadorGeorefRepository {
+    private final JdbcTemplate jdbcTemplate;
     private final JdbcTemplate centralJdbcTemplate;
 
-    public DigitadorGeorefRepository(@Qualifier("centralJdbcTemplate") JdbcTemplate centralJdbcTemplate) {
+    public DigitadorGeorefRepository(
+            JdbcTemplate jdbcTemplate,
+            @Qualifier("centralJdbcTemplate") JdbcTemplate centralJdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
         this.centralJdbcTemplate = centralJdbcTemplate;
     }
 
     public List<Map<String, Object>> listarAnalisisDistancias(LocalDate fecha) {
         try {
-            return centralJdbcTemplate.queryForList(
-                    "WITH base AS ( " +
-                            "SELECT h.*, " +
-                            "CONVERT(float, h.Latitud_C) AS LatitudCNum, " +
-                            "CONVERT(float, h.Longitud_C) AS LongitudCNum, " +
-                            "CONVERT(float, h.Latitud_V) AS LatitudVNum, " +
-                            "CONVERT(float, h.Longitud_V) AS LongitudVNum " +
-                            "FROM dbo.tbl_BO_CITA_MAKIRO_Historial h " +
-                            "WHERE CAST(h.fecha_hora_dia AS date) = ? " +
-                            "), distancias AS ( " +
-                            "SELECT base.*, " +
-                            "CASE " +
-                            "WHEN LatitudCNum BETWEEN -90 AND 90 " +
-                            "AND LatitudVNum BETWEEN -90 AND 90 " +
-                            "AND LongitudCNum BETWEEN -180 AND 180 " +
-                            "AND LongitudVNum BETWEEN -180 AND 180 " +
-                            "THEN geography::Point(LatitudCNum, LongitudCNum, 4326).STDistance(geography::Point(LatitudVNum, LongitudVNum, 4326)) " +
-                            "ELSE NULL " +
-                            "END AS DistanciaMetros " +
-                            "FROM base " +
-                            ") " +
-                            "SELECT * FROM distancias " +
-                            "WHERE ISNULL(estado, '') = 'Finalizado' " +
-                            "AND DistanciaMetros >= 15 " +
-                            "ORDER BY fecha_hora_dia DESC, OT",
-                    Date.valueOf(fecha)
-            );
+            return ejecutarSpAnalisisDistancias(jdbcTemplate, fecha);
         } catch (DataAccessException ex) {
-            return centralJdbcTemplate.queryForList(
-                    "EXEC dbo.spy_AnalisisDistancias_GeoReferencias ?",
-                    Date.valueOf(fecha)
-            );
+            return ejecutarSpAnalisisDistancias(centralJdbcTemplate, fecha);
         }
     }
 
-    public int confirmarAnalisisDistancia(Long id) {
-        return centralJdbcTemplate.update(
-                "UPDATE dbo.tbl_BO_CITA_MAKIRO_Historial " +
-                        "SET Actualizado = 1 " +
-                        "WHERE Id_BO_CITA_MAKIRO_Historial = ?",
-                id
-        );
+    private List<Map<String, Object>> ejecutarSpAnalisisDistancias(JdbcTemplate template, LocalDate fecha) {
+        try {
+            return template.queryForList(
+                    "EXEC dbo.spy_AnalisisDistancias_GeoReferencias ?",
+                    Date.valueOf(fecha)
+            );
+        } catch (DataAccessException ex) {
+            return template.queryForList("EXEC dbo.spy_AnalisisDistancias_GeoReferencias");
+        }
+    }
+
+    public int confirmarAnalisisDistancia(Long id, boolean confirmarUbicacion, boolean confirmarNodo, String usuarioModifica) {
+        int updated = actualizarAnalisisDistancia(jdbcTemplate, id, confirmarUbicacion, confirmarNodo, usuarioModifica);
+        if (updated > 0) {
+            return updated;
+        }
+        return actualizarAnalisisDistancia(centralJdbcTemplate, id, confirmarUbicacion, confirmarNodo, usuarioModifica);
+    }
+
+    private int actualizarAnalisisDistancia(
+            JdbcTemplate template,
+            Long id,
+            boolean confirmarUbicacion,
+            boolean confirmarNodo,
+            String usuarioModifica) {
+        StringBuilder sql = new StringBuilder("UPDATE dbo.tbl_BO_CITA_MAKIRO_Historial SET ");
+        java.util.List<Object> args = new java.util.ArrayList<>();
+        if (confirmarUbicacion) {
+            sql.append("Actualizado = 1, usuario_ModificaDistancia = ?, fechaRegistro_ModificaDistancia = GETDATE()");
+            args.add(usuarioModifica);
+        }
+        if (confirmarNodo) {
+            if (!args.isEmpty()) {
+                sql.append(", ");
+            }
+            sql.append("Actualizado_NODO = 1, usuarioModifica_NODO = ?, fechaRegistroModifica_NODO = GETDATE()");
+            args.add(usuarioModifica);
+        }
+        sql.append(" WHERE Id_BO_CITA_MAKIRO_Historial = ?");
+        args.add(id);
+        try {
+            return template.update(sql.toString(), args.toArray());
+        } catch (DataAccessException ex) {
+            return 0;
+        }
     }
 }

@@ -4,8 +4,11 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Repository
 public class CentralGruposRepository {
@@ -18,26 +21,68 @@ public class CentralGruposRepository {
     }
 
     public List<Map<String, Object>> listarSupervisoresFiltro(JdbcTemplate template) {
-        return template.queryForList("EXEC dbo.spx_Grupo_FiltroSupervisoresCentral");
+        return deduplicarSupervisores(template.queryForList("EXEC dbo.spx_Grupo_FiltroSupervisoresCentral"));
     }
 
     public List<Map<String, Object>> listarSupervisoresDesdeConformacionCentral(JdbcTemplate centralTemplate, String sucursal) {
-        return centralTemplate.queryForList(
-                "SELECT DISTINCT " +
-                        "  CAST(idUsuarioSupervisor AS INT) AS idUsuarioSupervisor, " +
-                        "  CAST(idUsuarioSupervisor AS INT) AS id_usuario_supervisor, " +
-                        "  LTRIM(RTRIM(CAST(supervisorACargo AS NVARCHAR(200)))) AS supervisorACargo, " +
-                        "  LTRIM(RTRIM(CAST(supervisorACargo AS NVARCHAR(200)))) AS supervisor, " +
-                        "  LTRIM(RTRIM(CAST(sucursal AS NVARCHAR(100)))) AS sucursal " +
-                        "FROM dbo.tbl_ConformacionCuadrillaDiario " +
-                        "WHERE ISNULL(e_eliminado, 0) = 0 " +
-                        "  AND idUsuarioSupervisor IS NOT NULL " +
-                        "  AND NULLIF(LTRIM(RTRIM(ISNULL(supervisorACargo, ''))), '') IS NOT NULL " +
-                        "  AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+        return deduplicarSupervisores(centralTemplate.queryForList(
+                "SELECT " +
+                        "  CAST(c.idUsuarioSupervisor AS INT) AS idUsuarioSupervisor, " +
+                        "  CAST(c.idUsuarioSupervisor AS INT) AS id_usuario_supervisor, " +
+                        "  LTRIM(RTRIM(CAST(MAX(NULLIF(LTRIM(RTRIM(ISNULL(c.supervisorACargo, ''))), '')) AS NVARCHAR(200)))) AS supervisorACargo, " +
+                        "  LTRIM(RTRIM(CAST(MAX(NULLIF(LTRIM(RTRIM(ISNULL(c.supervisorACargo, ''))), '')) AS NVARCHAR(200)))) AS supervisor, " +
+                        "  LTRIM(RTRIM(CAST(MIN(c.sucursal) AS NVARCHAR(100)))) AS sucursal " +
+                        "FROM dbo.tbl_ConformacionCuadrillaDiario c " +
+                        "INNER JOIN dbo.tbl_Usuario u ON u.Id_Usuario = c.idUsuarioSupervisor AND ISNULL(u.E_Eliminado, 0) = 0 " +
+                        "WHERE ISNULL(c.e_eliminado, 0) = 0 " +
+                        "  AND c.idUsuarioSupervisor IS NOT NULL " +
+                        "  AND c.idUsuarioSupervisor > 0 " +
+                        "  AND NULLIF(LTRIM(RTRIM(ISNULL(c.supervisorACargo, ''))), '') IS NOT NULL " +
+                        "  AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
                         "      LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', '')) " +
+                        "GROUP BY c.idUsuarioSupervisor " +
                         "ORDER BY supervisorACargo",
                 sucursal
-        );
+        ));
+    }
+
+    private List<Map<String, Object>> deduplicarSupervisores(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return rows;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        Set<String> vistos = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (row == null) {
+                continue;
+            }
+            Object id = firstValue(row, "idUsuarioSupervisor", "id_usuario_supervisor", "idSupervisor", "id_usuario", "idUsuario", "id");
+            String key = id == null ? "" : String.valueOf(id).trim().replaceAll("[^0-9]", "");
+            if (key.isEmpty() || "0".equals(key) || !vistos.add(key)) {
+                continue;
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    private Object firstValue(Map<String, Object> row, String... keys) {
+        for (String key : keys) {
+            if (row.containsKey(key) && row.get(key) != null && !"".equals(row.get(key))) {
+                return row.get(key);
+            }
+        }
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            String current = entry.getKey() == null ? "" : entry.getKey().replace("_", "").toLowerCase();
+            for (String key : keys) {
+                if (current.equals(key.replace("_", "").toLowerCase())
+                        && entry.getValue() != null
+                        && !"".equals(entry.getValue())) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return null;
     }
 
     public List<Map<String, Object>> listarTecnicosFiltro(JdbcTemplate template) {

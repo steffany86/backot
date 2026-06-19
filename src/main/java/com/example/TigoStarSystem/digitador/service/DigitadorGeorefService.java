@@ -4,6 +4,7 @@ import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
+import com.example.TigoStarSystem.digitador.dto.DigitadorGeorefConfirmRequest;
 import com.example.TigoStarSystem.digitador.repository.DigitadorGeorefRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -30,19 +31,35 @@ public class DigitadorGeorefService {
         return repository.listarAnalisisDistancias(fechaConsulta);
     }
 
-    public int confirmar(String token, Long id) {
-        requireDigitador(token);
+    public int confirmar(String token, Long id, DigitadorGeorefConfirmRequest request) {
+        AuthLoginResponse usuario = requireDigitador(token);
         if (id == null || id <= 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "id es requerido.");
         }
-        int updated = repository.confirmarAnalisisDistancia(id);
+        boolean confirmarUbicacion = request != null && Boolean.TRUE.equals(request.getConfirmarUbicacion());
+        boolean confirmarNodo = request != null && Boolean.TRUE.equals(request.getConfirmarNodo());
+        if (!confirmarUbicacion && !confirmarNodo) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Debe seleccionar confirmar ubicacion, confirmar NODO o ambos."
+            );
+        }
+        String usuarioModifica = trimToNull(usuario == null ? null : usuario.getLoggin());
+        if (usuarioModifica == null) {
+            usuarioModifica = trimToNull(usuario == null ? null : usuario.getNombre());
+        }
+        if (usuarioModifica == null) {
+            usuarioModifica = "SISTEMA";
+        }
+        int updated = repository.confirmarAnalisisDistancia(id, confirmarUbicacion, confirmarNodo, usuarioModifica);
         if (updated <= 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro el registro para confirmar.");
         }
         return updated;
     }
 
-    private void requireDigitador(String token) {
+    private AuthLoginResponse requireDigitador(String token) {
         AuthMeResponse me = authService.me(token);
         AuthLoginResponse usuario = me.getUsuario();
         String rol = normalize(usuario == null ? null : usuario.getRol());
@@ -56,6 +73,7 @@ public class DigitadorGeorefService {
                     "Esta funcionalidad es solo para rol Digitador."
             );
         }
+        return usuario;
     }
 
     private String normalize(String value) {
@@ -66,5 +84,13 @@ public class DigitadorGeorefService {
                 .replaceAll("\\p{M}", "")
                 .toLowerCase(Locale.ROOT);
         return normalized.replaceAll("[\\s_]+", "");
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }

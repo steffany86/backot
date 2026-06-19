@@ -1494,7 +1494,7 @@ public class OtService {
                                 clean(material.getSerie()),
                                 clean(material.getChipId()),
                                 material.getCantidad(),
-                                material.getEntregado(),
+                                false,
                                 idSucursal
                         );
                         otRepository.ejecutarRegModProducto(
@@ -1502,7 +1502,7 @@ public class OtService {
                                 clean(material.getChipId()),
                                 idRutaFinal,
                                 material.getIdProducto(),
-                                Boolean.TRUE.equals(material.getEntregado()) ? 4 : 35,
+                                35,
                                 idDevolucion.longValue(),
                                 idUsuarioFinal,
                                 material.getIdTipoMaterial(),

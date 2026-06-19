@@ -1091,11 +1091,11 @@ public class SupervisionRepository {
 
     public List<Map<String, Object>> listarSupervisores(String sucursal) {
         JdbcTemplate template = resolveTemplateSupervisores(sucursal);
-        List<Map<String, Object>> rows = listarSupervisoresDesdeTemplate(template);
+        List<Map<String, Object>> rows = filtrarSupervisoresActivos(listarSupervisoresDesdeTemplate(template));
         if (rows != null && !rows.isEmpty()) {
             return rows;
         }
-        return listarSupervisoresDesdeCentral(sucursal);
+        return filtrarSupervisoresActivos(listarSupervisoresDesdeCentral(sucursal));
     }
 
     private List<Map<String, Object>> listarSupervisoresDesdeCentral(String sucursal) {
@@ -1103,18 +1103,20 @@ public class SupervisionRepository {
         try {
             JdbcTemplate central = dbConnectionManager.connDb("bdcontrolordenes");
             return central.queryForList(
-                    "SELECT DISTINCT " +
-                            "  CAST(idUsuarioSupervisor AS INT) AS idSupervisor, " +
-                            "  CAST(idUsuarioSupervisor AS INT) AS idUsuarioSupervisor, " +
-                            "  CAST(supervisorACargo AS NVARCHAR(200)) AS nombre, " +
-                            "  CAST(supervisorACargo AS NVARCHAR(200)) AS supervisor, " +
-                            "  CAST(sucursal AS NVARCHAR(100)) AS sucursal " +
-                            "FROM dbo.tbl_ConformacionCuadrillaDiario " +
-                            "WHERE ISNULL(e_eliminado,0)=0 " +
-                            "  AND idUsuarioSupervisor IS NOT NULL " +
-                            "  AND NULLIF(LTRIM(RTRIM(ISNULL(supervisorACargo,''))), '') IS NOT NULL " +
-                            "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(ISNULL(sucursal,''), ' ', ''), '_', ''), '-', '')) = " +
+                    "SELECT " +
+                            "  CAST(c.idUsuarioSupervisor AS INT) AS idSupervisor, " +
+                            "  CAST(c.idUsuarioSupervisor AS INT) AS idUsuarioSupervisor, " +
+                            "  CAST(MAX(NULLIF(LTRIM(RTRIM(ISNULL(c.supervisorACargo,''))), '')) AS NVARCHAR(200)) AS nombre, " +
+                            "  CAST(MAX(NULLIF(LTRIM(RTRIM(ISNULL(c.supervisorACargo,''))), '')) AS NVARCHAR(200)) AS supervisor, " +
+                            "  CAST(MIN(c.sucursal) AS NVARCHAR(100)) AS sucursal " +
+                            "FROM dbo.tbl_ConformacionCuadrillaDiario c " +
+                            "INNER JOIN dbo.tbl_Usuario u ON u.Id_Usuario = c.idUsuarioSupervisor AND ISNULL(u.E_Eliminado,0)=0 " +
+                            "WHERE ISNULL(c.e_eliminado,0)=0 " +
+                            "  AND c.idUsuarioSupervisor IS NOT NULL " +
+                            "  AND NULLIF(LTRIM(RTRIM(ISNULL(c.supervisorACargo,''))), '') IS NOT NULL " +
+                            "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(ISNULL(c.sucursal,''), ' ', ''), '_', ''), '-', '')) = " +
                             "                  LOWER(REPLACE(REPLACE(REPLACE(?, ' ', ''), '_', ''), '-', ''))) " +
+                            "GROUP BY c.idUsuarioSupervisor " +
                             "ORDER BY supervisor",
                     sucursalNorm,
                     sucursalNorm
@@ -1162,6 +1164,33 @@ public class SupervisionRepository {
                 }
             }
         }
+    }
+
+    private List<Map<String, Object>> filtrarSupervisoresActivos(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return rows;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        Set<String> vistos = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            if (row == null) {
+                continue;
+            }
+            Object eliminado = findValue(row, "E_Eliminado", "e_eliminado", "eliminado");
+            if (toInteger(eliminado) != null && toInteger(eliminado) != 0) {
+                continue;
+            }
+            Object id = findValue(row, "idSupervisor", "idUsuarioSupervisor", "Id_Usuario", "idUsuario", "id_usuario", "id");
+            String key = id == null ? "" : String.valueOf(id).trim().replaceAll("[^0-9]", "");
+            if (key.isEmpty()) {
+                key = id == null ? "" : String.valueOf(id).trim();
+            }
+            if (!key.isEmpty() && !vistos.add(key)) {
+                continue;
+            }
+            out.add(row);
+        }
+        return out;
     }
 
     private JdbcTemplate resolveTemplateSupervisores(String sucursal) {
