@@ -3,6 +3,11 @@ SP para registrar una venta/OT en dbo.tbl_venta incluyendo validacion de Nro Ord
 Si el numero de orden ya existe, lanza error y no inserta.
 */
 
+SET ANSI_NULLS ON;
+GO
+SET QUOTED_IDENTIFIER ON;
+GO
+
 IF OBJECT_ID('dbo.spx_RegistrarVentaParaRegistroOTwb', 'P') IS NULL
 BEGIN
     EXEC('CREATE PROCEDURE dbo.spx_RegistrarVentaParaRegistroOTwb AS BEGIN SET NOCOUNT ON; END');

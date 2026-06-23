@@ -596,6 +596,20 @@ public class CatalogoRepository {
     public List<Map<String, Object>> listarProductosPorRuta(Integer idRuta, Integer idSucursal) {
         JdbcTemplate target = template(idSucursal);
         List<Map<String, Object>> rows = target.queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", idRuta);
+        if (rows == null || rows.isEmpty()) {
+            Integer rutaActiva = resolverRutaActivaConSaldo(target, idRuta);
+            if (rutaActiva != null && !rutaActiva.equals(idRuta)) {
+                List<Map<String, Object>> rutaActivaRows = target.queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", rutaActiva);
+                if (rutaActivaRows != null && !rutaActivaRows.isEmpty()) {
+                    logger.warn(
+                            "TraerTodosLosProductos_x_IdRutaWeb vacio para rutaId={}. Usando ruta activa con saldo={}.",
+                            idRuta,
+                            rutaActiva
+                    );
+                    return rutaActivaRows;
+                }
+            }
+        }
         if ((rows == null || rows.isEmpty()) && idSucursal != null) {
             try {
                 List<Map<String, Object>> fallback = jdbcTemplate.queryForList("EXEC TraerTodosLosProductos_x_IdRutaWeb ?", idRuta);
@@ -709,10 +723,15 @@ public class CatalogoRepository {
             Integer idSucursal) {
         int top = (limite == null || limite <= 0) ? 10 : Math.min(limite, 50);
         String text = prefijo == null ? "" : prefijo.trim();
+        JdbcTemplate target = template(idSucursal);
+        Integer rutaConsulta = resolverRutaActivaConSaldo(target, idRuta);
+        if (rutaConsulta == null) {
+            rutaConsulta = idRuta;
+        }
 
-        List<Map<String, Object>> rows = template(idSucursal).queryForList(
+        List<Map<String, Object>> rows = target.queryForList(
                 "EXEC dbo.spx_ObtenerSaldoTarjetasSugeridoswb ?, ?",
-                idRuta,
+                rutaConsulta,
                 idProducto
         );
 
@@ -785,15 +804,57 @@ public class CatalogoRepository {
     }
 
     public List<Map<String, Object>> validarSerieSaldo(String serie, Integer idProducto, Integer tipoMaterial, Integer idRuta, Integer idSucursal) {
-        return template(idSucursal).execute((ConnectionCallback<List<Map<String, Object>>>) connection -> {
+        JdbcTemplate target = template(idSucursal);
+        Integer rutaConsulta = resolverRutaActivaConSaldo(target, idRuta);
+        if (rutaConsulta == null) {
+            rutaConsulta = idRuta;
+        }
+        final Integer rutaFinal = rutaConsulta;
+        return target.execute((ConnectionCallback<List<Map<String, Object>>>) connection -> {
             try (CallableStatement statement = connection.prepareCall("{call spx_TraerDatoSerieChipIdCU_OT(?, ?, ?, ?)}")) {
                 statement.setString(1, serie);
                 statement.setInt(2, idProducto);
                 statement.setInt(3, tipoMaterial);
-                statement.setInt(4, idRuta);
+                statement.setInt(4, rutaFinal);
                 return readFirstResultSet(statement);
             }
         });
+    }
+
+    private Integer resolverRutaActivaConSaldo(JdbcTemplate target, Integer idRuta) {
+        if (target == null || idRuta == null || idRuta <= 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = target.queryForList(
+                    "SELECT TOP 1 rActiva.Id_Ruta AS idRuta " +
+                            "FROM dbo.tbl_Ruta rOriginal " +
+                            "INNER JOIN dbo.tbl_Ruta rActiva " +
+                            "  ON rActiva.Id_Vendedor = rOriginal.Id_Vendedor " +
+                            " AND ISNULL(rActiva.E_Eliminado, 0) = 0 " +
+                            "WHERE rOriginal.Id_Ruta = ? " +
+                            "  AND EXISTS ( " +
+                            "      SELECT 1 FROM dbo.tbl_saldotarjetas s " +
+                            "      WHERE s.id_ruta = rActiva.Id_Ruta " +
+                            "        AND ISNULL(s.e_eliminado, 0) = 0 " +
+                            "        AND s.cantidad > 0 " +
+                            "  ) " +
+                            "ORDER BY CASE WHEN rActiva.Id_Ruta = ? THEN 0 ELSE 1 END DESC, rActiva.Id_Ruta DESC",
+                    idRuta,
+                    idRuta
+            );
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            Object raw = rows.get(0).get("idRuta");
+            if (raw instanceof Number) {
+                return ((Number) raw).intValue();
+            }
+            return raw == null ? null : Integer.parseInt(String.valueOf(raw).trim());
+        } catch (Exception ex) {
+            logger.warn("No se pudo resolver ruta activa con saldo para rutaId={}: {}", idRuta, ex.getMessage());
+            return null;
+        }
     }
 
     public List<Map<String, Object>> traerDatoSerieChipIdCU(String serie) {

@@ -143,6 +143,18 @@ public class SupervisionController {
         ));
     }
 
+    @GetMapping("/jornadas/historico")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarHistoricoJornadas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idTecnico", required = false) Integer idTecnico) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarHistoricoJornadasSupervisor(fecha, idTecnico, token),
+                "Historico de inicios y cierres de jornada."
+        ));
+    }
+
     @PostMapping("/jornadas/{idInicio}/aprobar")
     public ResponseEntity<ApiResponse<Map<String, Object>>> aprobarJornada(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

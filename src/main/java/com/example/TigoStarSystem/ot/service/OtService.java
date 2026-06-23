@@ -1296,6 +1296,17 @@ public class OtService {
             );
             throw new ApiException(HttpStatus.CONFLICT, "VENTA_INVALIDA", "La venta encontrada no tiene datos suficientes para registrar detalle.");
         }
+        Integer idRutaActivaConSaldo = otRepository.resolverRutaActivaConSaldo(idRuta, idSucursal);
+        if (idRutaActivaConSaldo != null && !idRutaActivaConSaldo.equals(idRuta)) {
+            logger.warn(
+                    "registrarDetalleAgenda: ruta de venta sin saldo/obsoleta. idSucursal={}, idVenta={}, rutaVenta={}, rutaActivaConSaldo={}",
+                    idSucursal,
+                    idVenta,
+                    idRuta,
+                    idRutaActivaConSaldo
+            );
+            idRuta = idRutaActivaConSaldo;
+        }
 
         // Capa extra de seguridad: resolver nuevamente el id_venta por OT+cliente+fecha del dia
         // justo antes de persistir detalle para evitar guardar en una venta historica.
@@ -1341,6 +1352,17 @@ public class OtService {
                 LocalDate fechaEjecucionPersistencia = toLocalDate(findValue(venta, "Fecha_Ejecucion", "fecha_ejecucion", "fecha"));
                 if (fechaEjecucionPersistencia != null) {
                     fechaEjecucion = fechaEjecucionPersistencia;
+                }
+                Integer rutaPersistenciaActiva = otRepository.resolverRutaActivaConSaldo(idRuta, idSucursal);
+                if (rutaPersistenciaActiva != null && !rutaPersistenciaActiva.equals(idRuta)) {
+                    logger.warn(
+                            "registrarDetalleAgenda: ruta ajustada tras recargar venta. idSucursal={}, idVenta={}, rutaVenta={}, rutaActivaConSaldo={}",
+                            idSucursal,
+                            idVenta,
+                            idRuta,
+                            rutaPersistenciaActiva
+                    );
+                    idRuta = rutaPersistenciaActiva;
                 }
             } catch (Exception ex) {
                 logger.warn("registrarDetalleAgenda: no se pudo recargar cabecera para id_venta ajustado={}", idVentaPersistencia, ex);

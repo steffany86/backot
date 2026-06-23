@@ -755,6 +755,42 @@ public class OtRepository {
         );
     }
 
+    public Integer resolverRutaActivaConSaldo(Integer idRuta, Integer idSucursal) {
+        if (idRuta == null || idRuta <= 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT TOP 1 rActiva.Id_Ruta AS idRuta " +
+                            "FROM dbo.tbl_Ruta rOriginal " +
+                            "INNER JOIN dbo.tbl_Ruta rActiva " +
+                            "  ON rActiva.Id_Vendedor = rOriginal.Id_Vendedor " +
+                            " AND ISNULL(rActiva.E_Eliminado, 0) = 0 " +
+                            "WHERE rOriginal.Id_Ruta = ? " +
+                            "  AND EXISTS ( " +
+                            "      SELECT 1 FROM dbo.tbl_saldotarjetas s " +
+                            "      WHERE s.id_ruta = rActiva.Id_Ruta " +
+                            "        AND ISNULL(s.e_eliminado, 0) = 0 " +
+                            "        AND s.cantidad > 0 " +
+                            "  ) " +
+                            "ORDER BY CASE WHEN rActiva.Id_Ruta = ? THEN 0 ELSE 1 END DESC, rActiva.Id_Ruta DESC",
+                    idRuta,
+                    idRuta
+            );
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            Object raw = rows.get(0).get("idRuta");
+            if (raw instanceof Number) {
+                return ((Number) raw).intValue();
+            }
+            return raw == null ? null : Integer.parseInt(String.valueOf(raw).trim());
+        } catch (Exception ex) {
+            logger.warn("No se pudo resolver ruta activa con saldo para rutaId={} sucursal={}: {}", idRuta, idSucursal, ex.getMessage());
+            return null;
+        }
+    }
+
     public Map<String, Object> validarSerieChipIdUnicos(String serie, String chipId, Integer idSucursal) {
         List<Map<String, Object>> rows = template(idSucursal).queryForList(
                 "SELECT TOP 1 serial, chipid, id_producto, e_eliminado " +
@@ -1145,7 +1181,8 @@ public class OtRepository {
             Integer idSucursalSesion
     ) {
         return template(idSucursalSesion).queryForMap(
-                "EXEC dbo.spx_RegistrarVentaParaRegistroOTwb ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+                "SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; " +
+                        "EXEC dbo.spx_RegistrarVentaParaRegistroOTwb ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                 idUsuario,
                 idVendedor,
                 idGrupo,

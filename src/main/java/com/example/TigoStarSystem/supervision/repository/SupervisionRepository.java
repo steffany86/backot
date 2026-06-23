@@ -519,6 +519,227 @@ public class SupervisionRepository {
         return enriquecerNombresTecnicos(rows, sucursal);
     }
 
+    public List<Map<String, Object>> listarHistoricoJornadas(
+            java.time.LocalDate fecha,
+            String sucursal,
+            Integer idSupervisor,
+            Integer idTecnico,
+            boolean limitarSupervisor) {
+        java.time.LocalDate fechaConsulta = fecha == null ? java.time.LocalDate.now() : fecha;
+        List<Map<String, Object>> esperados = listarTecnicosEsperadosJornada(sucursal, limitarSupervisor ? idSupervisor : null);
+        Map<Integer, Map<String, Object>> esperadosPorTecnico = new LinkedHashMap<>();
+        for (Map<String, Object> esperado : esperados) {
+            Integer id = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+            if (id == null || id <= 0) {
+                continue;
+            }
+            if (idTecnico != null && !idTecnico.equals(id)) {
+                continue;
+            }
+            esperadosPorTecnico.putIfAbsent(id, esperado);
+        }
+
+        List<Map<String, Object>> jornadas = queryHistoricoJornadas(fechaConsulta, idTecnico, esperadosPorTecnico.keySet());
+        jornadas = enriquecerNombresTecnicos(jornadas, sucursal);
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        Set<Integer> conRegistro = new LinkedHashSet<>();
+        for (Map<String, Object> row : jornadas) {
+            Integer tecnicoId = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+            if (tecnicoId == null || tecnicoId <= 0) {
+                continue;
+            }
+            if (idTecnico != null && !idTecnico.equals(tecnicoId)) {
+                continue;
+            }
+            if (!esperadosPorTecnico.isEmpty() && !esperadosPorTecnico.containsKey(tecnicoId)) {
+                continue;
+            }
+            Map<String, Object> esperado = esperadosPorTecnico.get(tecnicoId);
+            Map<String, Object> mapped = normalizarHistoricoJornada(row, esperado, fechaConsulta);
+            out.add(mapped);
+            conRegistro.add(tecnicoId);
+        }
+
+        for (Map.Entry<Integer, Map<String, Object>> entry : esperadosPorTecnico.entrySet()) {
+            if (conRegistro.contains(entry.getKey())) {
+                continue;
+            }
+            out.add(crearJornadaSinInicio(entry.getKey(), entry.getValue(), fechaConsulta));
+        }
+
+        out.sort((a, b) -> {
+            String sucA = toText(findValue(a, "sucursal"));
+            String sucB = toText(findValue(b, "sucursal"));
+            int sucCompare = String.valueOf(sucA == null ? "" : sucA).compareToIgnoreCase(String.valueOf(sucB == null ? "" : sucB));
+            if (sucCompare != 0) return sucCompare;
+            String tecA = toText(findValue(a, "tecnicoNombre", "tecnico"));
+            String tecB = toText(findValue(b, "tecnicoNombre", "tecnico"));
+            return String.valueOf(tecA == null ? "" : tecA).compareToIgnoreCase(String.valueOf(tecB == null ? "" : tecB));
+        });
+        return out;
+    }
+
+    private List<Map<String, Object>> queryHistoricoJornadas(java.time.LocalDate fecha, Integer idTecnico, Set<Integer> idsEsperados) {
+        List<Integer> idsFiltro = new ArrayList<>();
+        if (idsEsperados != null && !idsEsperados.isEmpty()) {
+            idsFiltro.addAll(idsEsperados);
+        }
+        if (idTecnico != null && idTecnico > 0 && idsFiltro.isEmpty()) {
+            idsFiltro.add(idTecnico);
+        }
+        if (!idsFiltro.isEmpty()) {
+            List<Map<String, Object>> out = new ArrayList<>();
+            int chunkSize = 800;
+            for (int from = 0; from < idsFiltro.size(); from += chunkSize) {
+                int to = Math.min(from + chunkSize, idsFiltro.size());
+                out.addAll(queryHistoricoJornadasChunk(fecha, idsFiltro.subList(from, to)));
+            }
+            return out;
+        }
+        return queryHistoricoJornadasChunk(fecha, java.util.Collections.emptyList());
+    }
+
+    private List<Map<String, Object>> queryHistoricoJornadasChunk(java.time.LocalDate fecha, List<Integer> idsTecnicos) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
+                        "ij.fecha_registro, ij.fecha_cierre, ij.e_eliminado, ij.no_marco_cierre, " +
+                        "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
+                        "ij.nombre_tecnico, ij.tecnico_nombre " +
+                        "FROM dbo.tbl_InicioJornadaAlturas ij " +
+                        "WHERE CAST(ij.fecha_registro AS DATE) = ? " +
+                        "  AND ISNULL(ij.e_eliminado, 0) = 0 "
+        );
+        List<Object> params = new ArrayList<>();
+        params.add(Date.valueOf(fecha));
+        if (idsTecnicos != null && !idsTecnicos.isEmpty()) {
+            sql.append(" AND ij.id_tecnico IN (");
+            for (int i = 0; i < idsTecnicos.size(); i++) {
+                if (i > 0) {
+                    sql.append(",");
+                }
+                sql.append("?");
+                params.add(idsTecnicos.get(i));
+            }
+            sql.append(") ");
+        }
+        sql.append("ORDER BY ij.fecha_registro ASC, ij.id_inicio ASC");
+        try {
+            return tigohogarJdbcTemplate.queryForList(sql.toString(), params.toArray());
+        } catch (Exception ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    private List<Map<String, Object>> listarTecnicosEsperadosJornada(String sucursal, Integer idSupervisor) {
+        JdbcTemplate central = dbConnectionManager.connDb("bdcontrolordenes");
+        String sucursalNorm = trimToNull(sucursal);
+        Object[] params = new Object[]{
+                sucursalNorm, sucursalNorm, idSupervisor, idSupervisor,
+                sucursalNorm, sucursalNorm, idSupervisor, idSupervisor
+        };
+        String baseWhere =
+                "WHERE ISNULL(c.e_eliminado, 0) = 0 " +
+                        "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                        "                  LOWER(REPLACE(REPLACE(REPLACE(?, '_', ''), '-', ''), ' ', ''))) " +
+                        "  AND (? IS NULL OR CAST(c.idUsuarioSupervisor AS INT) = ?) ";
+        String sqlAuxCamel = construirSqlTecnicosEsperados(baseWhere, "c.id_tecnicoAuxiliar");
+        String sqlAuxSnake = construirSqlTecnicosEsperados(baseWhere, "c.id_tecnico_auxiliar");
+        try {
+            return central.queryForList(sqlAuxCamel, params);
+        } catch (Exception ex) {
+            try {
+                return central.queryForList(sqlAuxSnake, params);
+            } catch (Exception ignored) {
+                return new ArrayList<>();
+            }
+        }
+    }
+
+    private String construirSqlTecnicosEsperados(String baseWhere, String auxColumn) {
+        return "WITH tecnicos AS ( " +
+                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(c.id_tecnico AS INT) AS idTecnico, c.tecnico AS tecnico, c.fecha, c.fechaRegistro, c.id " +
+                "  FROM dbo.tbl_ConformacionCuadrillaDiario c " +
+                baseWhere +
+                "    AND c.id_tecnico IS NOT NULL AND c.id_tecnico > 0 " +
+                "  UNION ALL " +
+                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(" + auxColumn + " AS INT) AS idTecnico, c.auxiliar AS tecnico, c.fecha, c.fechaRegistro, c.id " +
+                "  FROM dbo.tbl_ConformacionCuadrillaDiario c " +
+                baseWhere +
+                "    AND " + auxColumn + " IS NOT NULL AND " + auxColumn + " > 0 " +
+                "), ranked AS ( " +
+                "  SELECT *, ROW_NUMBER() OVER (PARTITION BY idTecnico ORDER BY ISNULL(fecha, '19000101') DESC, ISNULL(fechaRegistro, '19000101') DESC, id DESC) AS rn " +
+                "  FROM tecnicos " +
+                ") " +
+                "SELECT CAST(idTecnico AS INT) AS idTecnico, CAST(idTecnico AS INT) AS id_tecnico, tecnico AS tecnicoNombre, tecnico, " +
+                "       sucursal, grupo, CAST(idUsuarioSupervisor AS INT) AS idSupervisor, supervisorACargo AS supervisorNombre " +
+                "FROM ranked WHERE rn = 1 ORDER BY sucursal, grupo, tecnico";
+    }
+
+    private Map<String, Object> normalizarHistoricoJornada(
+            Map<String, Object> row,
+            Map<String, Object> esperado,
+            java.time.LocalDate fechaConsulta) {
+        Map<String, Object> out = new LinkedHashMap<>(row);
+        Integer idInicio = toInteger(findValue(row, "idInicio", "id_inicio"));
+        Integer idTecnico = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+        Object fechaInicio = findValue(row, "fechaInicio", "fecha_inicio", "fechaRegistro", "fecha_registro");
+        Object fechaCierre = findValue(row, "fechaCierre", "fecha_cierre");
+        String tecnicoNombre = toText(findValue(row, "tecnicoNombre", "tecnico", "nombreTecnico", "nombre_tecnico"));
+        if (tecnicoNombre == null && esperado != null) {
+            tecnicoNombre = toText(findValue(esperado, "tecnicoNombre", "tecnico"));
+        }
+        String sucursal = toText(findValue(row, "sucursal"));
+        if (sucursal == null && esperado != null) {
+            sucursal = toText(findValue(esperado, "sucursal"));
+        }
+        String grupo = toText(findValue(row, "grupo"));
+        if (grupo == null && esperado != null) {
+            grupo = toText(findValue(esperado, "grupo"));
+        }
+        Object idSupervisor = findValue(row, "idSupervisor", "id_supervisor", "id_encargado");
+        if (idSupervisor == null && esperado != null) {
+            idSupervisor = findValue(esperado, "idSupervisor");
+        }
+        String supervisorNombre = toText(findValue(row, "supervisorNombre", "supervisor", "nombreSupervisor"));
+        if (supervisorNombre == null && esperado != null) {
+            supervisorNombre = toText(findValue(esperado, "supervisorNombre"));
+        }
+
+        out.put("idInicio", idInicio);
+        out.put("idTecnico", idTecnico);
+        out.put("tecnicoNombre", tecnicoNombre == null ? ("Tecnico " + idTecnico) : tecnicoNombre);
+        out.put("fecha", fechaConsulta.toString());
+        out.put("fechaInicio", fechaInicio);
+        out.put("fechaCierre", fechaCierre);
+        out.put("sucursal", sucursal);
+        out.put("grupo", grupo);
+        out.put("idSupervisor", idSupervisor);
+        out.put("supervisorNombre", supervisorNombre);
+        out.put("sinInicio", fechaInicio == null);
+        out.put("sinCierre", fechaCierre == null);
+        out.put("estadoJornada", fechaCierre == null ? "SIN_CIERRE" : "CERRADA");
+        return out;
+    }
+
+    private Map<String, Object> crearJornadaSinInicio(Integer idTecnico, Map<String, Object> esperado, java.time.LocalDate fechaConsulta) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idInicio", null);
+        out.put("idTecnico", idTecnico);
+        out.put("tecnicoNombre", toText(findValue(esperado, "tecnicoNombre", "tecnico")));
+        out.put("fecha", fechaConsulta.toString());
+        out.put("fechaInicio", null);
+        out.put("fechaCierre", null);
+        out.put("sucursal", toText(findValue(esperado, "sucursal")));
+        out.put("grupo", toText(findValue(esperado, "grupo")));
+        out.put("idSupervisor", findValue(esperado, "idSupervisor"));
+        out.put("supervisorNombre", toText(findValue(esperado, "supervisorNombre")));
+        out.put("sinInicio", true);
+        out.put("sinCierre", true);
+        out.put("estadoJornada", "NO_INICIO");
+        return out;
+    }
+
     public int aprobarInicioJornada(Integer idSupervisor, Integer idInicio) {
         Integer updated = tigohogarJdbcTemplate.queryForObject(
                 "EXEC dbo.SP_Inicio_AprobarSupervisor ?, ?",
@@ -675,7 +896,15 @@ public class SupervisionRepository {
         if (ids.isEmpty()) {
             return out;
         }
-        StringBuilder sql = new StringBuilder("SELECT * FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio IN (");
+        StringBuilder sql = new StringBuilder(
+                "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
+                        "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
+                        "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
+                        "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
+                        "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
+                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre " +
+                        "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio IN ("
+        );
         Object[] params = new Object[ids.size()];
         for (int i = 0; i < ids.size(); i++) {
             if (i > 0) {

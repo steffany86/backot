@@ -224,6 +224,31 @@ public class SupervisionService {
         }
     }
 
+    public List<Map<String, Object>> listarHistoricoJornadasSupervisor(LocalDate fecha, Integer idTecnico, String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idSupervisor = resolveIdUsuario(me);
+        String sucursal = resolveSucursalNombre(me);
+        LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
+        try {
+            return repository.listarHistoricoJornadas(fechaConsulta, sucursal, idSupervisor, idTecnico, true);
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    public List<Map<String, Object>> listarHistoricoJornadasBackoffice(LocalDate fecha, String sucursal, Integer idTecnico, String token) {
+        AuthMeResponse me = authService.me(token);
+        LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(
+                isBlank(sucursal) ? null : sucursal
+        );
+        try {
+            return repository.listarHistoricoJornadas(fechaConsulta, sucursalResuelta, null, idTecnico, false);
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
     public Map<String, Object> aprobarInicioPendiente(Integer idInicio, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);

@@ -79,4 +79,17 @@ public class BackOfficeSupervisionController {
                 "Listado de tecnicos del supervisor."
         ));
     }
+
+    @GetMapping("/jornadas/historico")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarHistoricoJornadas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "sucursal", required = false) String sucursal,
+            @RequestParam(value = "idTecnico", required = false) Integer idTecnico) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarHistoricoJornadasBackoffice(fecha, sucursal, idTecnico, token),
+                "Historico de inicios y cierres de jornada."
+        ));
+    }
 }
