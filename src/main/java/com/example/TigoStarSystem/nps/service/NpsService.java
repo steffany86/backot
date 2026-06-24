@@ -147,6 +147,42 @@ public class NpsService {
                     rolConsulta,
                     idUsuarioSesion
                 );
+        if (data.isEmpty() && supervisorParaConsulta != null) {
+            List<Map<String, Object>> fallbackSupervisor = modoInvitado
+                    ? repository.obtenerDashboardInvitado(
+                        centralTemplate,
+                        fechaInicioConsulta,
+                        fechaFinConsulta,
+                        sucursalObjetivo,
+                        null,
+                        tecnicoObjetivo,
+                        supervisorNombreObjetivo,
+                        tecnicoNombreObjetivo
+                    )
+                    : repository.obtenerDashboard(
+                        centralTemplate,
+                        fechaInicioConsulta,
+                        fechaFinConsulta,
+                        sucursalObjetivo,
+                        null,
+                        tecnicoObjetivo,
+                        supervisorNombreObjetivo,
+                        tecnicoNombreObjetivo,
+                        rolConsulta,
+                        idUsuarioSesion
+                    );
+            fallbackSupervisor = filtrarDashboardPorTecnicosSupervisor(
+                    centralTemplate,
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    tecnicoNombreObjetivo,
+                    fallbackSupervisor
+            );
+            if (!fallbackSupervisor.isEmpty()) {
+                data = fallbackSupervisor;
+            }
+        }
         if (modoInvitado) {
             if (sucursalTemplate != null) {
                 data = filtrarDashboardPorInterseccionTecnicos(
@@ -190,6 +226,42 @@ public class NpsService {
                         rolConsulta,
                         idUsuarioSesion
                     );
+            if (data.isEmpty() && supervisorParaConsulta != null) {
+                List<Map<String, Object>> fallbackSupervisor = modoInvitado
+                        ? repository.obtenerDashboardInvitado(
+                            centralTemplate,
+                            LocalDate.now().minusDays(3),
+                            LocalDate.now(),
+                            sucursalObjetivo,
+                            null,
+                            tecnicoObjetivo,
+                            supervisorNombreObjetivo,
+                            tecnicoNombreObjetivo
+                        )
+                        : repository.obtenerDashboard(
+                            centralTemplate,
+                            null,
+                            null,
+                            sucursalObjetivo,
+                            null,
+                            tecnicoObjetivo,
+                            supervisorNombreObjetivo,
+                            tecnicoNombreObjetivo,
+                            rolConsulta,
+                            idUsuarioSesion
+                        );
+                fallbackSupervisor = filtrarDashboardPorTecnicosSupervisor(
+                        centralTemplate,
+                        sucursalTemplate,
+                        sucursalObjetivo,
+                        supervisorObjetivo,
+                        tecnicoNombreObjetivo,
+                        fallbackSupervisor
+                );
+                if (!fallbackSupervisor.isEmpty()) {
+                    data = fallbackSupervisor;
+                }
+            }
             if (modoInvitado) {
                 if (sucursalTemplate != null) {
                     data = filtrarDashboardPorInterseccionTecnicos(
@@ -215,6 +287,70 @@ public class NpsService {
         out.put("fallbackUltimaFecha", fallbackUltimaFecha);
         out.put("rows", data);
         out.put("filtros", obtenerFiltrosInterno(scope));
+        return out;
+    }
+
+    private List<Map<String, Object>> filtrarDashboardPorTecnicosSupervisor(
+            JdbcTemplate centralTemplate,
+            JdbcTemplate sucursalTemplate,
+            Integer idSucursal,
+            Integer idSupervisor,
+            String tecnicoSeleccionado,
+            List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return rows == null ? new ArrayList<Map<String, Object>>() : rows;
+        }
+        if (idSupervisor == null) {
+            return rows;
+        }
+        List<Map<String, Object>> tecnicosSupervisor = new ArrayList<Map<String, Object>>();
+        if (sucursalTemplate != null) {
+            try {
+                tecnicosSupervisor = repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, idSupervisor);
+            } catch (Exception ignored) {
+                tecnicosSupervisor = new ArrayList<Map<String, Object>>();
+            }
+        }
+        List<Map<String, Object>> historicos = repository.listarTecnicosHistoricosSupervisorNps(
+                centralTemplate,
+                idSupervisor,
+                idSucursal
+        );
+        tecnicosSupervisor = mergeTecnicosSinDuplicados(tecnicosSupervisor, historicos);
+
+        Set<String> allowedNames = new HashSet<String>();
+        Set<Integer> allowedIds = new HashSet<Integer>();
+        for (Map<String, Object> tecnico : tecnicosSupervisor) {
+            Integer id = asInteger(find(tecnico, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+            String nombre = asText(find(tecnico, "tecnico", "nombre", "tecnico_nombre"));
+            if (id != null) {
+                allowedIds.add(id);
+            }
+            if (!isBlank(nombre)) {
+                allowedNames.add(normalizeKey(nombre));
+            }
+        }
+        String tecnicoSeleccionadoKey = normalizeKey(tecnicoSeleccionado);
+        if (!isBlank(tecnicoSeleccionadoKey)) {
+            allowedNames.add(tecnicoSeleccionadoKey);
+        }
+        if (allowedNames.isEmpty() && allowedIds.isEmpty()) {
+            return new ArrayList<Map<String, Object>>();
+        }
+
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> row : rows) {
+            Integer tecnicoId = asInteger(find(row, "tecnicoid", "idTecnico", "id_tecnico"));
+            String tecnicoNombre = firstNonBlank(
+                    asText(find(row, "tecnico_nombre", "dealer_tecnico_nombre")),
+                    asText(find(row, "tecnico", "nombre"))
+            );
+            String tecnicoKey = normalizeKey(tecnicoNombre);
+            if ((tecnicoId != null && allowedIds.contains(tecnicoId))
+                    || (!isBlank(tecnicoKey) && allowedNames.contains(tecnicoKey))) {
+                out.add(row);
+            }
+        }
         return out;
     }
 

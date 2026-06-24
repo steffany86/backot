@@ -85,11 +85,25 @@ public class BackOfficeSupervisionController {
             @RequestHeader(value = "X-Session-Token", required = false) String token,
             @RequestParam(value = "fecha", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "fechaDesde", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
+            @RequestParam(value = "fechaHasta", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
             @RequestParam(value = "sucursal", required = false) String sucursal,
             @RequestParam(value = "idTecnico", required = false) Integer idTecnico) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarHistoricoJornadasBackoffice(fecha, sucursal, idTecnico, token),
+                service.listarHistoricoJornadasBackoffice(fecha, fechaDesde, fechaHasta, sucursal, idTecnico, token),
                 "Historico de inicios y cierres de jornada."
+        ));
+    }
+
+    @GetMapping("/jornadas/{idInicio}/detalle")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerDetalleJornada(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idInicio") Integer idInicio) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.obtenerDetalleInicioJornada(idInicio, token),
+                "Detalle de inicio de jornada."
         ));
     }
 }

@@ -225,27 +225,72 @@ public class SupervisionService {
     }
 
     public List<Map<String, Object>> listarHistoricoJornadasSupervisor(LocalDate fecha, Integer idTecnico, String token) {
+        return listarHistoricoJornadasSupervisor(fecha, null, null, idTecnico, token);
+    }
+
+    public List<Map<String, Object>> listarHistoricoJornadasSupervisor(LocalDate fecha, LocalDate fechaDesde, LocalDate fechaHasta, Integer idTecnico, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
         String sucursal = resolveSucursalNombre(me);
-        LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
+        LocalDate desde = fechaDesde == null ? (fecha == null ? LocalDate.now() : fecha) : fechaDesde;
+        LocalDate hasta = fechaHasta == null ? desde : fechaHasta;
+        if (hasta.isBefore(desde)) {
+            LocalDate tmp = desde;
+            desde = hasta;
+            hasta = tmp;
+        }
         try {
-            return repository.listarHistoricoJornadas(fechaConsulta, sucursal, idSupervisor, idTecnico, true);
+            return listarHistoricoJornadasRango(desde, hasta, sucursal, idSupervisor, idTecnico, true);
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
     }
 
     public List<Map<String, Object>> listarHistoricoJornadasBackoffice(LocalDate fecha, String sucursal, Integer idTecnico, String token) {
+        return listarHistoricoJornadasBackoffice(fecha, null, null, sucursal, idTecnico, token);
+    }
+
+    public List<Map<String, Object>> listarHistoricoJornadasBackoffice(LocalDate fecha, LocalDate fechaDesde, LocalDate fechaHasta, String sucursal, Integer idTecnico, String token) {
         AuthMeResponse me = authService.me(token);
-        LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
+        LocalDate desde = fechaDesde == null ? (fecha == null ? LocalDate.now() : fecha) : fechaDesde;
+        LocalDate hasta = fechaHasta == null ? desde : fechaHasta;
+        if (hasta.isBefore(desde)) {
+            LocalDate tmp = desde;
+            desde = hasta;
+            hasta = tmp;
+        }
         String sucursalResuelta = SucursalCanonicalizer.canonicalize(
                 isBlank(sucursal) ? null : sucursal
         );
         try {
-            return repository.listarHistoricoJornadas(fechaConsulta, sucursalResuelta, null, idTecnico, false);
+            return listarHistoricoJornadasRango(desde, hasta, sucursalResuelta, null, idTecnico, false);
         } catch (DataAccessException ex) {
             return new ArrayList<>();
+        }
+    }
+
+    private List<Map<String, Object>> listarHistoricoJornadasRango(
+            LocalDate desde,
+            LocalDate hasta,
+            String sucursal,
+            Integer idSupervisor,
+            Integer idTecnico,
+            boolean limitarSupervisor) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        LocalDate cursor = desde;
+        while (!cursor.isAfter(hasta)) {
+            out.addAll(repository.listarHistoricoJornadas(cursor, sucursal, idSupervisor, idTecnico, limitarSupervisor));
+            cursor = cursor.plusDays(1);
+        }
+        return out;
+    }
+
+    public Map<String, Object> obtenerDetalleInicioJornada(Integer idInicio, String token) {
+        authService.me(token);
+        try {
+            return repository.obtenerDetalleInicioJornada(idInicio);
+        } catch (DataAccessException ex) {
+            return new LinkedHashMap<>();
         }
     }
 

@@ -539,24 +539,34 @@ public class SupervisionRepository {
             esperadosPorTecnico.putIfAbsent(id, esperado);
         }
 
-        List<Map<String, Object>> jornadas = queryHistoricoJornadas(fechaConsulta, idTecnico, esperadosPorTecnico.keySet());
+        Set<Integer> idsParaResolverUsuario = new LinkedHashSet<>(esperadosPorTecnico.keySet());
+        if (idTecnico != null && idTecnico > 0) {
+            idsParaResolverUsuario.add(idTecnico);
+        }
+        Map<Integer, Set<Integer>> usuariosPorTecnico = resolverUsuariosPorTecnico(sucursal, idsParaResolverUsuario);
+        List<Map<String, Object>> jornadas = queryHistoricoJornadas(fechaConsulta, sucursal, idTecnico, esperadosPorTecnico.keySet(), usuariosPorTecnico);
         jornadas = enriquecerNombresTecnicos(jornadas, sucursal);
 
         List<Map<String, Object>> out = new ArrayList<>();
         Set<Integer> conRegistro = new LinkedHashSet<>();
         for (Map<String, Object> row : jornadas) {
-            Integer tecnicoId = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+            Integer tecnicoId = resolverTecnicoHistorico(row, esperadosPorTecnico, usuariosPorTecnico);
             if (tecnicoId == null || tecnicoId <= 0) {
                 continue;
             }
             if (idTecnico != null && !idTecnico.equals(tecnicoId)) {
                 continue;
             }
-            if (!esperadosPorTecnico.isEmpty() && !esperadosPorTecnico.containsKey(tecnicoId)) {
+            boolean tecnicoEsperado = esperadosPorTecnico.containsKey(tecnicoId);
+            if (!tecnicoEsperado && limitarSupervisor && !registroPerteneceSupervisor(row, idSupervisor)) {
                 continue;
             }
             Map<String, Object> esperado = esperadosPorTecnico.get(tecnicoId);
             Map<String, Object> mapped = normalizarHistoricoJornada(row, esperado, fechaConsulta);
+            if (!tecnicoEsperado) {
+                mapped.put("usuarioRetirado", true);
+                mapped.put("usuario_retirado", true);
+            }
             out.add(mapped);
             conRegistro.add(tecnicoId);
         }
@@ -580,55 +590,214 @@ public class SupervisionRepository {
         return out;
     }
 
-    private List<Map<String, Object>> queryHistoricoJornadas(java.time.LocalDate fecha, Integer idTecnico, Set<Integer> idsEsperados) {
-        List<Integer> idsFiltro = new ArrayList<>();
-        if (idsEsperados != null && !idsEsperados.isEmpty()) {
-            idsFiltro.addAll(idsEsperados);
+    private boolean registroPerteneceSupervisor(Map<String, Object> row, Integer idSupervisor) {
+        if (idSupervisor == null || idSupervisor <= 0) {
+            return true;
         }
-        if (idTecnico != null && idTecnico > 0 && idsFiltro.isEmpty()) {
-            idsFiltro.add(idTecnico);
-        }
-        if (!idsFiltro.isEmpty()) {
-            List<Map<String, Object>> out = new ArrayList<>();
-            int chunkSize = 800;
-            for (int from = 0; from < idsFiltro.size(); from += chunkSize) {
-                int to = Math.min(from + chunkSize, idsFiltro.size());
-                out.addAll(queryHistoricoJornadasChunk(fecha, idsFiltro.subList(from, to)));
-            }
-            return out;
-        }
-        return queryHistoricoJornadasChunk(fecha, java.util.Collections.emptyList());
+        Integer supervisorRegistro = toInteger(findValue(row, "idSupervisor", "id_supervisor", "id_encargado", "id_usuario_supervisor_grupo"));
+        return supervisorRegistro != null && supervisorRegistro.equals(idSupervisor);
     }
 
-    private List<Map<String, Object>> queryHistoricoJornadasChunk(java.time.LocalDate fecha, List<Integer> idsTecnicos) {
+    private List<Map<String, Object>> queryHistoricoJornadas(
+            java.time.LocalDate fecha,
+            String sucursal,
+            Integer idTecnico,
+            Set<Integer> idsEsperados,
+            Map<Integer, Set<Integer>> usuariosPorTecnico) {
+        Map<Integer, Integer> filtroUsuarioTecnico = new LinkedHashMap<>();
+        if (idsEsperados != null && !idsEsperados.isEmpty()) {
+            for (Integer idEsperado : idsEsperados) {
+                Set<Integer> idsUsuario = usuariosPorTecnico == null ? null : usuariosPorTecnico.get(idEsperado);
+                if (idsUsuario == null || idsUsuario.isEmpty()) {
+                    filtroUsuarioTecnico.put(idEsperado, idEsperado);
+                } else {
+                    for (Integer idUsuario : idsUsuario) {
+                        filtroUsuarioTecnico.put(idUsuario, idEsperado);
+                    }
+                }
+            }
+        }
+        if (idTecnico != null && idTecnico > 0 && filtroUsuarioTecnico.isEmpty()) {
+            Set<Integer> idsUsuario = usuariosPorTecnico == null ? null : usuariosPorTecnico.get(idTecnico);
+            if (idsUsuario == null || idsUsuario.isEmpty()) {
+                filtroUsuarioTecnico.put(idTecnico, idTecnico);
+            } else {
+                for (Integer idUsuario : idsUsuario) {
+                    filtroUsuarioTecnico.put(idUsuario, idTecnico);
+                }
+            }
+        }
+        List<Map<String, Object>> rows = queryHistoricoJornadasChunk(fecha, sucursal, java.util.Collections.emptyMap());
+        anotarTecnicosEsperados(rows, filtroUsuarioTecnico);
+        return rows;
+    }
+
+    private List<Map<String, Object>> queryHistoricoJornadasChunk(java.time.LocalDate fecha, String sucursal, Map<Integer, Integer> idsUsuarioTecnico) {
         StringBuilder sql = new StringBuilder(
                 "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
-                        "ij.fecha_registro, ij.fecha_cierre, ij.e_eliminado, ij.no_marco_cierre, " +
+                        "ij.fecha_registro, ij.fecha_cierre, ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, " +
                         "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
                         "ij.nombre_tecnico, ij.tecnico_nombre " +
                         "FROM dbo.tbl_InicioJornadaAlturas ij " +
-                        "WHERE CAST(ij.fecha_registro AS DATE) = ? " +
+                        "WHERE ij.fecha_registro >= ? " +
+                        "  AND ij.fecha_registro < ? " +
                         "  AND ISNULL(ij.e_eliminado, 0) = 0 "
         );
         List<Object> params = new ArrayList<>();
         params.add(Date.valueOf(fecha));
-        if (idsTecnicos != null && !idsTecnicos.isEmpty()) {
+        params.add(Date.valueOf(fecha.plusDays(1)));
+        String sucursalNorm = trimToNull(sucursal);
+        if (sucursalNorm != null) {
+            sql.append(" AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(ij.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = ")
+                    .append("LOWER(REPLACE(REPLACE(REPLACE(?, '_', ''), '-', ''), ' ', '')) ");
+            params.add(sucursalNorm);
+        }
+        if (idsUsuarioTecnico != null && !idsUsuarioTecnico.isEmpty()) {
             sql.append(" AND ij.id_tecnico IN (");
-            for (int i = 0; i < idsTecnicos.size(); i++) {
+            int i = 0;
+            for (Integer idUsuario : idsUsuarioTecnico.keySet()) {
                 if (i > 0) {
                     sql.append(",");
                 }
                 sql.append("?");
-                params.add(idsTecnicos.get(i));
+                params.add(idUsuario);
+                i++;
             }
             sql.append(") ");
         }
         sql.append("ORDER BY ij.fecha_registro ASC, ij.id_inicio ASC");
         try {
-            return tigohogarJdbcTemplate.queryForList(sql.toString(), params.toArray());
+            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(sql.toString(), params.toArray());
+            if (idsUsuarioTecnico != null && !idsUsuarioTecnico.isEmpty()) {
+                for (Map<String, Object> row : rows) {
+                    Integer idUsuario = toInteger(findValue(row, "id_tecnico", "idTecnico"));
+                    Integer idTecnicoEsperado = idsUsuarioTecnico.get(idUsuario);
+                    if (idTecnicoEsperado != null && idTecnicoEsperado > 0) {
+                        row.put("idTecnicoEsperado", idTecnicoEsperado);
+                        row.put("id_tecnico_esperado", idTecnicoEsperado);
+                    }
+                }
+            }
+            return rows;
         } catch (Exception ex) {
             return new ArrayList<>();
         }
+    }
+
+    private Map<Integer, Set<Integer>> resolverUsuariosPorTecnico(String sucursal, Set<Integer> idsTecnicos) {
+        Map<Integer, Set<Integer>> out = new LinkedHashMap<>();
+        if (idsTecnicos == null || idsTecnicos.isEmpty()) {
+            return out;
+        }
+        JdbcTemplate template;
+        try {
+            template = resolveJdbcTemplateBySucursalNombre(sucursal);
+        } catch (Exception ex) {
+            template = tigohogarJdbcTemplate;
+        }
+        for (Integer idTecnico : idsTecnicos) {
+            if (idTecnico != null && idTecnico > 0) {
+                out.computeIfAbsent(idTecnico, ignored -> new LinkedHashSet<>()).add(idTecnico);
+            }
+        }
+        List<Integer> ids = new ArrayList<>(idsTecnicos);
+        int chunkSize = 800;
+        for (int from = 0; from < ids.size(); from += chunkSize) {
+            int to = Math.min(from + chunkSize, ids.size());
+            resolverUsuariosPorTecnicoChunk(template, ids.subList(from, to), out);
+        }
+        return out;
+    }
+
+    private void resolverUsuariosPorTecnicoChunk(JdbcTemplate template, List<Integer> idsTecnicos, Map<Integer, Set<Integer>> out) {
+        if (template == null || idsTecnicos == null || idsTecnicos.isEmpty()) {
+            return;
+        }
+        StringBuilder sql = new StringBuilder(
+                "SELECT ut.Id_Vendedor, ut.id_Usuario " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "WHERE ISNULL(ut.e_eliminado,0)=0 AND ut.Id_Vendedor IN ("
+        );
+        List<Object> params = new ArrayList<>();
+        for (int i = 0; i < idsTecnicos.size(); i++) {
+            if (i > 0) {
+                sql.append(",");
+            }
+            sql.append("?");
+            params.add(idsTecnicos.get(i));
+        }
+        sql.append(") ORDER BY ut.id DESC");
+        try {
+            List<Map<String, Object>> rows = template.queryForList(sql.toString(), params.toArray());
+            for (Map<String, Object> row : rows) {
+                Integer idTecnico = toInteger(findValue(row, "Id_Vendedor", "id_vendedor"));
+                Integer idUsuario = toInteger(findValue(row, "id_Usuario", "idUsuario"));
+                if (idTecnico != null && idTecnico > 0 && idUsuario != null && idUsuario > 0) {
+                    out.computeIfAbsent(idTecnico, ignored -> new LinkedHashSet<>()).add(idUsuario);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void anotarTecnicosEsperados(List<Map<String, Object>> rows, Map<Integer, Integer> usuarioTecnico) {
+        if (rows == null || rows.isEmpty() || usuarioTecnico == null || usuarioTecnico.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> row : rows) {
+            Integer idUsuario = toInteger(findValue(row, "id_tecnico", "idTecnico"));
+            Integer idTecnicoEsperado = idUsuario == null ? null : usuarioTecnico.get(idUsuario);
+            if (idTecnicoEsperado != null && idTecnicoEsperado > 0) {
+                row.put("idTecnicoEsperado", idTecnicoEsperado);
+                row.put("id_tecnico_esperado", idTecnicoEsperado);
+            }
+        }
+    }
+
+    private Integer resolverTecnicoHistorico(
+            Map<String, Object> row,
+            Map<Integer, Map<String, Object>> esperadosPorTecnico,
+            Map<Integer, Set<Integer>> usuariosPorTecnico) {
+        Integer idTecnicoEsperado = toInteger(findValue(row, "idTecnicoEsperado", "id_tecnico_esperado"));
+        if (idTecnicoEsperado != null && idTecnicoEsperado > 0) {
+            return idTecnicoEsperado;
+        }
+        Integer idRow = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+        if (idRow != null && esperadosPorTecnico != null && esperadosPorTecnico.containsKey(idRow)) {
+            return idRow;
+        }
+        if (idRow != null && usuariosPorTecnico != null) {
+            for (Map.Entry<Integer, Set<Integer>> entry : usuariosPorTecnico.entrySet()) {
+                if (entry.getValue() != null && entry.getValue().contains(idRow)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        String nombreInicio = normalizePersonName(toText(findValue(row, "nombre_tecnico", "tecnico_nombre", "nombreTecnico", "tecnicoNombre", "tecnico")));
+        if (nombreInicio != null && esperadosPorTecnico != null) {
+            for (Map.Entry<Integer, Map<String, Object>> entry : esperadosPorTecnico.entrySet()) {
+                String nombreEsperado = normalizePersonName(toText(findValue(entry.getValue(), "tecnicoNombre", "tecnico")));
+                if (nombreInicio.equals(nombreEsperado)) {
+                    return entry.getKey();
+                }
+            }
+        }
+        return idRow;
+    }
+
+    private String normalizePersonName(String value) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT)
+                .replace("á", "a")
+                .replace("é", "e")
+                .replace("í", "i")
+                .replace("ó", "o")
+                .replace("ú", "u")
+                .replace("ñ", "n")
+                .replaceAll("[^a-z0-9]", "");
+        return normalized.isEmpty() ? null : normalized;
     }
 
     private List<Map<String, Object>> listarTecnicosEsperadosJornada(String sucursal, Integer idSupervisor) {
@@ -683,8 +852,21 @@ public class SupervisionRepository {
         Map<String, Object> out = new LinkedHashMap<>(row);
         Integer idInicio = toInteger(findValue(row, "idInicio", "id_inicio"));
         Integer idTecnico = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+        Integer idTecnicoEsperado = toInteger(findValue(row, "idTecnicoEsperado", "id_tecnico_esperado"));
+        if (idTecnicoEsperado != null && idTecnicoEsperado > 0) {
+            idTecnico = idTecnicoEsperado;
+        }
+        if (esperado != null) {
+            Integer idEsperado = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+            if (idEsperado != null && idEsperado > 0) {
+                idTecnico = idEsperado;
+            }
+        }
         Object fechaInicio = findValue(row, "fechaInicio", "fecha_inicio", "fechaRegistro", "fecha_registro");
         Object fechaCierre = findValue(row, "fechaCierre", "fecha_cierre");
+        Integer pendiente = toInteger(findValue(row, "pendiente"));
+        Integer noMarcoCierre = toInteger(findValue(row, "noMarcoCierre", "no_marco_cierre"));
+        Integer idUsuarioInicio = toInteger(findValue(row, "id_tecnico", "idTecnico"));
         String tecnicoNombre = toText(findValue(row, "tecnicoNombre", "tecnico", "nombreTecnico", "nombre_tecnico"));
         if (tecnicoNombre == null && esperado != null) {
             tecnicoNombre = toText(findValue(esperado, "tecnicoNombre", "tecnico"));
@@ -708,17 +890,29 @@ public class SupervisionRepository {
 
         out.put("idInicio", idInicio);
         out.put("idTecnico", idTecnico);
+        out.put("idUsuarioInicio", idUsuarioInicio);
+        out.put("id_usuario_inicio", idUsuarioInicio);
         out.put("tecnicoNombre", tecnicoNombre == null ? ("Tecnico " + idTecnico) : tecnicoNombre);
         out.put("fecha", fechaConsulta.toString());
         out.put("fechaInicio", fechaInicio);
         out.put("fechaCierre", fechaCierre);
+        out.put("pendiente", pendiente);
+        out.put("noMarcoCierre", noMarcoCierre);
+        out.put("no_marco_cierre", noMarcoCierre);
         out.put("sucursal", sucursal);
         out.put("grupo", grupo);
         out.put("idSupervisor", idSupervisor);
         out.put("supervisorNombre", supervisorNombre);
-        out.put("sinInicio", fechaInicio == null);
-        out.put("sinCierre", fechaCierre == null);
-        out.put("estadoJornada", fechaCierre == null ? "SIN_CIERRE" : "CERRADA");
+        boolean sinCierre = (noMarcoCierre != null && noMarcoCierre == 1) || fechaCierre == null;
+        out.put("sinInicio", false);
+        out.put("sinCierre", sinCierre);
+        if (pendiente != null && pendiente == 1) {
+            out.put("estadoJornada", "NO_APROBADO_SUPERVISOR");
+        } else if (sinCierre) {
+            out.put("estadoJornada", "NO_REALIZO_CIERRE");
+        } else {
+            out.put("estadoJornada", "JORNADA_COMPLETA");
+        }
         return out;
     }
 
@@ -738,6 +932,27 @@ public class SupervisionRepository {
         out.put("sinCierre", true);
         out.put("estadoJornada", "NO_INICIO");
         return out;
+    }
+
+    public Map<String, Object> obtenerDetalleInicioJornada(Integer idInicio) {
+        if (idInicio == null || idInicio <= 0) {
+            return java.util.Collections.emptyMap();
+        }
+        try {
+            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
+                    "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
+                            "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
+                            "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
+                            "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
+                            "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
+                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen " +
+                            "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ?",
+                    idInicio
+            );
+            return rows == null || rows.isEmpty() ? java.util.Collections.emptyMap() : rows.get(0);
+        } catch (Exception ex) {
+            return java.util.Collections.emptyMap();
+        }
     }
 
     public int aprobarInicioJornada(Integer idSupervisor, Integer idInicio) {
@@ -821,25 +1036,48 @@ public class SupervisionRepository {
         if (rows == null || rows.isEmpty()) {
             return rows == null ? new ArrayList<>() : rows;
         }
-        JdbcTemplate sucursalTemplate = null;
-        try {
-            sucursalTemplate = resolveJdbcTemplateBySucursalNombre(sucursal);
-        } catch (Exception ignored) {}
-        Map<Integer, String> usuarios = cargarUsuariosDesdeSucursalPreferida(sucursal);
-        if (usuarios.isEmpty()) {
-            usuarios = cargarUsuariosDesdeTecnicosSp();
+        String sucursalBase = toText(sucursal);
+        Map<String, JdbcTemplate> templatesPorSucursal = new HashMap<>();
+        Map<String, Map<Integer, String>> usuariosPorSucursal = new HashMap<>();
+        JdbcTemplate sucursalTemplateBase = null;
+        Map<Integer, String> usuariosBase = new LinkedHashMap<>();
+        if (sucursalBase != null) {
+            try {
+                sucursalTemplateBase = resolveJdbcTemplateBySucursalNombre(sucursalBase);
+            } catch (Exception ignored) {}
+            usuariosBase = cargarUsuariosDesdeSucursalPreferida(sucursalBase);
+        } else {
+            usuariosBase = cargarUsuariosDesdeTecnicosSp();
         }
         Map<Integer, Map<String, Object>> detallesInicio = cargarDetallesInicioJornada(rows);
         for (Map<String, Object> row : rows) {
             Integer idInicio = toInteger(findValue(row, "idInicio", "id_inicio"));
             Map<String, Object> inicioDetalle = idInicio == null ? null : detallesInicio.get(idInicio);
+            String sucursalFila = firstText(
+                    toText(findValue(inicioDetalle, "sucursal", "Sucursal")),
+                    toText(findValue(row, "sucursal", "Sucursal")),
+                    sucursalBase
+            );
+            JdbcTemplate sucursalTemplate = sucursalTemplateBase;
+            Map<Integer, String> usuarios = usuariosBase;
+            if (sucursalFila != null && !sucursalFila.equals(sucursalBase)) {
+                final String key = normalize(sucursalFila);
+                sucursalTemplate = templatesPorSucursal.computeIfAbsent(key, ignored -> {
+                    try {
+                        return resolveJdbcTemplateBySucursalNombre(sucursalFila);
+                    } catch (Exception ex) {
+                        return null;
+                    }
+                });
+                usuarios = usuariosPorSucursal.computeIfAbsent(key, ignored -> cargarUsuariosDesdeSucursalPreferida(sucursalFila));
+            }
             Integer idTecnico = toInteger(findValue(row, "idTecnico", "id_tecnico"));
             Integer idAuxiliar = toInteger(findValue(row, "idAuxiliar", "id_auxiliar"));
             Integer idSupervisor = toInteger(findValue(row, "idSupervisor", "id_supervisor", "id_encargado"));
             String tecnicoNombreInicio = toText(findValue(inicioDetalle, "nombre_tecnico", "tecnico_nombre", "nombreTecnico", "tecnicoNombre"));
             if (tecnicoNombreInicio != null && !tecnicoNombreInicio.trim().isEmpty()) {
                 row.put("tecnicoNombre", tecnicoNombreInicio.trim());
-            } else if ((toText(findValue(row, "tecnicoNombre", "tecnico_nombre", "tecnico")) == null) && idTecnico != null) {
+            } else if (idTecnico != null) {
                 String nombre = usuarios.get(idTecnico);
                 if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
                     nombre = obtenerNombreTecnicoSucursal(sucursalTemplate, idTecnico);
@@ -848,7 +1086,7 @@ public class SupervisionRepository {
                     row.put("tecnicoNombre", nombre.trim());
                 }
             }
-            if ((toText(findValue(row, "auxiliarNombre", "auxiliar_nombre", "auxiliar")) == null) && idAuxiliar != null) {
+            if (idAuxiliar != null) {
                 String nombre = usuarios.get(idAuxiliar);
                 if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
                     nombre = obtenerNombreTecnicoSucursal(sucursalTemplate, idAuxiliar);
@@ -878,6 +1116,19 @@ public class SupervisionRepository {
             }
         }
         return rows;
+    }
+
+    private String firstText(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            String text = toText(value);
+            if (text != null) {
+                return text;
+            }
+        }
+        return null;
     }
 
     private Map<Integer, Map<String, Object>> cargarDetallesInicioJornada(List<Map<String, Object>> rows) {
@@ -1169,6 +1420,24 @@ public class SupervisionRepository {
             Object value = findValue(rows.get(0), "Nombre", "nombre", "tecnico");
             String text = toText(value);
             return text == null || text.trim().isEmpty() ? null : text.trim();
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private Integer queryInteger(JdbcTemplate template, String sql, Integer id) {
+        try {
+            List<Map<String, Object>> rows = template.queryForList(sql, id);
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            for (Object value : rows.get(0).values()) {
+                Integer parsed = toInteger(value);
+                if (parsed != null) {
+                    return parsed;
+                }
+            }
+            return null;
         } catch (Exception ex) {
             return null;
         }
