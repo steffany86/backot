@@ -481,8 +481,8 @@ public class OtRepository {
         return obtenerUltimaVentaPorOrdenYCliente(ordenTrabajo, codigoCliente, null, idSucursal);
     }
 
-    public boolean existeVentaPorOrdenTrabajo(Integer ordenTrabajo, Integer idSucursal) {
-        if (ordenTrabajo == null || ordenTrabajo <= 0) {
+    public boolean existeVentaPorOrdenTrabajo(Integer ordenTrabajo, Integer codigoCliente, Integer idSucursal) {
+        if (ordenTrabajo == null || ordenTrabajo <= 0 || codigoCliente == null || codigoCliente <= 0) {
             return false;
         }
         try {
@@ -490,8 +490,10 @@ public class OtRepository {
                     "SELECT TOP (1) 1 AS existe " +
                             "FROM dbo.tbl_Venta v " +
                             "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
-                            "AND v.OrdenTrabajo = ?",
-                    ordenTrabajo
+                            "AND v.OrdenTrabajo = ? " +
+                            "AND v.CodigoCliente = ?",
+                    ordenTrabajo,
+                    codigoCliente
             );
             return rows != null && !rows.isEmpty();
         } catch (DataAccessException ex) {
@@ -1181,7 +1183,13 @@ public class OtRepository {
             Integer idSucursalSesion
     ) {
         return template(idSucursalSesion).queryForMap(
-                "SET ANSI_NULLS ON; SET QUOTED_IDENTIFIER ON; " +
+                "SET ANSI_NULLS ON; " +
+                        "SET QUOTED_IDENTIFIER ON; " +
+                        "SET ANSI_WARNINGS ON; " +
+                        "SET ANSI_PADDING ON; " +
+                        "SET CONCAT_NULL_YIELDS_NULL ON; " +
+                        "SET ARITHABORT ON; " +
+                        "SET NUMERIC_ROUNDABORT OFF; " +
                         "EXEC dbo.spx_RegistrarVentaParaRegistroOTwb ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                 idUsuario,
                 idVendedor,

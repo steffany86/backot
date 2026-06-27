@@ -35,6 +35,13 @@ ALTER PROCEDURE dbo.spx_RegistrarVentaParaRegistroOTwb
 AS
 BEGIN
     SET NOCOUNT ON;
+    SET ANSI_NULLS ON;
+    SET QUOTED_IDENTIFIER ON;
+    SET ANSI_WARNINGS ON;
+    SET ANSI_PADDING ON;
+    SET CONCAT_NULL_YIELDS_NULL ON;
+    SET ARITHABORT ON;
+    SET NUMERIC_ROUNDABORT OFF;
     SET XACT_ABORT ON;
 
     BEGIN TRY
@@ -56,9 +63,11 @@ BEGIN
             SELECT 1
             FROM dbo.tbl_venta WITH (UPDLOCK, HOLDLOCK)
             WHERE OrdenTrabajo = @OrdenTrabajo
+              AND CodigoCliente = @CodigoCliente
+              AND ISNULL(E_Eliminado, 0) = 0
         )
         BEGIN
-            RAISERROR('Ya existe una OT registrada con el mismo numero de orden.',16,1);
+            RAISERROR('Ya existe una OT activa registrada con el mismo numero de orden y codigo cliente.',16,1);
             ROLLBACK TRANSACTION;
             RETURN;
         END
@@ -129,4 +138,3 @@ BEGIN
     END CATCH
 END;
 GO
-

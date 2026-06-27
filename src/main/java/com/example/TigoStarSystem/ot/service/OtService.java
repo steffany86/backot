@@ -444,11 +444,11 @@ public class OtService {
         );
         logRegistroOtWbTiming("resolver-vendedor", stepStart, totalStart, request);
         stepStart = System.nanoTime();
-        if (otRepository.existeVentaPorOrdenTrabajo(request.getOrdenTrabajo(), idSucursalFinal)) {
+        if (otRepository.existeVentaPorOrdenTrabajo(request.getOrdenTrabajo(), request.getCodigoCliente(), idSucursalFinal)) {
             throw new ApiException(
                     HttpStatus.CONFLICT,
                     "VALIDATION_ERROR",
-                    "Ya existe una OT registrada con el mismo numero de orden."
+                    "Ya existe una OT activa registrada con el mismo numero de orden y codigo cliente."
             );
         }
         logRegistroOtWbTiming("validar-duplicado", stepStart, totalStart, request);

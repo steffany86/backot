@@ -21,4 +21,4 @@ Write-Host "JAVA_TOOL_OPTIONS=$env:JAVA_TOOL_OPTIONS"
 & "$env:JAVA_HOME\\bin\\java.exe" -version
 
 & "$root\\mvnw.cmd" -q -DskipTests clean package
-& "$env:JAVA_HOME\\bin\\java.exe" -jar "$root\\target\\TigoStarSystem-0.0.1-SNAPSHOT.jar"
+& "$env:JAVA_HOME\\bin\\java.exe" -jar "$root\\target\\TigoStarSystem-generated.jar"
