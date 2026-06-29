@@ -50,6 +50,7 @@ public class TecnicoInicioJornadaService {
     public Map<String, Object> estado(String token, String sucursal) {
         AuthLoginResponse tecnico = requireUsuarioInicioJornada(token);
         repository.marcarNoCierreAtrasado(tigohogarJdbcTemplate, tecnico.getIdUsuario());
+        Map<String, Object> cierrePendienteAyer = repository.buscarCierrePendienteAyer(tigohogarJdbcTemplate, tecnico.getIdUsuario());
         boolean existe = repository.existeRegistroHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario());
         String sucursalResuelta = resolveSucursalNombre(sucursal, tecnico);
         JdbcTemplate tecnicosTemplate = resolveTecnicosTemplate(sucursalResuelta, tecnico);
@@ -64,6 +65,7 @@ public class TecnicoInicioJornadaService {
         out.put("idTecnico", tecnico.getIdUsuario());
         out.put("pendiente", !existe);
         out.put("fechaServidor", java.time.OffsetDateTime.now().toString());
+        agregarCierrePendienteAyer(out, cierrePendienteAyer);
         if (encargadoActual != null) {
             String encargado = valueAsString(encargadoActual.get("encargado"));
             String idEncargado = valueAsString(encargadoActual.get("idEncargado"));
@@ -80,6 +82,7 @@ public class TecnicoInicioJornadaService {
     public Map<String, Object> estadoCierre(String token) {
         AuthLoginResponse tecnico = requireUsuarioInicioJornada(token);
         repository.marcarNoCierreAtrasado(tigohogarJdbcTemplate, tecnico.getIdUsuario());
+        Map<String, Object> cierrePendienteAyer = repository.buscarCierrePendienteAyer(tigohogarJdbcTemplate, tecnico.getIdUsuario());
         Map<String, Object> row = repository.estadoCierreHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario());
         int noMarcoCount = repository.countNoMarco(tigohogarJdbcTemplate, tecnico.getIdUsuario());
 
@@ -89,6 +92,7 @@ public class TecnicoInicioJornadaService {
         out.put("cerradoHoy", row != null && row.get("fecha_cierre") != null);
         out.put("requiereCierre", row != null && row.get("fecha_cierre") == null);
         out.put("noMarcoCount", noMarcoCount);
+        agregarCierrePendienteAyer(out, cierrePendienteAyer);
         return out;
     }
 
@@ -110,6 +114,15 @@ public class TecnicoInicioJornadaService {
     public Map<String, Object> registrar(String token, TecnicoInicioJornadaCreateRequest request) {
         AuthLoginResponse tecnico = requireUsuarioInicioJornada(token);
 
+        repository.marcarNoCierreAtrasado(tigohogarJdbcTemplate, tecnico.getIdUsuario());
+        Map<String, Object> cierrePendienteAyer = repository.buscarCierrePendienteAyer(tigohogarJdbcTemplate, tecnico.getIdUsuario());
+        if (cierrePendienteAyer != null) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "CIERRE_AYER_REQUERIDO",
+                    "No marco el cierre ayer. Antes de iniciar la jornada de hoy debe registrar el cierre pendiente."
+            );
+        }
         if (request == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Solicitud requerida.");
         }
@@ -199,7 +212,8 @@ public class TecnicoInicioJornadaService {
                 || isBlank(request.getUbicacionGeoRef())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Campos obligatorios de cierre incompletos.");
         }
-        if (repository.existePendienteAprobacionHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario())) {
+        Integer idInicio = request.getIdInicio();
+        if ((idInicio == null || idInicio <= 0) && repository.existePendienteAprobacionHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario())) {
             throw new ApiException(
                     HttpStatus.FORBIDDEN,
                     "INICIO_JORNADA_PENDIENTE_APROBACION",
@@ -224,23 +238,59 @@ public class TecnicoInicioJornadaService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Observacion novedades es requerida.");
         }
 
-        List<Map<String, Object>> rows = repository.cerrarJornada(
-                tigohogarJdbcTemplate,
-                tecnico.getIdUsuario(),
-                request.getCodigoCliente().trim(),
-                danoMaterialBit,
-                trimOrNull(request.getObservacionMaterial()),
-                danoPersonaBit,
-                trimOrNull(request.getObservacionPersona()),
-                novedadesTrabajoBit,
-                trimOrNull(request.getObservacionNovedades()),
-                request.getUbicacionGeoRef().trim()
-        );
+        List<Map<String, Object>> rows;
+        if (idInicio != null && idInicio > 0) {
+            rows = repository.cerrarJornadaPorId(
+                    tigohogarJdbcTemplate,
+                    idInicio,
+                    tecnico.getIdUsuario(),
+                    request.getCodigoCliente().trim(),
+                    danoMaterialBit,
+                    trimOrNull(request.getObservacionMaterial()),
+                    danoPersonaBit,
+                    trimOrNull(request.getObservacionPersona()),
+                    novedadesTrabajoBit,
+                    trimOrNull(request.getObservacionNovedades()),
+                    request.getUbicacionGeoRef().trim()
+            );
+        } else {
+            rows = repository.cerrarJornada(
+                    tigohogarJdbcTemplate,
+                    tecnico.getIdUsuario(),
+                    request.getCodigoCliente().trim(),
+                    danoMaterialBit,
+                    trimOrNull(request.getObservacionMaterial()),
+                    danoPersonaBit,
+                    trimOrNull(request.getObservacionPersona()),
+                    novedadesTrabajoBit,
+                    trimOrNull(request.getObservacionNovedades()),
+                    request.getUbicacionGeoRef().trim()
+            );
+        }
 
         if (rows == null || rows.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "NO_OPEN_JORNADA", "No existe jornada abierta hoy para cerrar.");
         }
         return rows.get(0);
+    }
+
+    private void agregarCierrePendienteAyer(Map<String, Object> out, Map<String, Object> cierrePendienteAyer) {
+        boolean requiereCierreAyer = cierrePendienteAyer != null && !cierrePendienteAyer.isEmpty();
+        out.put("requiereCierreAyer", requiereCierreAyer);
+        out.put("cierreAyerPendiente", requiereCierreAyer);
+        if (!requiereCierreAyer) {
+            return;
+        }
+        Object idInicio = cierrePendienteAyer.get("id_inicio") != null
+                ? cierrePendienteAyer.get("id_inicio")
+                : cierrePendienteAyer.get("idInicio");
+        Object fechaInicio = cierrePendienteAyer.get("fecha_registro") != null
+                ? cierrePendienteAyer.get("fecha_registro")
+                : cierrePendienteAyer.get("fechaRegistro");
+        out.put("idInicioPendienteCierre", idInicio);
+        out.put("id_inicio_pendiente_cierre", idInicio);
+        out.put("fechaInicioPendienteCierre", fechaInicio);
+        out.put("fecha_inicio_pendiente_cierre", fechaInicio);
     }
 
     private AuthLoginResponse requireUsuarioInicioJornada(String token) {

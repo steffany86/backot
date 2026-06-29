@@ -123,6 +123,31 @@ public class NpsService {
             // En respuestas priorizar nombre del tecnico para no depender de id_vendedor legacy.
             tecnicoObjetivo = null;
         }
+        if (!modoInvitado) {
+            if (tecnicoObjetivo != null) {
+                String tecnicoResuelto = resolveNombreTecnicoPorId(
+                        sucursalTemplate,
+                        sucursalObjetivo,
+                        supervisorObjetivo,
+                        tecnicoObjetivo
+                );
+                if (!isBlank(tecnicoResuelto)) {
+                    tecnicoNombreObjetivo = tecnicoResuelto;
+                    tecnicoObjetivo = null;
+                }
+            }
+            if (supervisorParaConsulta != null) {
+                String supervisorResuelto = resolveNombreSupervisorPorId(
+                        sucursalTemplate,
+                        sucursalObjetivo,
+                        supervisorParaConsulta
+                );
+                if (!isBlank(supervisorResuelto)) {
+                    supervisorNombreObjetivo = supervisorResuelto;
+                    supervisorParaConsulta = null;
+                }
+            }
+        }
 
         List<Map<String, Object>> data = modoInvitado
                 ? repository.obtenerDashboardInvitado(
@@ -720,6 +745,53 @@ public class NpsService {
             if (idFila != null && idUsuarioSesion != null && idUsuarioSesion.equals(idFila)) {
                 return nombre;
             }
+        }
+        return null;
+    }
+
+    private String resolveNombreTecnicoPorId(
+            JdbcTemplate sucursalTemplate,
+            Integer idSucursal,
+            Integer idSupervisor,
+            Integer idTecnico
+    ) {
+        if (sucursalTemplate == null || idTecnico == null) return null;
+        List<Map<String, Object>> tecnicos = repository.listarTecnicosPorSupervisor(
+                sucursalTemplate,
+                idSucursal,
+                idSupervisor == null ? 0 : idSupervisor
+        );
+        String nombre = findNombreTecnicoEnLista(tecnicos, idTecnico);
+        if (!isBlank(nombre)) return nombre;
+        if (idSupervisor != null && idSupervisor > 0) {
+            tecnicos = repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, 0);
+            return findNombreTecnicoEnLista(tecnicos, idTecnico);
+        }
+        return null;
+    }
+
+    private String findNombreTecnicoEnLista(List<Map<String, Object>> tecnicos, Integer idTecnico) {
+        if (tecnicos == null || idTecnico == null) return null;
+        for (Map<String, Object> row : tecnicos) {
+            Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+            if (idFila == null || !idTecnico.equals(idFila)) continue;
+            return trimToNull(asText(find(row, "tecnico", "nombre", "tecnico_nombre")));
+        }
+        return null;
+    }
+
+    private String resolveNombreSupervisorPorId(
+            JdbcTemplate sucursalTemplate,
+            Integer idSucursal,
+            Integer idSupervisor
+    ) {
+        if (sucursalTemplate == null || idSupervisor == null) return null;
+        List<Map<String, Object>> supervisores = repository.listarSupervisoresSucursal(sucursalTemplate, idSucursal);
+        if (supervisores == null) return null;
+        for (Map<String, Object> row : supervisores) {
+            Integer idFila = asInteger(find(row, "idSupervisor", "id_supervisor", "idUsuarioSupervisor", "id_usuario_supervisor"));
+            if (idFila == null || !idSupervisor.equals(idFila)) continue;
+            return trimToNull(asText(find(row, "supervisor", "nombre", "supervisorNombre")));
         }
         return null;
     }

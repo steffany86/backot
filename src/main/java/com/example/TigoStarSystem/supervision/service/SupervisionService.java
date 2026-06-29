@@ -193,10 +193,9 @@ public class SupervisionService {
 
     public List<Map<String, Object>> listarTecnicosSupervisor(String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
         String sucursal = resolveSucursalNombre(me);
         try {
-            return repository.listarTecnicosPorSupervisor(idSupervisor, sucursal);
+            return repository.listarTecnicosDeGrupos(sucursal);
         } catch (DataAccessException ex) {
             return java.util.Collections.emptyList();
         }

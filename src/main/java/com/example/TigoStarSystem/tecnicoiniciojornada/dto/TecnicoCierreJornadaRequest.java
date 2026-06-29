@@ -1,6 +1,7 @@
 package com.example.TigoStarSystem.tecnicoiniciojornada.dto;
 
 public class TecnicoCierreJornadaRequest {
+    private Integer idInicio;
     private String codigoCliente;
     private String danoMaterial;
     private String observacionMaterial;
@@ -9,6 +10,14 @@ public class TecnicoCierreJornadaRequest {
     private String novedadesTrabajo;
     private String observacionNovedades;
     private String ubicacionGeoRef;
+
+    public Integer getIdInicio() {
+        return idInicio;
+    }
+
+    public void setIdInicio(Integer idInicio) {
+        this.idInicio = idInicio;
+    }
 
     public String getCodigoCliente() {
         return codigoCliente;

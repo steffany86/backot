@@ -44,6 +44,24 @@ public class TecnicoInicioJornadaRepository {
         return rows.isEmpty() ? null : rows.get(0);
     }
 
+    public Map<String, Object> buscarCierrePendienteAyer(JdbcTemplate template, Integer idTecnico) {
+        if (template == null || idTecnico == null || idTecnico <= 0) {
+            return null;
+        }
+        List<Map<String, Object>> rows = template.queryForList(
+                "SELECT TOP 1 id_inicio, id_tecnico, fecha_registro, fecha_cierre, pendiente, no_marco_cierre " +
+                        "FROM dbo.tbl_InicioJornadaAlturas " +
+                        "WHERE id_tecnico = ? " +
+                        "  AND CAST(fecha_registro AS DATE) = CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) " +
+                        "  AND fecha_cierre IS NULL " +
+                        "  AND ISNULL(e_eliminado, 0) = 0 " +
+                        "  AND ISNULL(no_marco_cierre, 0) = 1 " +
+                        "ORDER BY fecha_registro DESC, id_inicio DESC",
+                idTecnico
+        );
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     public int countNoMarco(JdbcTemplate template, Integer idTecnico) {
         Integer total = template.queryForObject(
                 "EXEC dbo.SP_InicioJornada_CountNoMarco ?",
@@ -389,6 +407,64 @@ public class TecnicoInicioJornadaRepository {
         return rows == null ? Collections.emptyList() : rows;
     }
 
+    public List<Map<String, Object>> cerrarJornadaPorId(
+            JdbcTemplate template,
+            Integer idInicio,
+            Integer idTecnico,
+            String codigoCliente,
+            Boolean danoMaterial,
+            String observacionMaterial,
+            Boolean danoPersona,
+            String observacionPersona,
+            Boolean novedadesTrabajo,
+            String observacionNovedades,
+            String ubicacionGeoRef
+    ) {
+        if (template == null || idInicio == null || idInicio <= 0 || idTecnico == null || idTecnico <= 0) {
+            return Collections.emptyList();
+        }
+        Set<String> columnas = obtenerColumnasInicioJornada(template);
+        String codigoColumn = firstExistingColumn(columnas, "codigo_cliente_cierre", "codigo_cliente");
+        String ubicacionColumn = firstExistingColumn(columnas, "ubicacion_cierre_georef", "ubicacion_georef_cierre", "ubicacion_georef");
+        if (codigoColumn == null || ubicacionColumn == null) {
+            return Collections.emptyList();
+        }
+
+        List<String> sets = new ArrayList<>();
+        List<Object> params = new ArrayList<>();
+        sets.add("fecha_cierre = GETDATE()");
+        sets.add(codigoColumn + " = ?");
+        params.add(codigoCliente);
+        addSetIfColumnExists(columnas, sets, params, "dano_material", danoMaterial);
+        addSetIfColumnExists(columnas, sets, params, "observacion_material", observacionMaterial);
+        addSetIfColumnExists(columnas, sets, params, "dano_persona", danoPersona);
+        addSetIfColumnExists(columnas, sets, params, "observacion_persona", observacionPersona);
+        addSetIfColumnExists(columnas, sets, params, "novedades_trabajo", novedadesTrabajo);
+        addSetIfColumnExists(columnas, sets, params, "observacion_novedades", observacionNovedades);
+        sets.add(ubicacionColumn + " = ?");
+        params.add(ubicacionGeoRef);
+
+        params.add(idInicio);
+        params.add(idTecnico);
+        int updated = template.update(
+                "UPDATE dbo.tbl_InicioJornadaAlturas SET " + String.join(", ", sets) + " " +
+                        "WHERE id_inicio = ? " +
+                        "  AND id_tecnico = ? " +
+                        "  AND fecha_cierre IS NULL " +
+                        "  AND ISNULL(e_eliminado, 0) = 0 " +
+                        "  AND ISNULL(no_marco_cierre, 0) = 1",
+                params.toArray()
+        );
+        if (updated <= 0) {
+            return Collections.emptyList();
+        }
+        return template.queryForList(
+                "SELECT TOP 1 * FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ? AND id_tecnico = ?",
+                idInicio,
+                idTecnico
+        );
+    }
+
     public String obtenerNombreTecnicoPorId(JdbcTemplate template, Integer idTecnico) {
         if (template == null || idTecnico == null || idTecnico <= 0) {
             return null;
@@ -483,6 +559,26 @@ public class TecnicoInicioJornadaRepository {
             }
         }
         return out;
+    }
+
+    private String firstExistingColumn(Set<String> columnas, String... nombres) {
+        if (columnas == null || nombres == null) {
+            return null;
+        }
+        for (String nombre : nombres) {
+            if (columnas.contains(normalizeKey(nombre))) {
+                return nombre;
+            }
+        }
+        return null;
+    }
+
+    private void addSetIfColumnExists(Set<String> columnas, List<String> sets, List<Object> params, String columna, Object value) {
+        if (columnas == null || !columnas.contains(normalizeKey(columna))) {
+            return;
+        }
+        sets.add(columna + " = ?");
+        params.add(value);
     }
 
     private String construirValuesClause(int totalColumns) {

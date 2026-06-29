@@ -64,6 +64,22 @@ public class NpsRepository {
         return centralTemplate.queryForList("EXEC dbo.SP_NPS_FILTROS_CENTRAL_NOMBRES ?", idSucursal);
     }
 
+    public List<Map<String, Object>> listarNombresTecnicosNpsCentral(JdbcTemplate centralTemplate, Integer idSucursal) {
+        return centralTemplate.queryForList(
+                "DECLARE @SucursalNombre NVARCHAR(120) = CASE ? " +
+                        "WHEN 9 THEN 'SANTA CRUZ CENTRAL' WHEN 20 THEN 'SANTA CRUZ' WHEN 4 THEN 'SUCRE' WHEN 7 THEN 'TARIJA' WHEN 2 THEN 'YACUIBA' WHEN 15 THEN 'RIBERALTA' WHEN 19 THEN 'MONTERO' " +
+                        "WHEN 5 THEN 'CAMIRI' WHEN 10 THEN 'CHIQUITANIA' WHEN 16 THEN 'COBIJA' WHEN 12 THEN 'IVIRGARZAMA' WHEN 6 THEN 'PUERTO SUAREZ' WHEN 11 THEN 'SAN IGNACIO' WHEN 17 THEN 'TRINIDAD' WHEN 14 THEN 'YAPACANI' " +
+                        "ELSE NULL END; " +
+                        "SELECT DISTINCT LTRIM(RTRIM(r.tecnico_nombre)) AS nombre " +
+                        "FROM dbo.tbl_NPS_RESPUESTAS_MAKIRO r " +
+                        "CROSS APPLY (SELECT UPPER(LTRIM(RTRIM(ISNULL(r.ciudad, '')))) ciudad_norm, UPPER(LTRIM(RTRIM(ISNULL(r.ciudad_siga, '')))) ciudad_siga_norm, UPPER(LTRIM(RTRIM(ISNULL(r.departamento_siga, '')))) departamento_siga_norm) n " +
+                        "WHERE ISNULL(LTRIM(RTRIM(r.tecnico_nombre)), '') <> '' " +
+                        "AND (? IS NULL OR @SucursalNombre IS NULL OR n.ciudad_norm LIKE '%' + @SucursalNombre + '%' OR n.ciudad_siga_norm LIKE '%' + @SucursalNombre + '%' OR n.departamento_siga_norm LIKE '%' + @SucursalNombre + '%')",
+                idSucursal,
+                idSucursal
+        );
+    }
+
     public List<Map<String, Object>> obtenerDashboardInvitado(
             JdbcTemplate centralTemplate,
             LocalDate fechaInicio,

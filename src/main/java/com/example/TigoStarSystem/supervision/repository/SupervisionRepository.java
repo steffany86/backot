@@ -309,6 +309,13 @@ public class SupervisionRepository {
         return enriquecerTecnicosDesdeSucursal(ids, sucursalTemplate);
     }
 
+    public List<Map<String, Object>> listarTecnicosDeGrupos(String sucursal) {
+        JdbcTemplate sucursalTemplate = resolveJdbcTemplateBySucursalNombre(sucursal);
+        List<Map<String, Object>> ids = cargarTecnicosDesdeTodosLosGrupos(sucursalTemplate);
+        ids = dedupeTecnicos(ids);
+        return enriquecerTecnicosDesdeSucursal(ids, sucursalTemplate);
+    }
+
     private List<Map<String, Object>> cargarTecnicosDesdeGruposSupervisor(
             JdbcTemplate template,
             Integer idSupervisor) {
@@ -336,6 +343,33 @@ public class SupervisionRepository {
                         "ORDER BY tecnico, idTecnico";
         try {
             return template.queryForList(sql, idSupervisor);
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private List<Map<String, Object>> cargarTecnicosDesdeTodosLosGrupos(JdbcTemplate template) {
+        if (template == null) {
+            return new ArrayList<>();
+        }
+        String sql =
+                "SELECT DISTINCT " +
+                        "  g.id_grupo, " +
+                        "  g.nombre AS grupo, " +
+                        "  dg.id_usuario_tecnico AS idUsuarioTecnico, " +
+                        "  COALESCE(CAST(v.Id_Vendedor AS INT), CAST(ut.id_Vendedor AS INT), CAST(dg.id_usuario_tecnico AS INT)) AS idTecnico, " +
+                        "  COALESCE(NULLIF(LTRIM(RTRIM(v.Nombre)), ''), 'Tecnico ' + CONVERT(NVARCHAR(20), COALESCE(v.Id_Vendedor, ut.id_Vendedor, dg.id_usuario_tecnico))) AS tecnico, " +
+                        "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codigo, " +
+                        "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codEmpleado " +
+                        "FROM dbo.tbl_Grupo g " +
+                        "INNER JOIN dbo.tbl_DetalleGrupo dg ON dg.id_grupo = g.id_grupo " +
+                        "LEFT JOIN dbo.tbl_UsuarioTecnico ut ON ut.id = dg.id_usuario_tecnico AND ISNULL(ut.e_eliminado, 0) = 0 " +
+                        "LEFT JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ut.id_Vendedor AND ISNULL(v.E_Eliminado, 0) = 0 " +
+                        "WHERE ISNULL(g.e_eliminado, 0) = 0 " +
+                        "  AND COALESCE(CAST(v.Id_Vendedor AS INT), CAST(ut.id_Vendedor AS INT), CAST(dg.id_usuario_tecnico AS INT)) > 0 " +
+                        "ORDER BY tecnico, idTecnico";
+        try {
+            return template.queryForList(sql);
         } catch (Exception ignored) {
             return new ArrayList<>();
         }
@@ -528,6 +562,7 @@ public class SupervisionRepository {
         java.time.LocalDate fechaConsulta = fecha == null ? java.time.LocalDate.now() : fecha;
         List<Map<String, Object>> esperados = listarTecnicosEsperadosJornada(sucursal, limitarSupervisor ? idSupervisor : null);
         Map<Integer, Map<String, Object>> esperadosPorTecnico = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> esperadosPorSucursalNombre = new LinkedHashMap<>();
         for (Map<String, Object> esperado : esperados) {
             Integer id = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
             if (id == null || id <= 0) {
@@ -537,6 +572,10 @@ public class SupervisionRepository {
                 continue;
             }
             esperadosPorTecnico.putIfAbsent(id, esperado);
+            String claveSucursalNombre = claveSucursalTecnico(esperado);
+            if (claveSucursalNombre != null) {
+                esperadosPorSucursalNombre.putIfAbsent(claveSucursalNombre, esperado);
+            }
         }
 
         Set<Integer> idsParaResolverUsuario = new LinkedHashSet<>(esperadosPorTecnico.keySet());
@@ -554,21 +593,28 @@ public class SupervisionRepository {
             if (tecnicoId == null || tecnicoId <= 0) {
                 continue;
             }
-            if (idTecnico != null && !idTecnico.equals(tecnicoId)) {
+            Map<String, Object> esperado = esperadosPorTecnico.get(tecnicoId);
+            if (esperado == null) {
+                esperado = buscarEsperadoPorSucursalTecnico(row, esperadosPorSucursalNombre);
+            }
+            Integer tecnicoIdResuelto = esperado == null
+                    ? tecnicoId
+                    : toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+            if (idTecnico != null && !idTecnico.equals(tecnicoIdResuelto)) {
                 continue;
             }
-            boolean tecnicoEsperado = esperadosPorTecnico.containsKey(tecnicoId);
+            boolean tecnicoEsperado = esperado != null;
             if (!tecnicoEsperado && limitarSupervisor && !registroPerteneceSupervisor(row, idSupervisor)) {
                 continue;
             }
-            Map<String, Object> esperado = esperadosPorTecnico.get(tecnicoId);
             Map<String, Object> mapped = normalizarHistoricoJornada(row, esperado, fechaConsulta);
             if (!tecnicoEsperado) {
                 mapped.put("usuarioRetirado", true);
                 mapped.put("usuario_retirado", true);
             }
             out.add(mapped);
-            conRegistro.add(tecnicoId);
+            Integer idEsperado = toInteger(findValue(mapped, "idTecnico", "id_tecnico"));
+            conRegistro.add(idEsperado == null ? tecnicoId : idEsperado);
         }
 
         for (Map.Entry<Integer, Map<String, Object>> entry : esperadosPorTecnico.entrySet()) {
@@ -588,6 +634,37 @@ public class SupervisionRepository {
             return String.valueOf(tecA == null ? "" : tecA).compareToIgnoreCase(String.valueOf(tecB == null ? "" : tecB));
         });
         return out;
+    }
+
+    private Map<String, Object> buscarEsperadoPorSucursalTecnico(
+            Map<String, Object> row,
+            Map<String, Map<String, Object>> esperadosPorSucursalNombre) {
+        if (row == null || esperadosPorSucursalNombre == null || esperadosPorSucursalNombre.isEmpty()) {
+            return null;
+        }
+        String sucursal = toText(findValue(row, "sucursal"));
+        String tecnico = toText(findValue(row, "tecnicoNombre", "tecnico", "nombreTecnico", "nombre_tecnico", "tecnico_nombre"));
+        String clave = claveSucursalTecnico(sucursal, tecnico);
+        return clave == null ? null : esperadosPorSucursalNombre.get(clave);
+    }
+
+    private String claveSucursalTecnico(Map<String, Object> row) {
+        if (row == null) {
+            return null;
+        }
+        return claveSucursalTecnico(
+                toText(findValue(row, "sucursal")),
+                toText(findValue(row, "tecnicoNombre", "tecnico", "nombreTecnico", "nombre_tecnico", "tecnico_nombre"))
+        );
+    }
+
+    private String claveSucursalTecnico(String sucursal, String tecnico) {
+        String sucursalNorm = normText(sucursal);
+        String tecnicoNorm = normalizePersonName(tecnico);
+        if (sucursalNorm == null || tecnicoNorm == null) {
+            return null;
+        }
+        return sucursalNorm + "|" + tecnicoNorm;
     }
 
     private boolean registroPerteneceSupervisor(Map<String, Object> row, Integer idSupervisor) {
@@ -1039,6 +1116,8 @@ public class SupervisionRepository {
         String sucursalBase = toText(sucursal);
         Map<String, JdbcTemplate> templatesPorSucursal = new HashMap<>();
         Map<String, Map<Integer, String>> usuariosPorSucursal = new HashMap<>();
+        Map<Integer, JdbcTemplate> templatesPorIdSucursal = new HashMap<>();
+        Map<Integer, Map<Integer, String>> usuariosPorIdSucursal = new HashMap<>();
         JdbcTemplate sucursalTemplateBase = null;
         Map<Integer, String> usuariosBase = new LinkedHashMap<>();
         if (sucursalBase != null) {
@@ -1053,6 +1132,10 @@ public class SupervisionRepository {
         for (Map<String, Object> row : rows) {
             Integer idInicio = toInteger(findValue(row, "idInicio", "id_inicio"));
             Map<String, Object> inicioDetalle = idInicio == null ? null : detallesInicio.get(idInicio);
+            Integer idSucursalFila = toInteger(findValue(inicioDetalle, "id_sucursal", "idSucursal", "Id_Sucursal"));
+            if (idSucursalFila == null || idSucursalFila <= 0) {
+                idSucursalFila = toInteger(findValue(row, "id_sucursal", "idSucursal", "Id_Sucursal"));
+            }
             String sucursalFila = firstText(
                     toText(findValue(inicioDetalle, "sucursal", "Sucursal")),
                     toText(findValue(row, "sucursal", "Sucursal")),
@@ -1060,7 +1143,18 @@ public class SupervisionRepository {
             );
             JdbcTemplate sucursalTemplate = sucursalTemplateBase;
             Map<Integer, String> usuarios = usuariosBase;
-            if (sucursalFila != null && !sucursalFila.equals(sucursalBase)) {
+            if (idSucursalFila != null && idSucursalFila > 0) {
+                final Integer idSucursalKey = idSucursalFila;
+                sucursalTemplate = templatesPorIdSucursal.computeIfAbsent(idSucursalKey, ignored -> {
+                    try {
+                        return resolveJdbcTemplateBySucursal(idSucursalKey);
+                    } catch (Exception ex) {
+                        return null;
+                    }
+                });
+                JdbcTemplate templateFinal = sucursalTemplate;
+                usuarios = usuariosPorIdSucursal.computeIfAbsent(idSucursalKey, ignored -> cargarUsuariosDesdeTemplate(templateFinal));
+            } else if (sucursalFila != null && !normalize(sucursalFila).equals(normalize(sucursalBase))) {
                 final String key = normalize(sucursalFila);
                 sucursalTemplate = templatesPorSucursal.computeIfAbsent(key, ignored -> {
                     try {
@@ -1075,19 +1169,28 @@ public class SupervisionRepository {
             Integer idAuxiliar = toInteger(findValue(row, "idAuxiliar", "id_auxiliar"));
             Integer idSupervisor = toInteger(findValue(row, "idSupervisor", "id_supervisor", "id_encargado"));
             String tecnicoNombreInicio = toText(findValue(inicioDetalle, "nombre_tecnico", "tecnico_nombre", "nombreTecnico", "tecnicoNombre"));
-            if (tecnicoNombreInicio != null && !tecnicoNombreInicio.trim().isEmpty()) {
-                row.put("tecnicoNombre", tecnicoNombreInicio.trim());
-            } else if (idTecnico != null) {
+            if (idTecnico != null) {
                 String nombre = usuarios.get(idTecnico);
                 if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
+                    nombre = obtenerNombreUsuarioSucursal(sucursalTemplate, idTecnico);
+                }
+                if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
                     nombre = obtenerNombreTecnicoSucursal(sucursalTemplate, idTecnico);
+                }
+                if ((nombre == null || nombre.trim().isEmpty()) && tecnicoNombreInicio != null) {
+                    nombre = tecnicoNombreInicio.trim();
                 }
                 if (nombre != null && !nombre.trim().isEmpty()) {
                     row.put("tecnicoNombre", nombre.trim());
                 }
+            } else if (tecnicoNombreInicio != null && !tecnicoNombreInicio.trim().isEmpty()) {
+                row.put("tecnicoNombre", tecnicoNombreInicio.trim());
             }
             if (idAuxiliar != null) {
                 String nombre = usuarios.get(idAuxiliar);
+                if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
+                    nombre = obtenerNombreUsuarioSucursal(sucursalTemplate, idAuxiliar);
+                }
                 if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
                     nombre = obtenerNombreTecnicoSucursal(sucursalTemplate, idAuxiliar);
                 }
@@ -1203,6 +1306,14 @@ public class SupervisionRepository {
         try {
             template = resolveJdbcTemplateBySucursalNombre(sucursal);
         } catch (Exception ex) {
+            return out;
+        }
+        return cargarUsuariosDesdeTemplate(template);
+    }
+
+    private Map<Integer, String> cargarUsuariosDesdeTemplate(JdbcTemplate template) {
+        Map<Integer, String> out = new LinkedHashMap<>();
+        if (template == null) {
             return out;
         }
         List<Map<String, Object>> usuariosRows = new ArrayList<>();
@@ -1362,6 +1473,27 @@ public class SupervisionRepository {
             }
         } catch (Exception ignored) {}
         return java.util.Collections.emptyMap();
+    }
+
+    private String obtenerNombreUsuarioSucursal(JdbcTemplate template, Integer idUsuario) {
+        if (template == null || idUsuario == null || idUsuario <= 0) {
+            return null;
+        }
+        String nombre = queryNombre(
+                template,
+                "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ? AND ISNULL(E_Eliminado,0)=0",
+                idUsuario
+        );
+        if (nombre != null) return nombre;
+        nombre = queryNombre(
+                template,
+                "SELECT TOP 1 u.Nombre AS Nombre " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "LEFT JOIN dbo.tbl_Usuario u ON u.Id_Usuario = ut.id_Usuario " +
+                        "WHERE ut.id_Usuario = ? AND ISNULL(ut.e_eliminado,0)=0",
+                idUsuario
+        );
+        return nombre;
     }
 
     private String obtenerNombreTecnicoSucursal(JdbcTemplate template, Integer idTecnico) {
