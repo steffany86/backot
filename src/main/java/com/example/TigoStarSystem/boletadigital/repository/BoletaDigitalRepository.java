@@ -139,19 +139,19 @@ public class BoletaDigitalRepository {
             Map<String, CitaInfo> citas,
             Map<String, CambioInfo> cambios) {
         Map<String, Object> out = new LinkedHashMap<String, Object>(row);
-        Object idVenta = findValue(row, "Id_Venta", "idVenta", "id_venta", "idventa");
+        Object idVenta = findValue(row, "Id_Venta", "idVenta", "id_venta", "idventa", "nventa", "NVenta", "NVENTA");
         Object cuadrilla = findValue(row, "Cuadrilla", "cuadrilla");
         Object ordenTrabajo = findValue(row, "OrdenTrabajo", "ordentrabajo");
         Object codigoCliente = findValue(row, "CodigoCliente", "codigocliente");
         String rutaPdf = toStringValue(findValue(row, "RutaPdf", "rutapdf"));
-        Object estadoOt = findValue(row, "Estado", "estado");
+        String estadoOt = toStringValue(findValue(row, "Estado", "estado", "EstadoOT", "estadoOT", "EstadoOt", "estado_ot", "EstadoBO", "estadoBO"));
         Object otFisica = findValue(row, "OT_FIsica", "OT_FISICA", "otFisica", "ot_fisica");
         boolean tienePdf = rutaPdf != null && !rutaPdf.trim().isEmpty();
 
         out.put("Tecnico", cuadrilla);
+        out.put("NroTransaccion", idVenta);
         out.put("OT", ordenTrabajo);
         out.put("cliente", codigoCliente);
-        out.put("Estado", estadoOt);
         out.put("EstadoArchivo", tienePdf ? "CON_PDF" : "SIN_PDF");
         out.put("OT_FIsica", otFisica);
         out.put("VerPdfUrl", tienePdf ? buildArchivoUrl(rutaPdf, false) : null);
@@ -162,7 +162,11 @@ public class BoletaDigitalRepository {
             out.put("OT_FISICA", otFisica != null ? otFisica : cita.otFisica);
             out.put("OT_FIsica", otFisica != null ? otFisica : cita.otFisica);
             out.put("EstadoBO", cita.estado);
+            if (estadoOt == null || estadoOt.trim().isEmpty()) {
+                estadoOt = cita.estado;
+            }
         }
+        out.put("Estado", estadoOt);
         CambioInfo cambio = cambios.get(normalizeNumber(idVenta));
         out.put("PreviamenteModificada", cambio != null);
         if (cambio != null && cambio.comparacion != null && !cambio.comparacion.trim().isEmpty()) {

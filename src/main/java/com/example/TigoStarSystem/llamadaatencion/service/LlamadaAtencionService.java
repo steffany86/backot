@@ -25,10 +25,8 @@ import java.util.Map;
 @Service
 public class LlamadaAtencionService {
     private static final String[] SP_TECNICOS_SIN_FILTRO = new String[] {
-            "EXEC dbo.spx_LA_ListarTecnicosSucursal",
-            "EXEC spx_LA_ListarTecnicosSucursal",
-            "EXEC dbo.spx_Central_ObtenerTecnicosPorSupervisorConformacion ?, ?",
-            "EXEC dbo.spx_ObtenerListaUsuario"
+            "EXEC dbo.spx_ObtenerEmpleadosParaLlamadaDeAtencion",
+            "EXEC spx_ObtenerEmpleadosParaLlamadaDeAtencion"
     };
     private final LlamadaAtencionRepository repository;
     private final LlamadaAtencionFirmaStorageService firmaStorageService;
@@ -83,6 +81,22 @@ public class LlamadaAtencionService {
         Integer idUsuarioSupervisor = me.getUsuario() == null ? null : me.getUsuario().getIdUsuario();
         Integer idSucursalSesion = me.getUsuario() == null ? null : me.getUsuario().getIdSucursal();
         String sucursalSesion = resolveSucursalNombre(null, token);
+        Map<String, Object> empleadoResuelto = resolverEmpleadoParaLlamada(
+                firstNonBlank(request.getCodEmpleado(), request.getIdTecnico()),
+                sucursalSesion
+        );
+        String codigoEmpleado = firstNonBlank(
+                valueAsString(findValue(empleadoResuelto, "codEmpleado", "cod_empleado", "codigoEmpleado", "codigo_empleado", "id_usuario", "idUsuario", "id_vendedor", "idVendedor")),
+                firstNonBlank(request.getCodEmpleado(), request.getIdTecnico())
+        );
+        String nombreEmpleado = firstNonBlank(
+                valueAsString(findValue(empleadoResuelto, "nombreEmpleado", "nombre_empleado", "tecnico", "nombre", "vendedor", "nombrevendedor")),
+                request.getTecnico()
+        );
+        String tablaEmpleado = firstNonBlank(
+                valueAsString(findValue(empleadoResuelto, "tabla")),
+                request.getTabla()
+        );
         if (idUsuarioSupervisor == null) {
             throw new ApiException(
                     HttpStatus.UNAUTHORIZED,
@@ -92,9 +106,9 @@ public class LlamadaAtencionService {
         }
 
         String idGenerado = repository.insertarLlamadaAtencion(
-                request.getIdTecnico(),
-                request.getCodEmpleado(),
-                idUsuarioSupervisor,
+                codigoEmpleado,
+                codigoEmpleado,
+                esEmpleadoTablaUsuario(tablaEmpleado) ? null : idUsuarioSupervisor,
                 request.getIdTipoComunicacion(),
                 request.getMotivo(),
                 request.getDescripcion(),
@@ -106,7 +120,8 @@ public class LlamadaAtencionService {
                 firmaTestigo,
                 idSucursalSesion,
                 sucursalSesion,
-                request.getTecnico()
+                nombreEmpleado,
+                tablaEmpleado
         );
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -213,13 +228,19 @@ public class LlamadaAtencionService {
                 normalizada.putAll(row);
 
                 Object idTecnico = findValue(row, "id_tecnico", "idtecnico", "id_vendedor", "idvendedor");
-                Object tecnico = findValue(row, "tecnico", "nombre", "vendedor", "nombrevendedor");
+                Object codigoEmpleadoNuevo = findValue(row, "codigoempleado", "codigo_empleado", "codempleado", "cod_empleado", "id_usuario", "idusuario", "id_vendedor", "idvendedor");
+                Object nombreEmpleado = findValue(row, "nombreempleado", "nombre_empleado", "tecnico", "nombre", "vendedor", "nombrevendedor");
+                Object tabla = findValue(row, "tabla");
+                Object tecnico = nombreEmpleado;
                 Object cuentaSf = findValue(row, "cuenta_sf", "cuentasf", "cuentaSf");
-                Object codEmpleado = findValue(row, "cod_empleado", "codempleado", "codEmpleado");
+                Object codEmpleado = codigoEmpleadoNuevo != null ? codigoEmpleadoNuevo : findValue(row, "cod_empleado", "codempleado", "codEmpleado");
                 Object salesforce = findValue(row, "salesforce");
                 Object habilidad = findValue(row, "habilidad");
                 Object vehiculo = findValue(row, "vehiculo");
 
+                if (idTecnico == null) {
+                    idTecnico = codigoEmpleadoNuevo;
+                }
                 if (idTecnico != null) {
                     normalizada.put("idTecnico", idTecnico);
                     normalizada.put("id_tecnico", idTecnico);
@@ -234,6 +255,18 @@ public class LlamadaAtencionService {
                 if (codEmpleado != null) {
                     normalizada.put("codEmpleado", codEmpleado);
                     normalizada.put("cod_empleado", codEmpleado);
+                }
+                if (nombreEmpleado != null) {
+                    normalizada.put("nombreEmpleado", nombreEmpleado);
+                    normalizada.put("nombre_empleado", nombreEmpleado);
+                }
+                if (tabla != null) {
+                    String tablaText = String.valueOf(tabla).trim();
+                    normalizada.put("tabla", tablaText);
+                    if (esEmpleadoTablaUsuario(tablaText)) {
+                        normalizada.put("idSupervisor", null);
+                        normalizada.put("id_supervisor", null);
+                    }
                 }
                 if (salesforce != null) {
                     normalizada.put("salesforce", salesforce);
@@ -259,8 +292,8 @@ public class LlamadaAtencionService {
         }
         String[] keys = new String[] {
                 "idTecnico", "id_tecnico", "idVendedor", "id_vendedor",
-                "tecnico", "nombre", "nombrevendedor", "vendedor",
-                "cuentaSf", "cuenta_sf", "codEmpleado", "cod_empleado", "codempleado", "salesforce", "habilidad", "vehiculo"
+                "tecnico", "nombre", "nombreEmpleado", "nombre_empleado", "nombrevendedor", "vendedor",
+                "cuentaSf", "cuenta_sf", "codEmpleado", "cod_empleado", "codempleado", "tabla", "salesforce", "habilidad", "vehiculo"
         };
         for (String key : keys) {
             Object value = findValue(row, key);
@@ -327,6 +360,43 @@ public class LlamadaAtencionService {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String firstNonBlank(String preferred, String fallback) {
+        String first = trimToNull(preferred);
+        if (first != null) {
+            return first;
+        }
+        return trimToNull(fallback);
+    }
+
+    private Map<String, Object> resolverEmpleadoParaLlamada(String codigo, String sucursal) {
+        String codigoNorm = trimToNull(codigo);
+        if (codigoNorm == null) {
+            return null;
+        }
+        JdbcTemplate template = resolveSucursalTemplate(sucursal);
+        List<Map<String, Object>> rows = ejecutarTecnicosConFallback(template, null, sucursal);
+        for (Map<String, Object> row : rows) {
+            Object id = findValue(row, "codEmpleado", "cod_empleado", "codigoEmpleado", "codigo_empleado", "id_usuario", "idUsuario", "id_vendedor", "idVendedor", "idTecnico", "id_tecnico");
+            if (id != null && codigoNorm.equals(String.valueOf(id).trim())) {
+                return row;
+            }
+        }
+        return null;
+    }
+
+    private String valueAsString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    private boolean esEmpleadoTablaUsuario(String tabla) {
+        String normalized = normalizeKey(tabla);
+        return "tblusuario".equals(normalized) || "usuario".equals(normalized);
     }
 
     private boolean isBlank(String value) {

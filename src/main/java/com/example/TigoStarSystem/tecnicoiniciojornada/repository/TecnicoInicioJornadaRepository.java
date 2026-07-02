@@ -50,13 +50,16 @@ public class TecnicoInicioJornadaRepository {
         }
         List<Map<String, Object>> rows = template.queryForList(
                 "SELECT TOP 1 id_inicio, id_tecnico, fecha_registro, fecha_cierre, pendiente, no_marco_cierre " +
-                        "FROM dbo.tbl_InicioJornadaAlturas " +
-                        "WHERE id_tecnico = ? " +
-                        "  AND CAST(fecha_registro AS DATE) = CAST(DATEADD(DAY, -1, GETDATE()) AS DATE) " +
-                        "  AND fecha_cierre IS NULL " +
+                        "FROM ( " +
+                        "  SELECT TOP 1 id_inicio, id_tecnico, fecha_registro, fecha_cierre, pendiente, no_marco_cierre, e_eliminado " +
+                        "  FROM dbo.tbl_InicioJornadaAlturas " +
+                        "  WHERE id_tecnico = ? " +
+                        "    AND CAST(fecha_registro AS DATE) < CAST(GETDATE() AS DATE) " +
+                        "  ORDER BY fecha_registro DESC, id_inicio DESC " +
+                        ") ultimo " +
+                        "WHERE fecha_cierre IS NULL " +
                         "  AND ISNULL(e_eliminado, 0) = 0 " +
-                        "  AND ISNULL(no_marco_cierre, 0) = 1 " +
-                        "ORDER BY fecha_registro DESC, id_inicio DESC",
+                        "  AND ISNULL(no_marco_cierre, 0) = 1",
                 idTecnico
         );
         return rows.isEmpty() ? null : rows.get(0);
@@ -384,6 +387,34 @@ public class TecnicoInicioJornadaRepository {
         }
     }
 
+    public int marcarNoMarcoCierreInicio(JdbcTemplate template, Integer idInicio) {
+        if (template == null || idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        try {
+            return template.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET no_marco_cierre = 1 WHERE id_inicio = ?",
+                    idInicio
+            );
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    public int marcarCierreCompletado(JdbcTemplate template, Integer idInicio) {
+        if (template == null || idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        try {
+            return template.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET pendiente = 0, no_marco_cierre = 0 WHERE id_inicio = ?",
+                    idInicio
+            );
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
     public int actualizarAceptoCierreJornada(JdbcTemplate template, Integer idInicio, String aceptoCierreJornada) {
         if (template == null || idInicio == null || idInicio <= 0) {
             return 0;
@@ -461,6 +492,8 @@ public class TecnicoInicioJornadaRepository {
         List<String> sets = new ArrayList<>();
         List<Object> params = new ArrayList<>();
         sets.add("fecha_cierre = GETDATE()");
+        sets.add("pendiente = 0");
+        sets.add("no_marco_cierre = 0");
         sets.add(codigoColumn + " = ?");
         params.add(codigoCliente);
         addSetIfColumnExists(columnas, sets, params, "dano_material", danoMaterial);
@@ -499,13 +532,6 @@ public class TecnicoInicioJornadaRepository {
         }
         String nombre = queryNombre(
                 template,
-                "SELECT TOP 1 Nombre FROM dbo.tbl_Vendedor WHERE Id_Vendedor = ? AND ISNULL(E_Eliminado,0)=0",
-                idTecnico
-        );
-        if (nombre != null) return nombre;
-
-        nombre = queryNombre(
-                template,
                 "SELECT TOP 1 u.Nombre AS Nombre " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
                         "LEFT JOIN dbo.tbl_Usuario u ON u.Id_Usuario = ut.id_Usuario " +
@@ -514,9 +540,19 @@ public class TecnicoInicioJornadaRepository {
         );
         if (nombre != null) return nombre;
 
-        return queryNombre(
+        nombre = queryNombre(
                 template,
                 "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ? AND ISNULL(E_Eliminado,0)=0",
+                idTecnico
+        );
+        if (nombre != null) return nombre;
+
+        return queryNombre(
+                template,
+                "SELECT TOP 1 v.Nombre AS Nombre " +
+                        "FROM dbo.tbl_UsuarioTecnico ut " +
+                        "LEFT JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ut.id_Vendedor " +
+                        "WHERE ut.id_Usuario = ? AND ISNULL(ut.e_eliminado,0)=0 AND ISNULL(v.E_Eliminado,0)=0",
                 idTecnico
         );
     }

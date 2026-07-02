@@ -14,6 +14,9 @@ public class LlamadaAtencionCrearRequest {
     @NotBlank(message = "codEmpleado es requerido")
     private String codEmpleado;
 
+    @Size(max = 50, message = "tabla no puede exceder 50 caracteres")
+    private String tabla;
+
     @NotBlank(message = "idTipoComunicacion es requerido")
     private String idTipoComunicacion;
 
@@ -61,6 +64,14 @@ public class LlamadaAtencionCrearRequest {
 
     public void setCodEmpleado(String codEmpleado) {
         this.codEmpleado = codEmpleado;
+    }
+
+    public String getTabla() {
+        return tabla;
+    }
+
+    public void setTabla(String tabla) {
+        this.tabla = tabla;
     }
 
     public String getIdTipoComunicacion() {

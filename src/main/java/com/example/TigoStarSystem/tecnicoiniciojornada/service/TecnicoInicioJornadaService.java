@@ -120,7 +120,7 @@ public class TecnicoInicioJornadaService {
             throw new ApiException(
                     HttpStatus.CONFLICT,
                     "CIERRE_AYER_REQUERIDO",
-                    "No marco el cierre ayer. Antes de iniciar la jornada de hoy debe registrar el cierre pendiente."
+                    "Tiene una jornada anterior sin cierre. Antes de iniciar la jornada de hoy debe registrar el cierre pendiente."
             );
         }
         if (request == null) {
@@ -166,9 +166,9 @@ public class TecnicoInicioJornadaService {
         String sucursalConformacion = valueAsString(encargadoActual.get("sucursal"));
         String sucursalFinal = isBlank(sucursalConformacion) ? sucursalResuelta : SucursalCanonicalizer.canonicalize(sucursalConformacion);
         Integer idSucursal = resolveSucursalId(sucursalFinal);
-        String nombreTecnicoSucursal = repository.obtenerNombreTecnicoPorId(tecnicosTemplate, tecnico.getIdUsuario());
+        String nombreTecnicoSucursal = trimOrNull(tecnico.getNombre());
         if (isBlank(nombreTecnicoSucursal)) {
-            nombreTecnicoSucursal = tecnico.getNombre();
+            nombreTecnicoSucursal = repository.obtenerNombreTecnicoPorId(tecnicosTemplate, tecnico.getIdUsuario());
         }
 
         List<Map<String, Object>> rows = repository.registrar(
@@ -201,8 +201,13 @@ public class TecnicoInicioJornadaService {
         Integer idInicio = toPositiveInteger(
                 result.get("idInicio") != null ? result.get("idInicio") : result.get("id_inicio")
         );
-        if (idInicio != null && !isBlank(request.getUbicacionGeoRef())) {
-            repository.actualizarUbicacionInicio(tigohogarJdbcTemplate, idInicio, request.getUbicacionGeoRef().trim());
+        if (idInicio != null) {
+            repository.marcarNoMarcoCierreInicio(tigohogarJdbcTemplate, idInicio);
+            result.put("no_marco_cierre", true);
+            result.put("noMarcoCierre", true);
+            if (!isBlank(request.getUbicacionGeoRef())) {
+                repository.actualizarUbicacionInicio(tigohogarJdbcTemplate, idInicio, request.getUbicacionGeoRef().trim());
+            }
         }
         return result;
     }
@@ -284,7 +289,11 @@ public class TecnicoInicioJornadaService {
                 result.get("idInicio") != null ? result.get("idInicio") : result.get("id_inicio")
         );
         if (idInicioCerrado != null) {
+            repository.marcarCierreCompletado(tigohogarJdbcTemplate, idInicioCerrado);
             repository.actualizarAceptoCierreJornada(tigohogarJdbcTemplate, idInicioCerrado, "SI");
+            result.put("pendiente", false);
+            result.put("no_marco_cierre", false);
+            result.put("noMarcoCierre", false);
         }
         return result;
     }
@@ -293,6 +302,8 @@ public class TecnicoInicioJornadaService {
         boolean requiereCierreAyer = cierrePendienteAyer != null && !cierrePendienteAyer.isEmpty();
         out.put("requiereCierreAyer", requiereCierreAyer);
         out.put("cierreAyerPendiente", requiereCierreAyer);
+        out.put("requiereCierrePendiente", requiereCierreAyer);
+        out.put("cierrePendiente", requiereCierreAyer);
         if (!requiereCierreAyer) {
             return;
         }
@@ -304,8 +315,10 @@ public class TecnicoInicioJornadaService {
                 : cierrePendienteAyer.get("fechaRegistro");
         out.put("idInicioPendienteCierre", idInicio);
         out.put("id_inicio_pendiente_cierre", idInicio);
+        out.put("idUltimoInicioPendienteCierre", idInicio);
         out.put("fechaInicioPendienteCierre", fechaInicio);
         out.put("fecha_inicio_pendiente_cierre", fechaInicio);
+        out.put("fechaUltimoInicioPendienteCierre", fechaInicio);
     }
 
     private AuthLoginResponse requireUsuarioInicioJornada(String token) {
@@ -410,18 +423,17 @@ public class TecnicoInicioJornadaService {
     }
 
     private String resolveSucursalNombre(String sucursal, AuthLoginResponse usuarioSesion) {
+        Integer idSucursal = usuarioSesion == null ? null : usuarioSesion.getIdSucursal();
+        if (idSucursal != null) {
+            List<SucursalResponse> sucursales = authService.listarSucursales();
+            for (SucursalResponse item : sucursales) {
+                if (item != null && idSucursal.equals(item.getIdSucursal())) {
+                    return SucursalCanonicalizer.canonicalize(item.getSucursal());
+                }
+            }
+        }
         if (!isBlank(sucursal)) {
             return SucursalCanonicalizer.canonicalize(sucursal);
-        }
-        Integer idSucursal = usuarioSesion == null ? null : usuarioSesion.getIdSucursal();
-        if (idSucursal == null) {
-            return null;
-        }
-        List<SucursalResponse> sucursales = authService.listarSucursales();
-        for (SucursalResponse item : sucursales) {
-            if (item != null && idSucursal.equals(item.getIdSucursal())) {
-                return SucursalCanonicalizer.canonicalize(item.getSucursal());
-            }
         }
         return null;
     }

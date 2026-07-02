@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
 
 @Repository
 public class LlamadaAtencionRepository {
@@ -34,11 +35,43 @@ public class LlamadaAtencionRepository {
             Integer limite,
             Integer idSucursal) {
         return tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.spx_ListarLlamadaAtencion ?, ?, ?, ?, ?",
+                "SELECT TOP (?) " +
+                        "Id_LlamadaAtencion AS idLlamadaAtencion, " +
+                        "CAST(CodigoEmpleado AS NVARCHAR(30)) AS idTecnico, " +
+                        "CAST(CodigoEmpleado AS NVARCHAR(30)) AS codEmpleado, " +
+                        "NombreEmpleado AS tecnico, " +
+                        "NombreEmpleado AS tecnicoNombre, " +
+                        "Tabla AS tabla, " +
+                        "Id_UsuarioSupervisor AS idUsuarioSupervisor, " +
+                        "la.Id_TipoComunicacion AS idTipoComunicacion, " +
+                        "tc.TipoComunicacion AS tipoComunicacion, " +
+                        "Fecha_Registro AS fechaRegistro, " +
+                        "Motivo AS motivo, " +
+                        "Descripcion AS descripcion, " +
+                        "ComentarioColaborador AS comentarioColaborador, " +
+                        "Acuerdos AS acuerdos, " +
+                        "Testigo AS testigo, " +
+                        "FechaSeguimiento AS fechaSeguimiento, " +
+                        "FirmaTecnico AS firmaTecnico, " +
+                        "FirmaTestigo AS firmaTestigo, " +
+                        "Id_Sucursal AS idSucursal, " +
+                        "Sucursal AS sucursal " +
+                        "FROM dbo.tbl_LlamadaAtencion la " +
+                        "LEFT JOIN dbo.tbl_TipoComunicacion tc ON tc.Id_TipoComunicacion = la.Id_TipoComunicacion " +
+                        "WHERE (? IS NULL OR LTRIM(RTRIM(?)) = '' OR CAST(la.CodigoEmpleado AS NVARCHAR(30)) = LTRIM(RTRIM(?))) " +
+                        "  AND (? IS NULL OR CAST(la.Fecha_Registro AS DATE) >= ?) " +
+                        "  AND (? IS NULL OR CAST(la.Fecha_Registro AS DATE) <= ?) " +
+                        "  AND (? IS NULL OR ISNULL(la.Id_Sucursal, -1) = ?) " +
+                        "ORDER BY la.Fecha_Registro DESC, la.Id_LlamadaAtencion DESC",
+                resolveLimit(limite),
+                trimToNull(idTecnico),
+                trimToNull(idTecnico),
                 trimToNull(idTecnico),
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
+                fechaDesde == null ? null : Date.valueOf(fechaDesde),
                 fechaHasta == null ? null : Date.valueOf(fechaHasta),
-                resolveLimit(limite),
+                fechaHasta == null ? null : Date.valueOf(fechaHasta),
+                idSucursal,
                 idSucursal
         );
     }
@@ -58,41 +91,53 @@ public class LlamadaAtencionRepository {
             String firmaTestigo,
             Integer idSucursal,
             String sucursal,
-            String tecnicoNombre) {
-        List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.spx_RegistrarLlamadaAtencion ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
-                trimToNull(idTecnico),
-                trimToNull(codEmpleado),
-                idUsuarioSupervisor,
+            String tecnicoNombre,
+            String tabla) {
+        String nuevoId = generarIdLlamadaAtencion();
+        int inserted = tigohogarJdbcTemplate.update(
+                "INSERT INTO dbo.tbl_LlamadaAtencion (" +
+                        "Id_LlamadaAtencion, CodigoEmpleado, NombreEmpleado, Tabla, Id_TipoComunicacion, " +
+                        "Fecha_Registro, Motivo, Descripcion, ComentarioColaborador, Acuerdos, FechaSeguimiento, " +
+                        "FirmaTecnico, FirmaTestigo, Id_UsuarioSupervisor, Testigo, Sucursal, Id_Sucursal" +
+                        ") VALUES (?, ?, ?, ?, ?, GETDATE(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                nuevoId,
+                toInteger(codEmpleado),
+                trimToNull(tecnicoNombre),
+                trimToNull(tabla),
                 trimToNull(idTipoComunicacion),
                 trimToNull(motivo),
                 trimToNull(descripcion),
                 trimToNull(comentarioColaborador),
                 trimToNull(acuerdos),
-                trimToNull(testigo),
                 fechaSeguimiento == null ? null : Timestamp.valueOf(fechaSeguimiento),
                 trimToNull(firmaTecnico),
                 trimToNull(firmaTestigo),
-                idSucursal,
+                idUsuarioSupervisor,
+                trimToNull(testigo),
                 trimToNull(sucursal),
-                trimToNull(tecnicoNombre)
+                idSucursal
         );
-
-        if (rows != null && !rows.isEmpty()) {
-            Map<String, Object> row = rows.get(0);
-            Object id = findValue(row, "idLlamadaAtencion", "Id_LlamadaAtencion", "id_llamadaatencion");
-            if (id == null && !row.isEmpty()) {
-                id = row.values().iterator().next();
-            }
-            if (id != null) {
-                String text = String.valueOf(id).trim();
-                if (!text.isEmpty()) {
-                    return text;
-                }
-            }
+        if (inserted > 0) {
+            return nuevoId;
         }
 
         throw new IllegalStateException("No se pudo obtener Id_LlamadaAtencion generado.");
+    }
+
+    private String generarIdLlamadaAtencion() {
+        for (int i = 0; i < 20; i++) {
+            String id = UUID.randomUUID().toString().replace("-", "");
+            id = id.substring(id.length() - 8);
+            Integer existe = tigohogarJdbcTemplate.queryForObject(
+                    "SELECT COUNT(1) FROM dbo.tbl_LlamadaAtencion WHERE Id_LlamadaAtencion = ?",
+                    Integer.class,
+                    id
+            );
+            if (existe == null || existe == 0) {
+                return id;
+            }
+        }
+        throw new IllegalStateException("No se pudo generar Id_LlamadaAtencion unico.");
     }
 
     private int resolveLimit(Integer limite) {
@@ -108,6 +153,18 @@ public class LlamadaAtencionRepository {
         }
         String trimmed = value.trim();
         return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private Integer toInteger(String value) {
+        String text = trimToNull(value);
+        if (text == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private Object findValue(Map<String, Object> row, String... keys) {
