@@ -1,0 +1,2 @@
+Msg 8152, Level 16, State 10, Server DESKTOP-91JHDHL, Line 2
+Los datos de cadena o binarios se truncarían.
