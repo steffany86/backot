@@ -29,7 +29,7 @@ public class SupervisionRepository {
     private static final String SP_REGISTRAR =
             "EXEC dbo.spx_RegistrarSupervisionManual ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_REGISTRAR_PENDIENTE =
-            "EXEC dbo.spx_RegistrarSupervisionPendiente ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+            "EXEC dbo.spx_RegistrarSupervisionPendiente ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_REALIZAR_PENDIENTE =
             "EXEC dbo.spx_RealizarSupervisionPendiente ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_TECNICOS_AGENDA_SUP =
@@ -42,6 +42,8 @@ public class SupervisionRepository {
             "EXEC dbo.spx_ObtenerSupervisores";
     private static final String SP_LISTAR_SUPERVISORES_ALT3 =
             "EXEC spx_ObtenerSupervisores";
+    private static final String SP_REVISIONES_PENALIZADAS =
+            "EXEC dbo.spy_REV_PENALIZADA ?";
 
     private final JdbcTemplate tigohogarJdbcTemplate;
     private final DbConnectionManager dbConnectionManager;
@@ -80,6 +82,24 @@ public class SupervisionRepository {
         );
     }
 
+    public List<Map<String, Object>> listarRevisionesPenalizadasSupervisor(Integer idSupervisor) {
+        if (idSupervisor == null || idSupervisor <= 0) {
+            return new ArrayList<>();
+        }
+        try {
+            JdbcTemplate central = dbConnectionManager.connDb("bdcontrolordenes");
+            List<Map<String, Object>> rows = central.queryForList(SP_REVISIONES_PENALIZADAS, idSupervisor);
+            List<Map<String, Object>> out = new ArrayList<>();
+            int idx = 0;
+            for (Map<String, Object> row : rows) {
+                out.add(normalizarRevisionPenalizada(row, idSupervisor, idx++));
+            }
+            return out;
+        } catch (Exception ex) {
+            return new ArrayList<>();
+        }
+    }
+
     public List<Map<String, Object>> listarPorEstado(String estadoSup, String idSupervisor, java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite) {
         return tigohogarJdbcTemplate.queryForList(
                 SP_LISTAR_POR_ESTADO,
@@ -97,6 +117,43 @@ public class SupervisionRepository {
             return null;
         }
         return rows.get(0);
+    }
+
+    private Map<String, Object> normalizarRevisionPenalizada(Map<String, Object> row, Integer idSupervisor, int index) {
+        Map<String, Object> out = new LinkedHashMap<>(row);
+        String ot = firstNonBlankText(findValue(row, "OT"), findValue(row, "orden_nro"), findValue(row, "OrdenTrabajo"));
+        String codigo = firstNonBlankText(findValue(row, "CODIGO"), findValue(row, "cliente_nro"), findValue(row, "codigo"));
+        String tecnico = firstNonBlankText(findValue(row, "tecnico_nombre"), findValue(row, "tecnico"));
+        String tor = firstNonBlankText(findValue(row, "TOR"), findValue(row, "tor"));
+        String estadoGestion = firstNonBlankText(findValue(row, "Estado_Gestion"), findValue(row, "TipoRev"), findValue(row, "tipoRevision"));
+        String obs = firstNonBlankText(findValue(row, "obs_penalizada"), findValue(row, "observacion"));
+        String key = firstNonBlankText(ot, codigo, tecnico, String.valueOf(index));
+
+        out.put("idSupervision", "REV_PENALIZADA:" + key.replaceAll("[^A-Za-z0-9_-]", "_") + ":" + index);
+        out.put("id_supervision", out.get("idSupervision"));
+        out.put("fechaRegistro", findValue(row, "Fecha"));
+        out.put("fecha_registro", findValue(row, "Fecha"));
+        out.put("idSupervisor", idSupervisor);
+        out.put("id_supervisor", idSupervisor);
+        out.put("supervisor", firstNonBlankText(findValue(row, "supervisorACargo"), findValue(row, "supervisor")));
+        out.put("supervisorNombre", out.get("supervisor"));
+        out.put("tecnicoPrincipal", tecnico);
+        out.put("tecnicoPrincipalNombre", tecnico);
+        out.put("tecnicoNombre", tecnico);
+        out.put("codigo", codigo);
+        out.put("Codigo", codigo);
+        out.put("ordenTrabajo", ot);
+        out.put("OrdenTrabajo", ot);
+        out.put("tipoRevision", estadoGestion);
+        out.put("TipoRevision", estadoGestion);
+        out.put("observacion", obs);
+        out.put("Observacion", obs);
+        out.put("descripcionAdicionalObservacion", tor == null ? null : "TOR: " + tor);
+        out.put("estadoSup", "pendiente");
+        out.put("estado_sup", "pendiente");
+        out.put("origen", "REV_PENALIZADA");
+        out.put("origenExterno", true);
+        return out;
     }
 
     public int realizarPendiente(
@@ -1032,6 +1089,24 @@ public class SupervisionRepository {
         }
     }
 
+    public Object obtenerImagenInicioJornada(Integer idInicio) {
+        if (idInicio == null || idInicio <= 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
+                    "SELECT imagen FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ? AND ISNULL(e_eliminado, 0) = 0",
+                    idInicio
+            );
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            return findValue(rows.get(0), "imagen", "Imagen");
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
     public int aprobarInicioJornada(Integer idSupervisor, Integer idInicio) {
         Integer updated = tigohogarJdbcTemplate.queryForObject(
                 "EXEC dbo.SP_Inicio_AprobarSupervisor ?, ?",
@@ -1410,6 +1485,19 @@ public class SupervisionRepository {
         return text.isEmpty() ? null : text;
     }
 
+    private String firstNonBlankText(Object... values) {
+        if (values == null) {
+            return null;
+        }
+        for (Object value : values) {
+            String text = toText(value);
+            if (text != null) {
+                return text;
+            }
+        }
+        return null;
+    }
+
     private String normText(String value) {
         String text = toText(value);
         if (text == null) return null;
@@ -1674,7 +1762,8 @@ public class SupervisionRepository {
             String fotoObservacion4,
             String observacion,
             String descripcionAdicionalObservacion,
-            String ubicacion) {
+            String ubicacion,
+            String creadoPor) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 SP_REGISTRAR_PENDIENTE,
                 trimToNull(idSupervisorAsignado),
@@ -1699,7 +1788,8 @@ public class SupervisionRepository {
                 trimToNull(fotoObservacion4),
                 trimToNull(observacion),
                 trimToNull(descripcionAdicionalObservacion),
-                trimToNull(ubicacion)
+                trimToNull(ubicacion),
+                trimToNull(creadoPor)
         );
 
         if (rows != null && !rows.isEmpty()) {

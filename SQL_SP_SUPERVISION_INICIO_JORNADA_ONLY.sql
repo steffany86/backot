@@ -48,22 +48,22 @@ ALTER PROCEDURE dbo.SP_Inicio_ListarPendientesSupervisorHoy
 AS
 BEGIN
     SET NOCOUNT ON;
-    SELECT TOP 200
+    SELECT
       ij.id_inicio AS idInicio,
       ij.id_tecnico AS idTecnico,
       ij.id_auxiliar AS idAuxiliar,
       ij.id_encargado AS idSupervisor,
       ij.fecha_registro AS fechaRegistro,
       ij.fecha_cierre AS fechaCierre,
-      ij.imagen AS imagen,
+      CAST(NULL AS NVARCHAR(MAX)) AS imagen,
       'PENDIENTE' AS estado,
       CAST(NULL AS NVARCHAR(200)) AS tecnicoNombre,
       CAST(NULL AS NVARCHAR(200)) AS auxiliarNombre
     FROM dbo.tbl_InicioJornadaAlturas ij
     WHERE ij.id_encargado = @IdSupervisor
       AND ISNULL(ij.pendiente,0)=1
+      AND ISNULL(ij.no_marco_cierre,0)=1
       AND ISNULL(ij.e_eliminado,0)=0
-      AND CAST(ij.fecha_registro AS DATE)=CAST(GETDATE() AS DATE)
     ORDER BY ij.id_inicio DESC;
 END
 GO
@@ -82,7 +82,7 @@ BEGIN
       ij.id_encargado AS idSupervisor,
       ij.fecha_registro AS fechaRegistro,
       ij.fecha_cierre AS fechaCierre,
-      ij.imagen AS imagen,
+      CAST(NULL AS NVARCHAR(MAX)) AS imagen,
       'PENDIENTE' AS estado,
       CAST(NULL AS NVARCHAR(200)) AS tecnicoNombre,
       CAST(NULL AS NVARCHAR(200)) AS auxiliarNombre
@@ -109,7 +109,7 @@ BEGIN
       ij.id_encargado AS idSupervisor,
       ij.fecha_registro AS fechaRegistro,
       ij.fecha_cierre AS fechaCierre,
-      ij.imagen AS imagen,
+      CAST(NULL AS NVARCHAR(MAX)) AS imagen,
       CASE WHEN ij.fecha_cierre IS NOT NULL THEN 'JORNADA FINALIZADA' ELSE 'JORNADA APROBADA' END AS estado,
       CAST(NULL AS NVARCHAR(200)) AS tecnicoNombre,
       CAST(NULL AS NVARCHAR(200)) AS auxiliarNombre
@@ -137,7 +137,7 @@ BEGIN
       ij.id_encargado AS idSupervisor,
       ij.fecha_registro AS fechaRegistro,
       ij.fecha_cierre AS fechaCierre,
-      ij.imagen AS imagen,
+      CAST(NULL AS NVARCHAR(MAX)) AS imagen,
       CASE WHEN ij.fecha_cierre IS NOT NULL THEN 'JORNADA FINALIZADA' ELSE 'JORNADA APROBADA' END AS estado,
       CAST(NULL AS NVARCHAR(200)) AS tecnicoNombre,
       CAST(NULL AS NVARCHAR(200)) AS auxiliarNombre

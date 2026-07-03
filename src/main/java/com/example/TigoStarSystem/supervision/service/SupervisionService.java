@@ -12,8 +12,16 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import javax.imageio.ImageIO;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.text.Normalizer;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,6 +30,24 @@ import java.util.Map;
 public class SupervisionService {
     private final SupervisionRepository repository;
     private final AuthService authService;
+
+    public static class JornadaImagen {
+        private final byte[] bytes;
+        private final String contentType;
+
+        public JornadaImagen(byte[] bytes, String contentType) {
+            this.bytes = bytes;
+            this.contentType = contentType;
+        }
+
+        public byte[] getBytes() {
+            return bytes;
+        }
+
+        public String getContentType() {
+            return contentType;
+        }
+    }
 
     public SupervisionService(
             SupervisionRepository repository,
@@ -49,7 +75,14 @@ public class SupervisionService {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
-        return repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite);
+        String sucursal = resolveSucursalNombre(me);
+        List<Map<String, Object>> out = new ArrayList<>();
+        out.addAll(repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite));
+        out.addAll(enriquecerRevisionesPenalizadas(
+                repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
+                sucursal
+        ));
+        return out;
     }
 
     public List<Map<String, Object>> listarBackofficePorEstado(
@@ -153,6 +186,39 @@ public class SupervisionService {
                 request.getDescripcionAdicionalObservacion(),
                 request.getUbicacion()
         );
+        if (updated <= 0 && esRevisionPenalizada(idSupervision)) {
+            String idGenerado = repository.registrar(
+                    idSupervisor,
+                    request.getIdTecnicoPrincipal(),
+                    request.getIdTecnicoAuxiliar(),
+                    request.getIdTipoSupervision(),
+                    request.getIdTipoTrabajo(),
+                    request.getIdTipoPenalizacion(),
+                    request.getSupervisionPor(),
+                    request.getTecnologia(),
+                    request.getCodigo(),
+                    request.getOrdenTrabajo(),
+                    request.getTipoRevision(),
+                    request.getFotoBoletaSupervision(),
+                    request.getFotoCanalesPilos(),
+                    request.getFotoNivelesDocsis(),
+                    request.getFotoMedicionRuido(),
+                    request.getFotoBarridoCanales(),
+                    request.getFotoObservacion1(),
+                    request.getFotoObservacion2(),
+                    request.getFotoObservacion3(),
+                    request.getFotoObservacion4(),
+                    request.getObservacion(),
+                    request.getDescripcionAdicionalObservacion(),
+                    request.getUbicacion()
+            );
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("idSupervision", idGenerado);
+            out.put("idUsuarioSesion", idSupervisor);
+            out.put("estadoSup", "completado");
+            out.put("origen", "REV_PENALIZADA");
+            return out;
+        }
         if (updated <= 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro supervision pendiente para realizar.");
         }
@@ -293,6 +359,20 @@ public class SupervisionService {
         }
     }
 
+    public JornadaImagen obtenerImagenInicioJornada(Integer idInicio, boolean miniatura, String token) {
+        authService.me(token);
+        Object raw = repository.obtenerImagenInicioJornada(idInicio);
+        JornadaImagen imagen = decodeImagen(raw);
+        if (imagen == null || imagen.getBytes().length == 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro imagen para el inicio de jornada.");
+        }
+        if (!miniatura) {
+            return imagen;
+        }
+        JornadaImagen thumb = crearMiniatura(imagen, 96, 96);
+        return thumb == null ? imagen : thumb;
+    }
+
     public Map<String, Object> aprobarInicioPendiente(Integer idInicio, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
@@ -337,6 +417,92 @@ public class SupervisionService {
         return idUsuario;
     }
 
+    private JornadaImagen decodeImagen(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof byte[]) {
+            byte[] bytes = (byte[]) raw;
+            return new JornadaImagen(bytes, detectarContentType(bytes, "image/jpeg"));
+        }
+        String text = String.valueOf(raw).trim();
+        if (text.isEmpty()) {
+            return null;
+        }
+        String contentType = "image/jpeg";
+        int comma = text.indexOf(',');
+        if (text.startsWith("data:image") && comma > 0) {
+            String header = text.substring(0, comma);
+            int semicolon = header.indexOf(';');
+            if (semicolon > 5) {
+                contentType = header.substring(5, semicolon);
+            }
+            text = text.substring(comma + 1);
+        }
+        text = text.replaceAll("\\s+", "");
+        try {
+            byte[] bytes = Base64.getDecoder().decode(text);
+            return new JornadaImagen(bytes, detectarContentType(bytes, contentType));
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    private JornadaImagen crearMiniatura(JornadaImagen imagen, int maxWidth, int maxHeight) {
+        try {
+            BufferedImage source = ImageIO.read(new ByteArrayInputStream(imagen.getBytes()));
+            if (source == null) {
+                return null;
+            }
+            int width = source.getWidth();
+            int height = source.getHeight();
+            if (width <= 0 || height <= 0) {
+                return null;
+            }
+            double scale = Math.min((double) maxWidth / width, (double) maxHeight / height);
+            if (scale > 1.0d) {
+                scale = 1.0d;
+            }
+            int targetWidth = Math.max(1, (int) Math.round(width * scale));
+            int targetHeight = Math.max(1, (int) Math.round(height * scale));
+            BufferedImage target = new BufferedImage(targetWidth, targetHeight, BufferedImage.TYPE_INT_RGB);
+            Graphics2D graphics = target.createGraphics();
+            try {
+                graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+                graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                graphics.drawImage(source, 0, 0, targetWidth, targetHeight, null);
+            } finally {
+                graphics.dispose();
+            }
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            ImageIO.write(target, "jpg", out);
+            return new JornadaImagen(out.toByteArray(), "image/jpeg");
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    private String detectarContentType(byte[] bytes, String fallback) {
+        if (bytes == null || bytes.length < 12) {
+            return fallback;
+        }
+        if ((bytes[0] & 0xFF) == 0xFF && (bytes[1] & 0xFF) == 0xD8) {
+            return "image/jpeg";
+        }
+        if ((bytes[0] & 0xFF) == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47) {
+            return "image/png";
+        }
+        if (bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46) {
+            return "image/gif";
+        }
+        if (bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46
+                && bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) {
+            return "image/webp";
+        }
+        return fallback;
+    }
+
     private void validarRangoFechas(LocalDate fechaDesde, LocalDate fechaHasta) {
         if (fechaDesde != null && fechaHasta != null && fechaDesde.isAfter(fechaHasta)) {
             throw new ApiException(
@@ -376,8 +542,73 @@ public class SupervisionService {
         return null;
     }
 
+    private List<Map<String, Object>> enriquecerRevisionesPenalizadas(List<Map<String, Object>> revisiones, String sucursal) {
+        if (revisiones == null || revisiones.isEmpty()) {
+            return new ArrayList<>();
+        }
+        List<Map<String, Object>> tecnicos = repository.listarTecnicosDeGrupos(sucursal);
+        Map<String, Map<String, Object>> tecnicoPorNombre = new LinkedHashMap<>();
+        for (Map<String, Object> tecnico : tecnicos) {
+            String nombre = asText(findValue(tecnico, "tecnico", "nombre", "tecnicoNombre"));
+            String key = normalizeName(nombre);
+            if (key != null && !tecnicoPorNombre.containsKey(key)) {
+                tecnicoPorNombre.put(key, tecnico);
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> revision : revisiones) {
+            Map<String, Object> item = new LinkedHashMap<>(revision);
+            String tecnicoNombre = asText(findValue(item, "tecnicoPrincipal", "tecnicoPrincipalNombre", "tecnico_nombre"));
+            Map<String, Object> match = tecnicoPorNombre.get(normalizeName(tecnicoNombre));
+            if (match != null) {
+                Object idTecnico = findValue(match, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico");
+                if (idTecnico != null) {
+                    item.put("idTecnicoPrincipal", String.valueOf(idTecnico));
+                    item.put("id_tecnico_principal", String.valueOf(idTecnico));
+                }
+                String nombreMatch = asText(findValue(match, "tecnico", "nombre", "tecnicoNombre"));
+                if (!isBlank(nombreMatch)) {
+                    item.put("tecnicoPrincipal", nombreMatch);
+                    item.put("tecnicoPrincipalNombre", nombreMatch);
+                }
+            }
+            out.add(item);
+        }
+        return out;
+    }
+
+    private boolean esRevisionPenalizada(String idSupervision) {
+        return idSupervision != null && idSupervision.trim().startsWith("REV_PENALIZADA:");
+    }
+
+    private Object findValue(Map<String, Object> row, String... keys) {
+        if (row == null || keys == null) return null;
+        for (String key : keys) {
+            for (Map.Entry<String, Object> entry : row.entrySet()) {
+                if (entry.getKey() != null && entry.getKey().equalsIgnoreCase(key)) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    private String asText(Object value) {
+        if (value == null) return null;
+        String text = String.valueOf(value).trim();
+        return text.isEmpty() ? null : text;
+    }
+
+    private String normalizeName(String value) {
+        if (isBlank(value)) return null;
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("\\p{InCombiningDiacriticalMarks}+", "");
+        return normalized.toLowerCase().replaceAll("[^a-z0-9]+", " ").trim();
+    }
+
     public Map<String, Object> registrarPendiente(SupervisionCrearPendienteRequest request, String token) {
-        authService.me(token);
+        AuthMeResponse me = authService.me(token);
+        String creadoPor = resolveNombreUsuario(me);
 
         if (request == null) {
             throw new ApiException(
@@ -410,12 +641,14 @@ public class SupervisionService {
                 request.getFotoObservacion4(),
                 request.getObservacion(),
                 request.getDescripcionAdicionalObservacion(),
-                request.getUbicacion()
+                request.getUbicacion(),
+                creadoPor
         );
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("idSupervision", idGenerado);
         out.put("idSupervisorAsignado", request.getIdSupervisorAsignado());
+        out.put("creadoPor", creadoPor);
         return out;
     }
 
@@ -446,6 +679,15 @@ public class SupervisionService {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String resolveNombreUsuario(AuthMeResponse me) {
+        String nombre = me != null && me.getUsuario() != null ? me.getUsuario().getNombre() : null;
+        if (!isBlank(nombre)) return nombre.trim();
+        String login = me != null && me.getUsuario() != null ? me.getUsuario().getLoggin() : null;
+        if (!isBlank(login)) return login.trim();
+        Integer idUsuario = me != null && me.getUsuario() != null ? me.getUsuario().getIdUsuario() : null;
+        return idUsuario == null ? null : String.valueOf(idUsuario);
     }
 
 }

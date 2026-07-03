@@ -56,9 +56,11 @@ BEGIN
   )
   SELECT DISTINCT
     b.idTecnico,
-    COALESCE(NULLIF(LTRIM(RTRIM(ut.Nombre)), ''), NULLIF(LTRIM(RTRIM(b.tecnico)), ''), 'Tecnico ' + CONVERT(NVARCHAR(20), b.idTecnico)) AS tecnico
+    COALESCE(NULLIF(LTRIM(RTRIM(b.tecnico)), ''), 'Tecnico ' + CONVERT(NVARCHAR(20), b.idTecnico)) AS tecnico,
+    NULLIF(LTRIM(RTRIM(v.NombreNPS)), '') AS nombreNps,
+    COALESCE(NULLIF(LTRIM(RTRIM(b.tecnico)), ''), 'Tecnico ' + CONVERT(NVARCHAR(20), b.idTecnico)) AS tecnicoNombreOperativo
   FROM base b
-  LEFT JOIN dbo.tbl_UsuarioTecnico ut ON ut.Id_Tecnico = b.idTecnico
+  LEFT JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = b.idTecnico AND ISNULL(v.E_Eliminado, 0) = 0
   WHERE b.idTecnico IS NOT NULL
   ORDER BY tecnico;
 END

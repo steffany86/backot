@@ -32,7 +32,8 @@ BEGIN
 
     CREATE TABLE #VendedorNps (
         id_vendedor INT NULL,
-        nombre NVARCHAR(250) NULL
+        nombre NVARCHAR(250) NULL,
+        nombreNps NVARCHAR(250) NULL
     );
 
     IF OBJECT_ID('dbo.tbl_GrupoSup', 'U') IS NOT NULL
@@ -44,8 +45,8 @@ BEGIN
 
     IF OBJECT_ID('dbo.tbl_Vendedor', 'U') IS NOT NULL
     BEGIN
-        INSERT INTO #VendedorNps (id_vendedor, nombre)
-        SELECT Id_Vendedor, Nombre
+        INSERT INTO #VendedorNps (id_vendedor, nombre, nombreNps)
+        SELECT Id_Vendedor, Nombre, NombreNPS
         FROM dbo.tbl_Vendedor
         WHERE ISNULL(E_Eliminado, 0) = 0;
     END
@@ -188,7 +189,8 @@ BEGIN
                 NULLIF(LTRIM(RTRIM(v.Nombre)), ''),
                 NULLIF(LTRIM(RTRIM(ut.nombre)), ''),
                 'Tecnico ' + CONVERT(NVARCHAR(20), COALESCE(ut.id_vendedor, dg.id_usuario_tecnico))
-            ) AS tecnico
+            ) AS tecnico,
+            NULLIF(LTRIM(RTRIM(v.nombreNps)), '') AS nombreNps
         FROM grupos_sesion s
         INNER JOIN dbo.tbl_Grupo g
                 ON g.id_grupo = s.id_grupo
@@ -206,6 +208,8 @@ BEGIN
     SELECT
         idTecnico,
         tecnico,
+        nombreNps,
+        tecnico AS tecnicoNombreOperativo,
         idUsuarioTecnico,
         idGrupo,
         grupo,

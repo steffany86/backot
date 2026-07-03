@@ -30,6 +30,8 @@ import java.util.Set;
 
 @Service
 public class NpsService {
+    private static final String SIN_NOMBRE_NPS = "__SIN_NOMBRE_NPS__";
+
     private final NpsRepository repository;
     private final SupervisionRepository supervisionRepository;
     private final AuthService authService;
@@ -74,6 +76,17 @@ public class NpsService {
         JdbcTemplate sucursalTemplate = sucursalObjetivo == null ? null : resolveSucursalTemplate(sucursalObjetivo);
         boolean modoInvitado = isModoInvitado(modo);
         Integer supervisorParaConsulta = supervisorObjetivo;
+
+        if (tecnicoObjetivo != null) {
+            String tecnicoNps = resolveNombreTecnicoPorId(
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    tecnicoObjetivo
+            );
+            tecnicoNombreObjetivo = isBlank(tecnicoNps) ? SIN_NOMBRE_NPS : tecnicoNps;
+            tecnicoObjetivo = null;
+        }
 
         // Para supervisor: si el usuario elige tecnico explicito,
         // no bloquear por idSupervisor historico del registro (aplica en ambos modos NPS).
@@ -123,29 +136,15 @@ public class NpsService {
             // En respuestas priorizar nombre del tecnico para no depender de id_vendedor legacy.
             tecnicoObjetivo = null;
         }
-        if (!modoInvitado) {
-            if (tecnicoObjetivo != null) {
-                String tecnicoResuelto = resolveNombreTecnicoPorId(
-                        sucursalTemplate,
-                        sucursalObjetivo,
-                        supervisorObjetivo,
-                        tecnicoObjetivo
-                );
-                if (!isBlank(tecnicoResuelto)) {
-                    tecnicoNombreObjetivo = tecnicoResuelto;
-                    tecnicoObjetivo = null;
-                }
-            }
-            if (supervisorParaConsulta != null) {
-                String supervisorResuelto = resolveNombreSupervisorPorId(
-                        sucursalTemplate,
-                        sucursalObjetivo,
-                        supervisorParaConsulta
-                );
-                if (!isBlank(supervisorResuelto)) {
-                    supervisorNombreObjetivo = supervisorResuelto;
-                    supervisorParaConsulta = null;
-                }
+        if (supervisorParaConsulta != null) {
+            String supervisorResuelto = resolveNombreSupervisorPorId(
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorParaConsulta
+            );
+            if (!isBlank(supervisorResuelto)) {
+                supervisorNombreObjetivo = supervisorResuelto;
+                supervisorParaConsulta = null;
             }
         }
 
@@ -172,6 +171,42 @@ public class NpsService {
                     rolConsulta,
                     idUsuarioSesion
                 );
+        if (data.isEmpty() && supervisorObjetivo != null) {
+            List<Map<String, Object>> fallbackSupervisorPorTecnicos = modoInvitado
+                    ? repository.obtenerDashboardInvitado(
+                        centralTemplate,
+                        fechaInicioConsulta,
+                        fechaFinConsulta,
+                        sucursalObjetivo,
+                        null,
+                        tecnicoObjetivo,
+                        null,
+                        tecnicoNombreObjetivo
+                    )
+                    : repository.obtenerDashboard(
+                        centralTemplate,
+                        fechaInicioConsulta,
+                        fechaFinConsulta,
+                        sucursalObjetivo,
+                        null,
+                        tecnicoObjetivo,
+                        null,
+                        tecnicoNombreObjetivo,
+                        rolConsulta,
+                        idUsuarioSesion
+                    );
+            fallbackSupervisorPorTecnicos = filtrarDashboardPorTecnicosSupervisor(
+                    centralTemplate,
+                    sucursalTemplate,
+                    sucursalObjetivo,
+                    supervisorObjetivo,
+                    tecnicoNombreObjetivo,
+                    fallbackSupervisorPorTecnicos
+            );
+            if (!fallbackSupervisorPorTecnicos.isEmpty()) {
+                data = fallbackSupervisorPorTecnicos;
+            }
+        }
         if (data.isEmpty() && supervisorParaConsulta != null) {
             List<Map<String, Object>> fallbackSupervisor = modoInvitado
                     ? repository.obtenerDashboardInvitado(
@@ -336,6 +371,7 @@ public class NpsService {
                 tecnicosSupervisor = new ArrayList<Map<String, Object>>();
             }
         }
+        tecnicosSupervisor = enriquecerTecnicosConNombreNps(sucursalTemplate, tecnicosSupervisor);
         List<Map<String, Object>> historicos = repository.listarTecnicosHistoricosSupervisorNps(
                 centralTemplate,
                 idSupervisor,
@@ -344,13 +380,11 @@ public class NpsService {
         tecnicosSupervisor = mergeTecnicosSinDuplicados(tecnicosSupervisor, historicos);
 
         Set<String> allowedNames = new HashSet<String>();
-        Set<Integer> allowedIds = new HashSet<Integer>();
         for (Map<String, Object> tecnico : tecnicosSupervisor) {
-            Integer id = asInteger(find(tecnico, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
-            String nombre = asText(find(tecnico, "tecnico", "nombre", "tecnico_nombre"));
-            if (id != null) {
-                allowedIds.add(id);
-            }
+            String nombre = firstNonBlank(
+                    asText(find(tecnico, "nombreNps", "NombreNPS", "nombre_nps")),
+                    asText(find(tecnico, "tecnico", "nombre", "tecnico_nombre"))
+            );
             if (!isBlank(nombre)) {
                 allowedNames.add(normalizeKey(nombre));
             }
@@ -359,20 +393,18 @@ public class NpsService {
         if (!isBlank(tecnicoSeleccionadoKey)) {
             allowedNames.add(tecnicoSeleccionadoKey);
         }
-        if (allowedNames.isEmpty() && allowedIds.isEmpty()) {
+        if (allowedNames.isEmpty()) {
             return new ArrayList<Map<String, Object>>();
         }
 
         List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
         for (Map<String, Object> row : rows) {
-            Integer tecnicoId = asInteger(find(row, "tecnicoid", "idTecnico", "id_tecnico"));
             String tecnicoNombre = firstNonBlank(
                     asText(find(row, "tecnico_nombre", "dealer_tecnico_nombre")),
                     asText(find(row, "tecnico", "nombre"))
             );
             String tecnicoKey = normalizeKey(tecnicoNombre);
-            if ((tecnicoId != null && allowedIds.contains(tecnicoId))
-                    || (!isBlank(tecnicoKey) && allowedNames.contains(tecnicoKey))) {
+            if (!isBlank(tecnicoKey) && allowedNames.contains(tecnicoKey)) {
                 out.add(row);
             }
         }
@@ -445,9 +477,8 @@ public class NpsService {
             tecnicoObjetivo = idsTecnicoNps.isEmpty() ? idUsuarioSesion : idsTecnicoNps.get(0);
             Integer idSupervisorSesion = resolveSupervisorDelTecnico(centralTemplate, sucursalObjetivo, idUsuarioSesion);
             supervisorObjetivo = idSupervisorSesion;
-            // Evitar filtro por nombre para tecnico: en algunas BD llega con codificacion distinta (ej. CARREÃƒÂ‘O),
-            // y termina vaciando resultados aunque existan filas por idTecnico.
-            tecnicoNombre = trimToNull(usuario.getNombre());
+            // El cruce NPS usa NombreNPS de tbl_Vendedor, no el nombre operativo de la sesion.
+            tecnicoNombre = null;
             supervisorNombre = null;
         } else if (esSupervisor) {
             rolConsulta = "SUPERVISOR";
@@ -548,6 +579,7 @@ public class NpsService {
                     }
                     out.put("idTecnico", nombre);
                     out.put("tecnico", nombre);
+                    out.put("nombreNps", nombre);
                     tec.add(out);
                 }
             }
@@ -632,6 +664,7 @@ public class NpsService {
                     idUsuarioSesion
             );
         }
+        filtrosTecnicos = enriquecerTecnicosConNombreNps(sucursalTemplate, filtrosTecnicos);
 
         Map<String, Object> filtros = new HashMap<String, Object>();
         filtros.put("supervisores", filtrosSupervisores);
@@ -673,6 +706,31 @@ public class NpsService {
             }
         }
         return repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, idSupervisor);
+    }
+
+    private List<Map<String, Object>> enriquecerTecnicosConNombreNps(
+            JdbcTemplate sucursalTemplate,
+            List<Map<String, Object>> tecnicos
+    ) {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        if (tecnicos == null) return out;
+        for (Map<String, Object> row : tecnicos) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>(row);
+            String nombreOperativo = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
+            String nombreNps = trimToNull(asText(find(row, "nombreNps", "NombreNPS", "nombre_nps")));
+            Integer idTecnico = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario", "idVendedor", "id_vendedor"));
+            if (isBlank(nombreNps) && sucursalTemplate != null && idTecnico != null) {
+                nombreNps = repository.obtenerNombreNpsVendedor(sucursalTemplate, idTecnico);
+            }
+            if (!isBlank(nombreOperativo)) {
+                item.put("tecnicoNombreOperativo", nombreOperativo);
+            }
+            if (!isBlank(nombreNps)) {
+                item.put("nombreNps", nombreNps);
+            }
+            out.add(item);
+        }
+        return out;
     }
 
     private List<Map<String, Object>> filtrarSupervisorTecnico(
@@ -730,6 +788,7 @@ public class NpsService {
             Integer idTecnicoScope,
             Integer idUsuarioSesion
     ) {
+        if (sucursalTemplate == null) return null;
         List<Map<String, Object>> tecnicos = repository.listarTecnicosPorSupervisor(
                 sucursalTemplate,
                 idSucursal,
@@ -738,12 +797,11 @@ public class NpsService {
         if (tecnicos == null || tecnicos.isEmpty()) return null;
         for (Map<String, Object> row : tecnicos) {
             Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
-            String nombre = trimToNull(asText(find(row, "tecnico", "nombre", "tecnico_nombre")));
             if (idTecnicoScope != null && idFila != null && idTecnicoScope.equals(idFila)) {
-                return nombre;
+                return repository.obtenerNombreNpsVendedor(sucursalTemplate, idFila);
             }
             if (idFila != null && idUsuarioSesion != null && idUsuarioSesion.equals(idFila)) {
-                return nombre;
+                return repository.obtenerNombreNpsVendedor(sucursalTemplate, idFila);
             }
         }
         return null;
@@ -756,26 +814,28 @@ public class NpsService {
             Integer idTecnico
     ) {
         if (sucursalTemplate == null || idTecnico == null) return null;
+        String nombreNps = repository.obtenerNombreNpsVendedor(sucursalTemplate, idTecnico);
+        if (!isBlank(nombreNps)) return nombreNps;
         List<Map<String, Object>> tecnicos = repository.listarTecnicosPorSupervisor(
                 sucursalTemplate,
                 idSucursal,
                 idSupervisor == null ? 0 : idSupervisor
         );
-        String nombre = findNombreTecnicoEnLista(tecnicos, idTecnico);
+        String nombre = findNombreNpsTecnicoEnLista(tecnicos, idTecnico);
         if (!isBlank(nombre)) return nombre;
         if (idSupervisor != null && idSupervisor > 0) {
             tecnicos = repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, 0);
-            return findNombreTecnicoEnLista(tecnicos, idTecnico);
+            return findNombreNpsTecnicoEnLista(tecnicos, idTecnico);
         }
         return null;
     }
 
-    private String findNombreTecnicoEnLista(List<Map<String, Object>> tecnicos, Integer idTecnico) {
+    private String findNombreNpsTecnicoEnLista(List<Map<String, Object>> tecnicos, Integer idTecnico) {
         if (tecnicos == null || idTecnico == null) return null;
         for (Map<String, Object> row : tecnicos) {
             Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
             if (idFila == null || !idTecnico.equals(idFila)) continue;
-            return trimToNull(asText(find(row, "tecnico", "nombre", "tecnico_nombre")));
+            return trimToNull(asText(find(row, "nombreNps", "NombreNPS", "nombre_nps")));
         }
         return null;
     }
@@ -1043,7 +1103,10 @@ public class NpsService {
         Set<String> seen = new HashSet<String>();
         if (candidatos != null) {
             for (Map<String, Object> row : candidatos) {
-                String nombre = asText(find(row, "tecnico", "nombre", "tecnico_nombre", "idTecnico", "id_tecnico"));
+                String nombre = firstNonBlank(
+                        asText(find(row, "nombreNps", "NombreNPS", "nombre_nps")),
+                        asText(find(row, "tecnico", "nombre", "tecnico_nombre", "idTecnico", "id_tecnico"))
+                );
                 if (isBlank(nombre)) continue;
                 String key = normalizeKey(nombre);
                 if (!tecnicosNps.contains(key)) continue;
@@ -1075,6 +1138,7 @@ public class NpsService {
         if (rows == null || rows.isEmpty()) return rows == null ? new ArrayList<Map<String, Object>>() : rows;
         List<Map<String, Object>> tecnicosConformacion =
                 repository.listarTecnicosPorSupervisor(sucursalTemplate, idSucursal, idSupervisor == null ? 0 : idSupervisor);
+        tecnicosConformacion = enriquecerTecnicosConNombreNps(sucursalTemplate, tecnicosConformacion);
         if ((tecnicosConformacion == null || tecnicosConformacion.isEmpty()) && idSupervisor != null) {
             // Fallback para supervisor: usar historico central cuando no existe relacion local.
             tecnicosConformacion = repository.listarTecnicosHistoricosSupervisorNps(
@@ -1091,7 +1155,10 @@ public class NpsService {
                 interseccionTecnicosConNps(centralTemplate, idSucursal, tecnicosConformacion, tecnicosConformacion);
         Set<String> allowed = new HashSet<String>();
         for (Map<String, Object> t : interseccion) {
-            String nombre = asText(find(t, "tecnico", "nombre", "tecnico_nombre", "idTecnico", "id_tecnico"));
+            String nombre = firstNonBlank(
+                    asText(find(t, "nombreNps", "NombreNPS", "nombre_nps")),
+                    asText(find(t, "tecnico", "nombre", "tecnico_nombre", "idTecnico", "id_tecnico"))
+            );
             if (!isBlank(nombre)) allowed.add(normalizeKey(nombre));
         }
         String tecnicoSeleccionadoKey = normalizeKey(tecnicoSeleccionado);
@@ -1117,15 +1184,18 @@ public class NpsService {
         if (source == null) return;
         for (Map<String, Object> row : source) {
             Object idObj = find(row, "idTecnico", "id_tecnico");
+            String nombreNps = trimToNull(asText(find(row, "nombreNps", "NombreNPS", "nombre_nps")));
             String nombre = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
             if (isBlank(nombre)) nombre = asText(idObj);
-            if (isBlank(nombre)) continue;
-            String key = normalizeKey(nombre);
+            String keyName = isBlank(nombreNps) ? nombre : nombreNps;
+            if (isBlank(keyName)) continue;
+            String key = normalizeKey(keyName);
             if (out.containsKey(key)) continue;
             Map<String, Object> item = new LinkedHashMap<String, Object>();
             if (idObj != null && !isBlank(asText(idObj))) item.put("idTecnico", idObj);
             else item.put("idTecnico", nombre);
             item.put("tecnico", nombre);
+            if (!isBlank(nombreNps)) item.put("nombreNps", nombreNps);
             out.put(key, item);
         }
     }
@@ -1137,12 +1207,14 @@ public class NpsService {
         if (source == null) return;
         for (Map<String, Object> row : source) {
             Object idObj = find(row, "idTecnico", "id_tecnico");
+            String nombreNps = trimToNull(asText(find(row, "nombreNps", "NombreNPS", "nombre_nps")));
             String nombre = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
             if (isBlank(nombre)) {
                 nombre = asText(idObj);
             }
-            if (isBlank(nombre)) continue;
-            String key = normalizeKey(nombre);
+            String keyName = isBlank(nombreNps) ? nombre : nombreNps;
+            if (isBlank(keyName)) continue;
+            String key = normalizeKey(keyName);
             if (seen.containsKey(key)) continue;
             Map<String, Object> item = new LinkedHashMap<String, Object>();
             if (idObj != null && !isBlank(asText(idObj))) {
@@ -1151,6 +1223,7 @@ public class NpsService {
                 item.put("idTecnico", nombre);
             }
             item.put("tecnico", nombre);
+            if (!isBlank(nombreNps)) item.put("nombreNps", nombreNps);
             out.add(item);
             seen.put(key, true);
         }

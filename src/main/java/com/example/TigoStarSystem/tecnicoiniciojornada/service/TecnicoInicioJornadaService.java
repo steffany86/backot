@@ -252,6 +252,14 @@ public class TecnicoInicioJornadaService {
         }
 
         List<Map<String, Object>> rows;
+        boolean cierrePendienteAnterior = idInicio != null && idInicio > 0;
+        if (cierrePendienteAnterior && repository.inicioPendienteAprobacion(tigohogarJdbcTemplate, idInicio, tecnico.getIdUsuario())) {
+            throw new ApiException(
+                    HttpStatus.FORBIDDEN,
+                    "CIERRE_PENDIENTE_APROBACION_SUPERVISOR",
+                    "No se puede registrar el cierre hasta que el supervisor confirme el dia de ayer."
+            );
+        }
         if (idInicio != null && idInicio > 0) {
             rows = repository.cerrarJornadaPorId(
                     tigohogarJdbcTemplate,
@@ -289,9 +297,15 @@ public class TecnicoInicioJornadaService {
                 result.get("idInicio") != null ? result.get("idInicio") : result.get("id_inicio")
         );
         if (idInicioCerrado != null) {
-            repository.marcarCierreCompletado(tigohogarJdbcTemplate, idInicioCerrado);
+            if (cierrePendienteAnterior) {
+                repository.marcarNoMarcoCierreCompletado(tigohogarJdbcTemplate, idInicioCerrado);
+            } else {
+                repository.marcarCierreCompletado(tigohogarJdbcTemplate, idInicioCerrado);
+            }
             repository.actualizarAceptoCierreJornada(tigohogarJdbcTemplate, idInicioCerrado, "SI");
-            result.put("pendiente", false);
+            if (!cierrePendienteAnterior) {
+                result.put("pendiente", false);
+            }
             result.put("no_marco_cierre", false);
             result.put("noMarcoCierre", false);
         }
@@ -313,12 +327,44 @@ public class TecnicoInicioJornadaService {
         Object fechaInicio = cierrePendienteAyer.get("fecha_registro") != null
                 ? cierrePendienteAyer.get("fecha_registro")
                 : cierrePendienteAyer.get("fechaRegistro");
+        Object idSupervisor = cierrePendienteAyer.get("id_encargado") != null
+                ? cierrePendienteAyer.get("id_encargado")
+                : cierrePendienteAyer.get("idSupervisor");
+        Object supervisorNombre = cierrePendienteAyer.get("supervisor_nombre") != null
+                ? cierrePendienteAyer.get("supervisor_nombre")
+                : cierrePendienteAyer.get("supervisorNombre");
+        if (supervisorNombre == null) {
+            supervisorNombre = resolverNombreSupervisor(idSupervisor);
+        }
         out.put("idInicioPendienteCierre", idInicio);
         out.put("id_inicio_pendiente_cierre", idInicio);
         out.put("idUltimoInicioPendienteCierre", idInicio);
         out.put("fechaInicioPendienteCierre", fechaInicio);
         out.put("fecha_inicio_pendiente_cierre", fechaInicio);
         out.put("fechaUltimoInicioPendienteCierre", fechaInicio);
+        out.put("idSupervisorPendienteCierre", idSupervisor);
+        out.put("id_supervisor_pendiente_cierre", idSupervisor);
+        out.put("supervisorPendienteCierre", supervisorNombre);
+        out.put("supervisor_pendiente_cierre", supervisorNombre);
+    }
+
+    private String resolverNombreSupervisor(Object idSupervisorRaw) {
+        Integer idSupervisor = toPositiveInteger(idSupervisorRaw);
+        if (idSupervisor == null) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = dbConnectionManager.connDb("operativa").queryForList(
+                    "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ?",
+                    idSupervisor
+            );
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            return trimOrNull(valueAsString(rows.get(0).get("Nombre")));
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private AuthLoginResponse requireUsuarioInicioJornada(String token) {

@@ -49,9 +49,10 @@ public class TecnicoInicioJornadaRepository {
             return null;
         }
         List<Map<String, Object>> rows = template.queryForList(
-                "SELECT TOP 1 id_inicio, id_tecnico, fecha_registro, fecha_cierre, pendiente, no_marco_cierre " +
+                "SELECT TOP 1 ultimo.id_inicio, ultimo.id_tecnico, ultimo.id_encargado, ultimo.fecha_registro, " +
+                        "ultimo.fecha_cierre, ultimo.pendiente, ultimo.no_marco_cierre " +
                         "FROM ( " +
-                        "  SELECT TOP 1 id_inicio, id_tecnico, fecha_registro, fecha_cierre, pendiente, no_marco_cierre, e_eliminado " +
+                        "  SELECT TOP 1 id_inicio, id_tecnico, id_encargado, fecha_registro, fecha_cierre, pendiente, no_marco_cierre, e_eliminado " +
                         "  FROM dbo.tbl_InicioJornadaAlturas " +
                         "  WHERE id_tecnico = ? " +
                         "    AND CAST(fecha_registro AS DATE) < CAST(GETDATE() AS DATE) " +
@@ -415,6 +416,41 @@ public class TecnicoInicioJornadaRepository {
         }
     }
 
+    public boolean inicioPendienteAprobacion(JdbcTemplate template, Integer idInicio, Integer idTecnico) {
+        if (template == null || idInicio == null || idInicio <= 0 || idTecnico == null || idTecnico <= 0) {
+            return false;
+        }
+        try {
+            Integer total = template.queryForObject(
+                    "SELECT COUNT(1) FROM dbo.tbl_InicioJornadaAlturas " +
+                            "WHERE id_inicio = ? " +
+                            "  AND id_tecnico = ? " +
+                            "  AND ISNULL(pendiente, 0) = 1 " +
+                            "  AND ISNULL(e_eliminado, 0) = 0",
+                    Integer.class,
+                    idInicio,
+                    idTecnico
+            );
+            return total != null && total > 0;
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
+    public int marcarNoMarcoCierreCompletado(JdbcTemplate template, Integer idInicio) {
+        if (template == null || idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        try {
+            return template.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET no_marco_cierre = 0 WHERE id_inicio = ?",
+                    idInicio
+            );
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
     public int actualizarAceptoCierreJornada(JdbcTemplate template, Integer idInicio, String aceptoCierreJornada) {
         if (template == null || idInicio == null || idInicio <= 0) {
             return 0;
@@ -492,7 +528,6 @@ public class TecnicoInicioJornadaRepository {
         List<String> sets = new ArrayList<>();
         List<Object> params = new ArrayList<>();
         sets.add("fecha_cierre = GETDATE()");
-        sets.add("pendiente = 0");
         sets.add("no_marco_cierre = 0");
         sets.add(codigoColumn + " = ?");
         params.add(codigoCliente);

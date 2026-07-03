@@ -189,4 +189,23 @@ public class NpsRepository {
         }
         return out;
     }
+
+    public String obtenerNombreNpsVendedor(JdbcTemplate sucursalTemplate, Integer idVendedor) {
+        if (sucursalTemplate == null || idVendedor == null) return null;
+        try {
+            List<Map<String, Object>> rows = sucursalTemplate.queryForList(
+                    "SELECT TOP 1 NULLIF(LTRIM(RTRIM(CAST(NombreNPS AS NVARCHAR(200)))), '') AS nombreNps " +
+                            "FROM dbo.tbl_Vendedor " +
+                            "WHERE Id_Vendedor = ? AND ISNULL(E_Eliminado, 0) = 0",
+                    idVendedor
+            );
+            if (rows == null || rows.isEmpty()) return null;
+            Object value = rows.get(0).get("nombreNps");
+            if (value == null) return null;
+            String text = String.valueOf(value).trim();
+            return text.isEmpty() ? null : text;
+        } catch (DataAccessException ex) {
+            return null;
+        }
+    }
 }
