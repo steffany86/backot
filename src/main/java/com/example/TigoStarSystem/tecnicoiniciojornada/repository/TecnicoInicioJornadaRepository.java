@@ -97,7 +97,10 @@ public class TecnicoInicioJornadaRepository {
             return null;
         }
 
-        List<Map<String, Object>> rows = queryConformacionPorTecnicoCentral(centralTemplate, sucursal, idTecnico, nombreTecnico);
+        List<Map<String, Object>> rows = queryConformacionHoyPorTecnicoCentral(centralTemplate, sucursal, idTecnico, nombreTecnico);
+        if (rows == null || rows.isEmpty()) {
+            rows = queryConformacionPorTecnicoCentral(centralTemplate, sucursal, idTecnico, nombreTecnico);
+        }
         if (rows == null || rows.isEmpty()) {
             return null;
         }
@@ -125,10 +128,28 @@ public class TecnicoInicioJornadaRepository {
             if (idEncargado == null || idEncargado <= 0) {
                 continue;
             }
+            Integer idAuxiliar = toInteger(findValue(row,
+                    "idTecnicoAuxiliar",
+                    "id_tecnico_auxiliar",
+                    "id_tecnicoAuxiliar",
+                    "idAuxiliar",
+                    "id_auxiliar"));
+            String nombreAuxiliar = toText(findValue(row,
+                    "auxiliar",
+                    "tecnicoAuxiliar",
+                    "tecnico_auxiliar",
+                    "nombreAuxiliar",
+                    "auxiliarNombre"));
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("idEncargado", String.valueOf(idEncargado));
             if (nombreEncargado != null && !nombreEncargado.trim().isEmpty()) {
                 out.put("encargado", nombreEncargado.trim());
+            }
+            if (idAuxiliar != null && idAuxiliar > 0) {
+                out.put("idAuxiliar", idAuxiliar);
+            }
+            if (nombreAuxiliar != null) {
+                out.put("auxiliar", nombreAuxiliar);
             }
             if (sucursalRow != null) {
                 out.put("sucursal", String.valueOf(sucursalRow).trim());
@@ -136,6 +157,51 @@ public class TecnicoInicioJornadaRepository {
             return out;
         }
         return null;
+    }
+
+    private List<Map<String, Object>> queryConformacionHoyPorTecnicoCentral(
+            JdbcTemplate centralTemplate,
+            String sucursal,
+            Integer idTecnico,
+            String nombreTecnico
+    ) {
+        String nombre = nombreTecnico == null ? "" : nombreTecnico.trim().toLowerCase(Locale.ROOT);
+        int id = idTecnico == null ? -1 : idTecnico;
+        String sucursalNorm = toText(sucursal);
+        try {
+            return centralTemplate.queryForList(
+                    "SELECT TOP 1 " +
+                            "CAST(c.idUsuarioSupervisor AS INT) AS idEncargado, " +
+                            "CAST(c.supervisorACargo AS NVARCHAR(200)) AS encargado, " +
+                            "CAST(c.id AS INT) AS idConformacion, " +
+                            "CAST(c.id_tecnicoAuxiliar AS INT) AS idAuxiliar, " +
+                            "CAST(c.auxiliar AS NVARCHAR(250)) AS auxiliar, " +
+                            "c.sucursal, c.fecha, c.fechaRegistro " +
+                            "FROM dbo.tbl_ConformacionCuadrillaDiario c " +
+                            "WHERE ISNULL(c.e_eliminado, 0) = 0 " +
+                            "  AND CONVERT(date, c.fecha) = CONVERT(date, GETDATE()) " +
+                            "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                            "                  LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', ''))) " +
+                            "  AND ( " +
+                            "       (? > 0 AND (? = c.id_tecnico OR ? = c.id_tecnicoAuxiliar)) " +
+                            "       OR (? <> '' AND ( " +
+                            "           LOWER(LTRIM(RTRIM(ISNULL(c.tecnico, '')))) = ? " +
+                            "           OR LOWER(LTRIM(RTRIM(ISNULL(c.auxiliar, '')))) = ? " +
+                            "       )) " +
+                            "  ) " +
+                            "ORDER BY ISNULL(c.fechaRegistro, '19000101') DESC, c.id DESC",
+                    sucursalNorm,
+                    sucursalNorm,
+                    id,
+                    id,
+                    id,
+                    nombre,
+                    nombre,
+                    nombre
+            );
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
     }
 
     private Integer obtenerIdUsuarioPorNombre(JdbcTemplate template, String nombreUsuario) {
@@ -388,6 +454,30 @@ public class TecnicoInicioJornadaRepository {
         }
     }
 
+    public int actualizarImagenAuxiliarInicio(JdbcTemplate template, Integer idInicio, String imagenAuxiliar) {
+        if (template == null || idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        String imagen = toText(imagenAuxiliar);
+        if (imagen == null) {
+            return 0;
+        }
+        Set<String> columnas = obtenerColumnasInicioJornada(template);
+        String columnaImagenAuxiliar = firstExistingColumn(columnas, "imagen_auxiliar", "imagenAuxiliar");
+        if (columnaImagenAuxiliar == null) {
+            return 0;
+        }
+        try {
+            return template.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET [" + columnaImagenAuxiliar + "] = ? WHERE id_inicio = ?",
+                    imagen,
+                    idInicio
+            );
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
     public int marcarNoMarcoCierreInicio(JdbcTemplate template, Integer idInicio) {
         if (template == null || idInicio == null || idInicio <= 0) {
             return 0;
@@ -468,6 +558,32 @@ public class TecnicoInicioJornadaRepository {
             return template.update(
                     "UPDATE dbo.tbl_InicioJornadaAlturas SET [" + columnaAcepto + "] = ? WHERE id_inicio = ?",
                     acepto,
+                    idInicio
+            );
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
+    public int actualizarEstoyTrabajandoSolo(JdbcTemplate template, Integer idInicio, Boolean estoyTrabajandoSolo) {
+        if (template == null || idInicio == null || idInicio <= 0 || estoyTrabajandoSolo == null) {
+            return 0;
+        }
+        Set<String> columnas = obtenerColumnasInicioJornada(template);
+        String columnaTrabajoSolo = firstExistingColumn(
+                columnas,
+                "estoy_trabajando_solo",
+                "estoyTrabajandoSolo",
+                "trabajando_solo",
+                "trabajandoSolo"
+        );
+        if (columnaTrabajoSolo == null) {
+            return 0;
+        }
+        try {
+            return template.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET [" + columnaTrabajoSolo + "] = ? WHERE id_inicio = ?",
+                    estoyTrabajandoSolo,
                     idInicio
             );
         } catch (Exception ex) {

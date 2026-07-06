@@ -234,6 +234,10 @@ public class ConformacionCuadrillaWebRepository {
     }
 
     public List<Map<String, Object>> listarTecnicos(String sucursal) {
+        List<Map<String, Object>> vendedores = listarVendedoresPorTipoSolicitante(sucursal, null);
+        if (vendedores != null && !vendedores.isEmpty()) {
+            return normalizarDatosTecnicos(vendedores);
+        }
         List<Map<String, Object>> rows = queryForListInSucursal(
                 dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
                 SP_TECNICOS
@@ -251,11 +255,48 @@ public class ConformacionCuadrillaWebRepository {
     }
 
     public List<Map<String, Object>> listarAuxiliares(String sucursal) {
+        List<Map<String, Object>> vendedores = listarVendedoresPorTipoSolicitante(sucursal, 6);
+        if (vendedores != null && !vendedores.isEmpty()) {
+            return normalizarCatalogoAuxiliares(normalizarDatosTecnicos(vendedores));
+        }
         List<Map<String, Object>> rows = queryForListInSucursal(
                 dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
                 SP_AUXILIARES
         );
         return normalizarCatalogoAuxiliares(normalizarDatosTecnicos(rows));
+    }
+
+    private List<Map<String, Object>> listarVendedoresPorTipoSolicitante(String sucursal, Integer idTipoSolicitante) {
+        ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = dbSupport.resolverSucursalDbInfo(trimToNull(sucursal));
+        if (dbInfo == null) {
+            return new ArrayList<>();
+        }
+
+        String whereTipo = idTipoSolicitante == null ? "" : "AND v.id_TipoSolicitante = ? ";
+        String sql =
+                "SELECT " +
+                        "v.Id_Vendedor AS Id_Vendedor, " +
+                        "v.Nombre AS Nombre, " +
+                        "v.Direccion AS Direccion, " +
+                        "v.CI AS CI, " +
+                        "v.Telefono AS Telefono, " +
+                        "v.Observacion AS Observacion, " +
+                        "v.E_Eliminado AS E_Eliminado, " +
+                        "v.id_TipoSolicitante AS id_TipoSolicitante, " +
+                        "v.Lleva_Herramientas AS Lleva_Herramientas, " +
+                        "v.CodEmpleado AS CodEmpleado, " +
+                        "v.cuentaSF AS cuentaSF, " +
+                        "v.idvehiculo AS idvehiculo, " +
+                        "v.grupoDigitacion AS grupoDigitacion, " +
+                        "v.idUsuarioRegistro AS idUsuarioRegistro, " +
+                        "v.NombreNPS AS NombreNPS " +
+                "FROM dbo.tbl_Vendedor v " +
+                "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                whereTipo +
+                "ORDER BY v.Nombre";
+        return idTipoSolicitante == null
+                ? queryForListInSucursal(dbInfo, sql)
+                : queryForListInSucursal(dbInfo, sql, idTipoSolicitante);
     }
 
     public List<Map<String, Object>> listarDigitadores(String sucursal) {
@@ -608,6 +649,22 @@ public class ConformacionCuadrillaWebRepository {
             Object salesforce = findValue(row, "salesforce", "SalesForce");
             if (salesforce != null) {
                 normalizada.put("salesforce", salesforce);
+            }
+
+            Object idTipoSolicitante = findValue(
+                    row,
+                    "idTipoSolicitante",
+                    "IdTipoSolicitante",
+                    "id_TipoSolicitante",
+                    "Id_TipoSolicitante",
+                    "id_tipo_solicitante",
+                    "Id_Tipo_Solicitante",
+                    "idtiposolicitante"
+            );
+            if (idTipoSolicitante != null) {
+                normalizada.put("idTipoSolicitante", idTipoSolicitante);
+                normalizada.put("id_TipoSolicitante", idTipoSolicitante);
+                normalizada.put("id_tipo_solicitante", idTipoSolicitante);
             }
 
             out.add(normalizada);

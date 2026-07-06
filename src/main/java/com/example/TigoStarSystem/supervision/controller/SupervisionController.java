@@ -186,6 +186,19 @@ public class SupervisionController {
                 .body(imagen.getBytes());
     }
 
+    @GetMapping("/jornadas/{idInicio}/imagen-auxiliar")
+    public ResponseEntity<byte[]> obtenerImagenAuxiliarJornada(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idInicio") Integer idInicio,
+            @RequestParam(value = "miniatura", required = false, defaultValue = "true") boolean miniatura) {
+        SupervisionService.JornadaImagen imagen = service.obtenerImagenAuxiliarInicioJornada(idInicio, miniatura, token);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(imagen.getContentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
+                .body(imagen.getBytes());
+    }
+
     @PostMapping("/jornadas/{idInicio}/aprobar")
     public ResponseEntity<ApiResponse<Map<String, Object>>> aprobarJornada(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

@@ -4,6 +4,7 @@ import java.time.LocalDate;
 
 public class TecnicoInicioJornadaCreateRequest {
     private Integer idAuxiliar;
+    private Boolean estoyTrabajandoSolo;
     private Integer idEncargado;
     private String capacitado;
     private String charla;
@@ -16,6 +17,7 @@ public class TecnicoInicioJornadaCreateRequest {
     private String escalera;
     private String anclaje;
     private String imagen;
+    private String imagenAuxiliar;
     private String ubicacionGeoRef;
     private String aceptoInicioJornada;
     private String sucursal;
@@ -34,6 +36,14 @@ public class TecnicoInicioJornadaCreateRequest {
 
     public void setIdEncargado(Integer idEncargado) {
         this.idEncargado = idEncargado;
+    }
+
+    public Boolean getEstoyTrabajandoSolo() {
+        return estoyTrabajandoSolo;
+    }
+
+    public void setEstoyTrabajandoSolo(Boolean estoyTrabajandoSolo) {
+        this.estoyTrabajandoSolo = estoyTrabajandoSolo;
     }
 
     public String getCapacitado() {
@@ -122,6 +132,14 @@ public class TecnicoInicioJornadaCreateRequest {
 
     public void setImagen(String imagen) {
         this.imagen = imagen;
+    }
+
+    public String getImagenAuxiliar() {
+        return imagenAuxiliar;
+    }
+
+    public void setImagenAuxiliar(String imagenAuxiliar) {
+        this.imagenAuxiliar = imagenAuxiliar;
     }
 
     public String getUbicacionGeoRef() {

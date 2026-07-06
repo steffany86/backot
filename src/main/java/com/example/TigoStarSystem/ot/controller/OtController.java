@@ -242,6 +242,26 @@ public class OtController {
         ));
     }
 
+    @GetMapping("/pendientes-material")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarOtPendientesMaterial(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "usuario", required = false) Integer idUsuario) {
+        AuthMeResponse me = resolveSession(token);
+        Integer idSucursal = extractIdSucursal(me);
+        Integer idUsuarioFiltro = idUsuario;
+        if (me != null && me.getUsuario() != null && me.getUsuario().getIdUsuario() != null) {
+            idUsuarioFiltro = me.getUsuario().getIdUsuario();
+        }
+        LocalDate fechaFiltro = fecha != null ? fecha : LocalDate.now();
+
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.listarPendientesMaterialPorTecnico(fechaFiltro, idUsuarioFiltro, idSucursal),
+                "Listado de OT pendientes de carga de material desde tbl_venta."
+        ));
+    }
+
     @GetMapping("/{id:\\d+}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerPorId(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

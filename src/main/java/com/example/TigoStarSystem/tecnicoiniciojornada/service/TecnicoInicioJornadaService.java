@@ -75,6 +75,7 @@ public class TecnicoInicioJornadaService {
             if (!isBlank(idEncargado)) {
                 out.put("idEncargado", idEncargado);
             }
+            agregarAuxiliarConformacion(out, encargadoActual);
         }
         return out;
     }
@@ -170,11 +171,22 @@ public class TecnicoInicioJornadaService {
         if (isBlank(nombreTecnicoSucursal)) {
             nombreTecnicoSucursal = repository.obtenerNombreTecnicoPorId(tecnicosTemplate, tecnico.getIdUsuario());
         }
+        Integer idAuxiliarConformacion = toPositiveInteger(encargadoActual.get("idAuxiliar"));
+        Integer idAuxiliarRegistro = request.getIdAuxiliar() != null && request.getIdAuxiliar() > 0
+                ? request.getIdAuxiliar()
+                : idAuxiliarConformacion;
+        if (idAuxiliarRegistro != null && isBlank(request.getImagenAuxiliar())) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Debe cargar la foto del auxiliar asignado para registrar el inicio de jornada."
+            );
+        }
 
         List<Map<String, Object>> rows = repository.registrar(
                 tigohogarJdbcTemplate,
                 tecnico.getIdUsuario(),
-                request.getIdAuxiliar(),
+                idAuxiliarRegistro,
                 idEncargado,
                 idEncargado,
                 idSucursal,
@@ -205,11 +217,38 @@ public class TecnicoInicioJornadaService {
             repository.marcarNoMarcoCierreInicio(tigohogarJdbcTemplate, idInicio);
             result.put("no_marco_cierre", true);
             result.put("noMarcoCierre", true);
+            if (request.getEstoyTrabajandoSolo() != null) {
+                repository.actualizarEstoyTrabajandoSolo(tigohogarJdbcTemplate, idInicio, request.getEstoyTrabajandoSolo());
+                result.put("estoy_trabajando_solo", request.getEstoyTrabajandoSolo());
+                result.put("estoyTrabajandoSolo", request.getEstoyTrabajandoSolo());
+            }
             if (!isBlank(request.getUbicacionGeoRef())) {
                 repository.actualizarUbicacionInicio(tigohogarJdbcTemplate, idInicio, request.getUbicacionGeoRef().trim());
             }
+            if (idAuxiliarRegistro != null && !isBlank(request.getImagenAuxiliar())) {
+                repository.actualizarImagenAuxiliarInicio(tigohogarJdbcTemplate, idInicio, request.getImagenAuxiliar().trim());
+                result.put("imagen_auxiliar", request.getImagenAuxiliar().trim());
+                result.put("imagenAuxiliar", request.getImagenAuxiliar().trim());
+            }
         }
         return result;
+    }
+
+    private void agregarAuxiliarConformacion(Map<String, Object> out, Map<String, Object> conformacion) {
+        if (out == null || conformacion == null) {
+            return;
+        }
+        Integer idAuxiliar = toPositiveInteger(conformacion.get("idAuxiliar"));
+        String auxiliar = valueAsString(conformacion.get("auxiliar"));
+        if (idAuxiliar != null) {
+            out.put("idAuxiliar", idAuxiliar);
+            out.put("id_auxiliar", idAuxiliar);
+        }
+        if (!isBlank(auxiliar)) {
+            out.put("auxiliar", auxiliar);
+            out.put("auxiliarNombre", auxiliar);
+        }
+        out.put("tieneAuxiliar", idAuxiliar != null || !isBlank(auxiliar));
     }
 
     public Map<String, Object> cerrarJornada(String token, TecnicoCierreJornadaRequest request) {

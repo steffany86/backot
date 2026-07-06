@@ -4,6 +4,9 @@ import com.example.TigoStarSystem.common.ApiResponse;
 import com.example.TigoStarSystem.supervision.dto.SupervisionCrearPendienteRequest;
 import com.example.TigoStarSystem.supervision.service.SupervisionService;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
@@ -12,6 +15,7 @@ import javax.validation.Valid;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 @Validated
 @RestController
@@ -105,5 +109,18 @@ public class BackOfficeSupervisionController {
                 service.obtenerDetalleInicioJornada(idInicio, token),
                 "Detalle de inicio de jornada."
         ));
+    }
+
+    @GetMapping("/jornadas/{idInicio}/imagen-auxiliar")
+    public ResponseEntity<byte[]> obtenerImagenAuxiliarJornada(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idInicio") Integer idInicio,
+            @RequestParam(value = "miniatura", required = false, defaultValue = "true") boolean miniatura) {
+        SupervisionService.JornadaImagen imagen = service.obtenerImagenAuxiliarInicioJornada(idInicio, miniatura, token);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(imagen.getContentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
+                .body(imagen.getBytes());
     }
 }

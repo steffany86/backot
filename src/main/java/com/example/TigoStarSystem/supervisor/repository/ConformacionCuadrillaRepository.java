@@ -986,6 +986,22 @@ public class ConformacionCuadrillaRepository {
                 normalizada.put("salesforce", salesforce);
             }
 
+            Object idTipoSolicitante = findValueCaseInsensitive(
+                    row,
+                    "idTipoSolicitante",
+                    "IdTipoSolicitante",
+                    "id_TipoSolicitante",
+                    "Id_TipoSolicitante",
+                    "id_tipo_solicitante",
+                    "Id_Tipo_Solicitante",
+                    "idtiposolicitante"
+            );
+            if (idTipoSolicitante != null) {
+                normalizada.put("idTipoSolicitante", idTipoSolicitante);
+                normalizada.put("id_TipoSolicitante", idTipoSolicitante);
+                normalizada.put("id_tipo_solicitante", idTipoSolicitante);
+            }
+
             out.add(normalizada);
         }
         return out;

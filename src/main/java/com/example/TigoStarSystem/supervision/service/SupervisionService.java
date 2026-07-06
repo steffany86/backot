@@ -373,6 +373,20 @@ public class SupervisionService {
         return thumb == null ? imagen : thumb;
     }
 
+    public JornadaImagen obtenerImagenAuxiliarInicioJornada(Integer idInicio, boolean miniatura, String token) {
+        authService.me(token);
+        Object raw = repository.obtenerImagenAuxiliarInicioJornada(idInicio);
+        JornadaImagen imagen = decodeImagen(raw);
+        if (imagen == null || imagen.getBytes().length == 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro imagen de auxiliar para el inicio de jornada.");
+        }
+        if (!miniatura) {
+            return imagen;
+        }
+        JornadaImagen thumb = crearMiniatura(imagen, 96, 96);
+        return thumb == null ? imagen : thumb;
+    }
+
     public Map<String, Object> aprobarInicioPendiente(Integer idInicio, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);

@@ -171,6 +171,8 @@ BEGIN
         v.Nombre AS tecnico,
         v.CuentaSF AS cuenta_sf,
         v.SalesForce AS salesforce,
+        v.id_tiposolicitante AS id_tipo_solicitante,
+        ts.Nombre AS tipo_solicitante,
         v.Habilidad AS habilidad,
         v.Vehiculo AS vehiculo,
         ruta.Id_Ruta AS id_ruta,
@@ -179,6 +181,8 @@ BEGIN
         ruta.BodegaTigo AS grupoDigitacion,
         v.*
     FROM dbo.tbl_Vendedor v
+    LEFT JOIN dbo.tbl_TipoSolicitante ts
+        ON ts.Id_Tipo_Solicitante = v.id_tiposolicitante
     OUTER APPLY (
         SELECT TOP 1 r.Id_Ruta, r.Nombre, r.BodegaTigo
         FROM dbo.tbl_Ruta r
@@ -207,10 +211,14 @@ BEGIN
         v.Nombre AS auxiliar,
         v.CuentaSF AS cuenta_sf,
         v.SalesForce AS salesforce,
+        v.id_tiposolicitante AS id_tipo_solicitante,
+        ts.Nombre AS tipo_solicitante,
         v.Habilidad AS habilidad,
         v.Vehiculo AS vehiculo,
         v.*
     FROM dbo.tbl_Vendedor v
+    LEFT JOIN dbo.tbl_TipoSolicitante ts
+        ON ts.Id_Tipo_Solicitante = v.id_tiposolicitante
     WHERE v.E_Eliminado = 0
     ORDER BY v.Nombre;
 END

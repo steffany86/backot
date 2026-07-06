@@ -101,8 +101,46 @@ public class OtService {
      */
     public List<Map<String, Object>> listarFinalizadasPorTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {
         LocalDate fechaFiltro = fecha == null ? LocalDate.now() : fecha;
+        List<Integer> idsVendedorFiltro = obtenerIdsVendedorFiltro(idUsuario, idSucursal, "Finalizadas", fechaFiltro);
+        if (idsVendedorFiltro.isEmpty()) return Collections.emptyList();
+
+        List<Map<String, Object>> rows = otRepository.obtenerVentasFinalizadasPorFechaYVendedores(fechaFiltro, idsVendedorFiltro, idSucursal);
+        List<Map<String, Object>> filtradas = filtrarFinalizadasPorReglaFuncional(rows, fechaFiltro, idSucursal);
+        logger.debug(
+                "Finalizadas: fecha={}, idUsuario={}, idsVendedorFiltro={}, filas={}, filtradas={}",
+                fechaFiltro,
+                idUsuario,
+                idsVendedorFiltro,
+                rows == null ? 0 : rows.size(),
+                filtradas == null ? 0 : filtradas.size()
+        );
+        return filtradas;
+    }
+
+    /**
+     * Lista ventas cerradas que aun requieren carga de material.
+     */
+    public List<Map<String, Object>> listarPendientesMaterialPorTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {
+        LocalDate fechaFiltro = fecha == null ? LocalDate.now() : fecha;
+        List<Integer> idsVendedorFiltro = obtenerIdsVendedorFiltro(idUsuario, idSucursal, "PendientesMaterial", fechaFiltro);
+        if (idsVendedorFiltro.isEmpty()) return Collections.emptyList();
+
+        List<Map<String, Object>> rows = otRepository.obtenerVentasFinalizadasPorFechaYVendedores(fechaFiltro, idsVendedorFiltro, idSucursal);
+        List<Map<String, Object>> pendientes = filtrarPendientesMaterialPorReglaFuncional(rows, fechaFiltro, idSucursal);
+        logger.debug(
+                "PendientesMaterial: fecha={}, idUsuario={}, idsVendedorFiltro={}, filas={}, pendientes={}",
+                fechaFiltro,
+                idUsuario,
+                idsVendedorFiltro,
+                rows == null ? 0 : rows.size(),
+                pendientes == null ? 0 : pendientes.size()
+        );
+        return pendientes;
+    }
+
+    private List<Integer> obtenerIdsVendedorFiltro(Integer idUsuario, Integer idSucursal, String contexto, LocalDate fechaFiltro) {
         if (idUsuario == null || idUsuario <= 0) {
-            logger.warn("Finalizadas: idUsuario no valido para filtrar tecnico. fecha={}", fechaFiltro);
+            logger.warn("{}: idUsuario no valido para filtrar tecnico. fecha={}", contexto, fechaFiltro);
             return Collections.emptyList();
         }
 
@@ -120,16 +158,157 @@ public class OtService {
         if (!idsVendedorFiltro.contains(idUsuario)) {
             idsVendedorFiltro.add(idUsuario);
         }
+        return idsVendedorFiltro;
+    }
 
-        List<Map<String, Object>> rows = otRepository.obtenerVentasFinalizadasPorFechaYVendedores(fechaFiltro, idsVendedorFiltro, idSucursal);
-        logger.debug(
-                "Finalizadas: fecha={}, idUsuario={}, idsVendedorFiltro={}, filas={}",
-                fechaFiltro,
-                idUsuario,
-                idsVendedorFiltro,
-                rows == null ? 0 : rows.size()
-        );
-        return rows;
+    private List<Map<String, Object>> filtrarFinalizadasPorReglaFuncional(
+            List<Map<String, Object>> rows,
+            LocalDate fechaFiltro,
+            Integer idSucursal) {
+        if (rows == null || rows.isEmpty()) {
+            return rows == null ? Collections.emptyList() : rows;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            if (esFinalizadaPorReglaFuncional(row, fechaFiltro, idSucursal)) {
+                out.add(row);
+            }
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> filtrarPendientesMaterialPorReglaFuncional(
+            List<Map<String, Object>> rows,
+            LocalDate fechaFiltro,
+            Integer idSucursal) {
+        if (rows == null || rows.isEmpty()) {
+            return rows == null ? Collections.emptyList() : rows;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            if (esPendienteMaterialPorReglaFuncional(row, fechaFiltro, idSucursal)) {
+                out.add(row);
+            }
+        }
+        return out;
+    }
+
+    private boolean esFinalizadaPorReglaFuncional(
+            Map<String, Object> row,
+            LocalDate fechaFiltro,
+            Integer idSucursal) {
+        Integer nroOt = toInteger(findValue(row,
+                "ordenTrabajo", "OrdenTrabajo", "orden_trabajo", "NroOT", "nroOT", "OT", "ot"));
+        Integer codigoCliente = toInteger(findValue(row,
+                "codigoCliente", "CodigoCliente", "codigo_cliente", "cliente_nro", "Cliente_Nro", "NumeroCliente", "numeroCliente"));
+        LocalDate fecha = toLocalDate(findValue(row,
+                "fechaEjecucion", "FechaEjecucion", "Fecha_Ejecucion", "fecha_ejecucion", "fecha", "Fecha"));
+
+        if (nroOt == null || nroOt <= 0 || codigoCliente == null || codigoCliente <= 0) {
+            return true;
+        }
+        if (fecha == null) {
+            fecha = fechaFiltro;
+        }
+
+        try {
+            OtValidarVentaDetalleResponse validacion = validarVentaYDetalleWb(
+                    fecha.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                    nroOt,
+                    codigoCliente,
+                    idSucursal,
+                    true,
+                    true
+            );
+            return esFinalizadaPorReglaFuncional(validacion);
+        } catch (RuntimeException ex) {
+            logger.warn(
+                    "No se pudo validar regla funcional de finalizadas. fecha={} ot={} cliente={} idSucursal={}",
+                    fecha,
+                    nroOt,
+                    codigoCliente,
+                    idSucursal,
+                    ex
+            );
+            return true;
+        }
+    }
+
+    private boolean esPendienteMaterialPorReglaFuncional(
+            Map<String, Object> row,
+            LocalDate fechaFiltro,
+            Integer idSucursal) {
+        Integer nroOt = toInteger(findValue(row,
+                "ordenTrabajo", "OrdenTrabajo", "orden_trabajo", "NroOT", "nroOT", "OT", "ot"));
+        Integer codigoCliente = toInteger(findValue(row,
+                "codigoCliente", "CodigoCliente", "codigo_cliente", "cliente_nro", "Cliente_Nro", "NumeroCliente", "numeroCliente"));
+        LocalDate fecha = toLocalDate(findValue(row,
+                "fechaEjecucion", "FechaEjecucion", "Fecha_Ejecucion", "fecha_ejecucion", "fecha", "Fecha"));
+
+        if (nroOt == null || nroOt <= 0 || codigoCliente == null || codigoCliente <= 0) {
+            return false;
+        }
+        if (fecha == null) {
+            fecha = fechaFiltro;
+        }
+
+        try {
+            OtValidarVentaDetalleResponse validacion = validarVentaYDetalleWb(
+                    fecha.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                    nroOt,
+                    codigoCliente,
+                    idSucursal,
+                    true,
+                    true
+            );
+            return esPendienteMaterialPorReglaFuncional(validacion);
+        } catch (RuntimeException ex) {
+            logger.warn(
+                    "No se pudo validar regla funcional de pendientes material. fecha={} ot={} cliente={} idSucursal={}",
+                    fecha,
+                    nroOt,
+                    codigoCliente,
+                    idSucursal,
+                    ex
+            );
+            return false;
+        }
+    }
+
+    private boolean esFinalizadaPorReglaFuncional(OtValidarVentaDetalleResponse validacion) {
+        if (validacion == null) {
+            return false;
+        }
+        boolean existeVenta = Boolean.TRUE.equals(validacion.getExisteVenta())
+                || (validacion.getCantidadVentas() != null && validacion.getCantidadVentas() > 0);
+        if (!existeVenta) {
+            return false;
+        }
+        boolean tieneDetalle = Boolean.TRUE.equals(validacion.getTieneDetalle());
+        boolean tieneDetalleEnCodigoVenta = Boolean.TRUE.equals(validacion.getTieneDetalleEnCodigoVenta())
+                || (validacion.getCantidadDetalles() != null && validacion.getCantidadDetalles() > 0);
+
+        // Reglas funcionales:
+        // existeVenta=1, TieneDetalle=0, TieneDetalleEnCodigoVenta=0 => finalizada
+        // existeVenta=1, TieneDetalle=1, TieneDetalleEnCodigoVenta=1 => finalizada
+        // existeVenta=1, TieneDetalle=1, TieneDetalleEnCodigoVenta=0 => pendiente
+        return (!tieneDetalle && !tieneDetalleEnCodigoVenta)
+                || (tieneDetalle && tieneDetalleEnCodigoVenta);
+    }
+
+    private boolean esPendienteMaterialPorReglaFuncional(OtValidarVentaDetalleResponse validacion) {
+        if (validacion == null) {
+            return false;
+        }
+        boolean existeVenta = Boolean.TRUE.equals(validacion.getExisteVenta())
+                || (validacion.getCantidadVentas() != null && validacion.getCantidadVentas() > 0);
+        if (!existeVenta) {
+            return false;
+        }
+        boolean tieneDetalle = Boolean.TRUE.equals(validacion.getTieneDetalle());
+        boolean tieneDetalleEnCodigoVenta = Boolean.TRUE.equals(validacion.getTieneDetalleEnCodigoVenta())
+                || (validacion.getCantidadDetalles() != null && validacion.getCantidadDetalles() > 0);
+        return tieneDetalle && !tieneDetalleEnCodigoVenta;
     }
 
     /**
