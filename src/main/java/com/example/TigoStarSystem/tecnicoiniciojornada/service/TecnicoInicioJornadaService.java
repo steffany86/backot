@@ -134,6 +134,9 @@ public class TecnicoInicioJornadaService {
                 || isBlank(request.getAnclaje()) || isBlank(request.getImagen())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Todos los campos del checklist y la foto son obligatorios.");
         }
+        if (isBlank(request.getFirmaInicio())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La firma de inicio es obligatoria.");
+        }
         if (!"SI".equals(normalizeSiNo(request.getAceptoInicioJornada()))) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Debe aceptar la declaracion jurada para registrar el inicio de jornada.");
         }
@@ -225,6 +228,11 @@ public class TecnicoInicioJornadaService {
             if (!isBlank(request.getUbicacionGeoRef())) {
                 repository.actualizarUbicacionInicio(tigohogarJdbcTemplate, idInicio, request.getUbicacionGeoRef().trim());
             }
+            if (!isBlank(request.getFirmaInicio())) {
+                repository.actualizarFirmaInicio(tigohogarJdbcTemplate, idInicio, request.getFirmaInicio().trim());
+                result.put("firma_inicio", request.getFirmaInicio().trim());
+                result.put("firmaInicio", request.getFirmaInicio().trim());
+            }
             if (idAuxiliarRegistro != null && !isBlank(request.getImagenAuxiliar())) {
                 repository.actualizarImagenAuxiliarInicio(tigohogarJdbcTemplate, idInicio, request.getImagenAuxiliar().trim());
                 result.put("imagen_auxiliar", request.getImagenAuxiliar().trim());
@@ -260,6 +268,9 @@ public class TecnicoInicioJornadaService {
                 || isBlank(request.getDanoPersona()) || isBlank(request.getNovedadesTrabajo())
                 || isBlank(request.getUbicacionGeoRef())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Campos obligatorios de cierre incompletos.");
+        }
+        if (isBlank(request.getFirmaCierre())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La firma de cierre es obligatoria.");
         }
         Integer idInicio = request.getIdInicio();
         if ((idInicio == null || idInicio <= 0) && repository.existePendienteAprobacionHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario())) {
@@ -342,6 +353,9 @@ public class TecnicoInicioJornadaService {
                 repository.marcarCierreCompletado(tigohogarJdbcTemplate, idInicioCerrado);
             }
             repository.actualizarAceptoCierreJornada(tigohogarJdbcTemplate, idInicioCerrado, "SI");
+            repository.actualizarFirmaCierre(tigohogarJdbcTemplate, idInicioCerrado, request.getFirmaCierre().trim());
+            result.put("firma_cierre", request.getFirmaCierre().trim());
+            result.put("firmaCierre", request.getFirmaCierre().trim());
             if (!cierrePendienteAnterior) {
                 result.put("pendiente", false);
             }

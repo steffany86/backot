@@ -1,6 +1,8 @@
 package com.example.TigoStarSystem.ot.service;
 
 import com.example.TigoStarSystem.common.ApiException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,7 @@ import java.util.Locale;
 
 @Service
 public class OtVentaPdfStorageService {
+    private static final Logger logger = LoggerFactory.getLogger(OtVentaPdfStorageService.class);
     private static final long MAX_BYTES = 10L * 1024L * 1024L;
     private static final DateTimeFormatter DATE_PARTITION = DateTimeFormatter.ofPattern("yyyy/MM/dd");
     private final Path baseDir;
@@ -42,10 +45,11 @@ public class OtVentaPdfStorageService {
         ensureDirectory(targetDir);
 
         String fileName = buildFileName(archivo, ordenTrabajo, codigoCliente);
-        Path targetPath = targetDir.resolve(fileName);
+        Path targetPath = resolveAvailablePath(targetDir, fileName);
         try {
             Files.copy(archivo.getInputStream(), targetPath);
         } catch (IOException ex) {
+            logger.error("Error guardando archivo OT en disco. targetPath={} motivo={}", targetPath, ex.getMessage(), ex);
             throw new ApiException(
                     HttpStatus.INTERNAL_SERVER_ERROR,
                     "PDF_STORAGE_ERROR",
@@ -53,6 +57,22 @@ public class OtVentaPdfStorageService {
             );
         }
         return targetPath.toAbsolutePath().normalize().toString();
+    }
+
+    public void eliminarPdfSilencioso(String rutaPdf) {
+        if (rutaPdf == null || rutaPdf.trim().isEmpty()) {
+            return;
+        }
+        try {
+            Path path = Paths.get(rutaPdf).toAbsolutePath().normalize();
+            if (!path.startsWith(baseDir)) {
+                logger.warn("Se omitio eliminacion de PDF fuera de baseDir. path={} baseDir={}", path, baseDir);
+                return;
+            }
+            Files.deleteIfExists(path);
+        } catch (Exception ex) {
+            logger.warn("No se pudo eliminar PDF tras fallo transaccional. rutaPdf={} motivo={}", rutaPdf, ex.getMessage());
+        }
     }
 
     private void validarArchivo(MultipartFile archivo) {
@@ -148,6 +168,27 @@ public class OtVentaPdfStorageService {
             return "";
         }
         return fileName.substring(dot).toLowerCase(Locale.ROOT);
+    }
+
+    private Path resolveAvailablePath(Path targetDir, String fileName) {
+        Path candidate = targetDir.resolve(fileName);
+        if (!Files.exists(candidate)) {
+            return candidate;
+        }
+
+        String extension = extensionOf(fileName);
+        String baseName = extension.isEmpty()
+                ? fileName
+                : fileName.substring(0, fileName.length() - extension.length());
+
+        int i = 1;
+        while (true) {
+            Path withSuffix = targetDir.resolve(baseName + "_" + i + extension);
+            if (!Files.exists(withSuffix)) {
+                return withSuffix;
+            }
+            i++;
+        }
     }
 
     private void ensureDirectory(Path dir) {

@@ -10,6 +10,7 @@ public class TecnicoCierreJornadaRequest {
     private String novedadesTrabajo;
     private String observacionNovedades;
     private String ubicacionGeoRef;
+    private String firmaCierre;
     private String aceptoCierreJornada;
 
     public Integer getIdInicio() {
@@ -82,6 +83,14 @@ public class TecnicoCierreJornadaRequest {
 
     public void setUbicacionGeoRef(String ubicacionGeoRef) {
         this.ubicacionGeoRef = ubicacionGeoRef;
+    }
+
+    public String getFirmaCierre() {
+        return firmaCierre;
+    }
+
+    public void setFirmaCierre(String firmaCierre) {
+        this.firmaCierre = firmaCierre;
     }
 
     public String getAceptoCierreJornada() {

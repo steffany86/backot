@@ -771,7 +771,7 @@ public class SupervisionRepository {
                 "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
                         "ij.fecha_registro, ij.fecha_cierre, ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, " +
                         "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
-                        "ij.nombre_tecnico, ij.tecnico_nombre " +
+                        "ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre " +
                         "FROM dbo.tbl_InicioJornadaAlturas ij " +
                         "WHERE ij.fecha_registro >= ? " +
                         "  AND ij.fecha_registro < ? " +
@@ -1079,7 +1079,7 @@ public class SupervisionRepository {
                             "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                             "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                             "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen, imagen_auxiliar " +
+                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen_auxiliar, firma_inicio, firma_cierre " +
                             "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ?",
                     idInicio
             );
@@ -1120,6 +1120,42 @@ public class SupervisionRepository {
                 return null;
             }
             return findValue(rows.get(0), "imagen_auxiliar", "imagenAuxiliar");
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    public Object obtenerFirmaInicioJornada(Integer idInicio) {
+        if (idInicio == null || idInicio <= 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
+                    "SELECT firma_inicio FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ? AND ISNULL(e_eliminado, 0) = 0",
+                    idInicio
+            );
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            return findValue(rows.get(0), "firma_inicio", "firmaInicio");
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    public Object obtenerFirmaCierreJornada(Integer idInicio) {
+        if (idInicio == null || idInicio <= 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
+                    "SELECT firma_cierre FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ? AND ISNULL(e_eliminado, 0) = 0",
+                    idInicio
+            );
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
+            return findValue(rows.get(0), "firma_cierre", "firmaCierre");
         } catch (Exception ex) {
             return null;
         }
@@ -1349,7 +1385,7 @@ public class SupervisionRepository {
                         "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                         "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                         "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen_auxiliar " +
+                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen_auxiliar, firma_inicio, firma_cierre " +
                         "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio IN ("
         );
         Object[] params = new Object[ids.size()];

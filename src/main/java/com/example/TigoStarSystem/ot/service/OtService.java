@@ -596,7 +596,7 @@ public class OtService {
         );
     }
 
-    @Transactional
+    @Transactional(rollbackFor = Exception.class)
     public OtRegistrarVentaResponse registrarVentaParaRegistroOtWb(
             OtRegistrarVentaRequest request,
             Integer idSucursalSesion,
@@ -612,6 +612,16 @@ public class OtService {
             );
         }
         Integer idSucursalFinal = request.getIdSucursal() != null ? request.getIdSucursal() : idSucursalSesion;
+
+            String nombreSucursalPdf = resolverNombreSucursalParaPdf(idSucursalFinal);
+            String rutaPdf = otVentaPdfStorageService.guardarPdfVenta(
+                pdf,
+                request.getOrdenTrabajo(),
+                request.getCodigoCliente(),
+                nombreSucursalPdf
+            );
+            logRegistroOtWbTiming("guardar-pdf-disco", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
         if (idSucursalFinal == null || idSucursalFinal <= 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idSucursal es requerido.");
         }
@@ -691,15 +701,6 @@ public class OtService {
             logRegistroOtWbTiming("resolver-venta-dia", stepStart, totalStart, request);
             stepStart = System.nanoTime();
 
-            String nombreSucursalPdf = resolverNombreSucursalParaPdf(idSucursalFinal);
-            String rutaPdf = otVentaPdfStorageService.guardarPdfVenta(
-                    pdf,
-                    request.getOrdenTrabajo(),
-                    request.getCodigoCliente(),
-                    nombreSucursalPdf
-            );
-            logRegistroOtWbTiming("guardar-pdf-disco", stepStart, totalStart, request);
-            stepStart = System.nanoTime();
             if (idVentaRegistro != null && idVentaRegistro > 0 && rutaPdf != null) {
                 try {
                     int filas = otRepository.actualizarRutaPdfVenta(idVentaRegistro.longValue(), rutaPdf, idSucursalResolucion);
@@ -822,7 +823,11 @@ public class OtService {
                     rutaPdf
             );
         } catch (DataAccessException ex) {
+            otVentaPdfStorageService.eliminarPdfSilencioso(rutaPdf);
             throw traducirErrorRegistroVenta(ex, request);
+        } catch (RuntimeException ex) {
+            otVentaPdfStorageService.eliminarPdfSilencioso(rutaPdf);
+            throw ex;
         }
     }
 

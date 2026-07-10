@@ -478,6 +478,52 @@ public class TecnicoInicioJornadaRepository {
         }
     }
 
+    public int actualizarFirmaInicio(JdbcTemplate template, Integer idInicio, String firmaInicio) {
+        return actualizarTextoInicioJornada(
+                template,
+                idInicio,
+                firmaInicio,
+                "firma_inicio",
+                "firmaInicio",
+                "FirmaInicio"
+        );
+    }
+
+    public int actualizarFirmaCierre(JdbcTemplate template, Integer idInicio, String firmaCierre) {
+        return actualizarTextoInicioJornada(
+                template,
+                idInicio,
+                firmaCierre,
+                "firma_cierre",
+                "firmaCierre",
+                "FirmaCierre"
+        );
+    }
+
+    private int actualizarTextoInicioJornada(JdbcTemplate template, Integer idInicio, String value, String... columnCandidates) {
+        if (template == null || idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        String text = toText(value);
+        if (text == null) {
+            return 0;
+        }
+        Set<String> columnas = obtenerColumnasInicioJornada(template);
+        String columna = firstExistingColumn(columnas, columnCandidates);
+        if (columna == null) {
+            return 0;
+        }
+        try {
+            return template.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET [" + columna + "] = ? WHERE id_inicio = ?",
+                    text,
+                    idInicio
+            );
+        } catch (Exception ex) {
+            return 0;
+        }
+    }
+
     public int marcarNoMarcoCierreInicio(JdbcTemplate template, Integer idInicio) {
         if (template == null || idInicio == null || idInicio <= 0) {
             return 0;

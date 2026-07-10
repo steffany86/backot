@@ -26,9 +26,13 @@ import java.util.Set;
 public class ListaOtRepository {
     private static final Logger logger = LoggerFactory.getLogger(ListaOtRepository.class);
     private static final DateTimeFormatter LEGACY_DATE_FORMAT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+    // Conexion a BD central para conformacion/salesforce y queries cruzadas.
     private final JdbcTemplate centralJdbcTemplate;
+    // Conexion local/principal de la sucursal activa.
     private final JdbcTemplate localJdbcTemplate;
+    // Catalogo de sucursales para resolver nombre/id en filtros de central.
     private final SucursalRepository sucursalRepository;
+    // Helper que decide que datasource usar segun idSucursal.
     private final OtDbSupport dbSupport;
 
     public ListaOtRepository(
@@ -42,9 +46,11 @@ public class ListaOtRepository {
             @Value("${app.sucre.datasource.username:${spring.datasource.username}}") String sucreUsername,
             @Value("${app.sucre.datasource.password:${spring.datasource.password}}") String sucrePassword,
             @Value("${app.datasource.params:encrypt=false;trustServerCertificate=true}") String dbParams) {
+        // Inyeccion de conexiones y repos de soporte.
         this.centralJdbcTemplate = centralJdbcTemplate;
         this.localJdbcTemplate = jdbcTemplate;
         this.sucursalRepository = sucursalRepository;
+        // Configura rutas/credenciales para resolver conexiones dinamicas por sucursal.
         this.dbSupport = new OtDbSupport(
                 sucursalRepository,
                 dbDriver,
@@ -70,6 +76,7 @@ public class ListaOtRepository {
         LinkedHashMap<String, Map<String, Object>> mergedRows = new LinkedHashMap<>();
 
         if (tecnicoParam != null || (idUsuario != null && idUsuario > 0)) {
+            // Intento principal: SP legacy filtrando por tecnico/salesforce derivado del usuario.
             List<String> salesforceDesdeUsuario = obtenerSalesforcePorIdUsuario(idUsuario, idSucursal, fecha);
             logger.info("{{\"evento\":\"LISTA_OT_FLUJO_USUARIO_CONFORMACION\",\"idUsuario\":{},\"idSucursal\":{},\"fecha\":\"{}\",\"tecnicoSesion\":\"{}\",\"salesforce\":{}}}",
                     idUsuario, idSucursal, fecha, tecnicoParam, salesforceDesdeUsuario);
@@ -100,6 +107,7 @@ public class ListaOtRepository {
             }
 
             if (mergedRows.isEmpty()) {
+                // Fallback: reintenta contra central con variantes de tecnico de conformacion.
                 mergeRows(mergedRows, listarDesdeCentralConTecnico(fechaSql, fechaLegacy, tecnicoParam, idSucursal, idUsuario));
                 if (!mergedRows.isEmpty()) {
                     return new ArrayList<>(mergedRows.values());
@@ -108,6 +116,7 @@ public class ListaOtRepository {
         }
 
         try {
+            // Fallback sin tecnico (solo fecha) en el mismo SP legacy.
             List<Map<String, Object>> rows = templateOt.queryForList(
                     "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?",
                     fechaLegacy
@@ -124,6 +133,7 @@ public class ListaOtRepository {
         }
 
         try {
+            // Fallback OTWEB clon paginacion.
             List<Map<String, Object>> rows = templateOt.queryForList(
                     "EXEC dbo.sp_ObtenerListaOrdenesTrabajo_OTWEB_clon_paginacion ?",
                     fechaSql
@@ -139,6 +149,7 @@ public class ListaOtRepository {
         }
 
         try {
+            // Fallback final legacy antiguo.
             mergeRows(mergedRows, templateOt.queryForList(
                     "EXEC dbo.sp_ObtenerListaOrdenesTrabajo_clon_paginacion ?",
                     fechaSql

@@ -199,6 +199,30 @@ public class SupervisionController {
                 .body(imagen.getBytes());
     }
 
+    @GetMapping("/jornadas/{idInicio}/firma-inicio")
+    public ResponseEntity<byte[]> obtenerFirmaInicioJornada(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idInicio") Integer idInicio) {
+        SupervisionService.JornadaImagen imagen = service.obtenerFirmaInicioJornada(idInicio, token);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(imagen.getContentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
+                .body(imagen.getBytes());
+    }
+
+    @GetMapping("/jornadas/{idInicio}/firma-cierre")
+    public ResponseEntity<byte[]> obtenerFirmaCierreJornada(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idInicio") Integer idInicio) {
+        SupervisionService.JornadaImagen imagen = service.obtenerFirmaCierreJornada(idInicio, token);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(imagen.getContentType()))
+                .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                .cacheControl(CacheControl.maxAge(10, TimeUnit.MINUTES).cachePrivate())
+                .body(imagen.getBytes());
+    }
+
     @PostMapping("/jornadas/{idInicio}/aprobar")
     public ResponseEntity<ApiResponse<Map<String, Object>>> aprobarJornada(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

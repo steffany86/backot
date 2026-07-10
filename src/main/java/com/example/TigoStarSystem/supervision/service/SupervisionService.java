@@ -77,7 +77,9 @@ public class SupervisionService {
         Integer idSupervisor = resolveIdUsuario(me);
         String sucursal = resolveSucursalNombre(me);
         List<Map<String, Object>> out = new ArrayList<>();
-        out.addAll(repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite));
+        for (Map<String, Object> pendiente : repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
+            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+        }
         out.addAll(enriquecerRevisionesPenalizadas(
                 repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
                 sucursal
@@ -385,6 +387,26 @@ public class SupervisionService {
         }
         JornadaImagen thumb = crearMiniatura(imagen, 96, 96);
         return thumb == null ? imagen : thumb;
+    }
+
+    public JornadaImagen obtenerFirmaInicioJornada(Integer idInicio, String token) {
+        authService.me(token);
+        Object raw = repository.obtenerFirmaInicioJornada(idInicio);
+        JornadaImagen imagen = decodeImagen(raw);
+        if (imagen == null || imagen.getBytes().length == 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro firma de inicio para la jornada.");
+        }
+        return imagen;
+    }
+
+    public JornadaImagen obtenerFirmaCierreJornada(Integer idInicio, String token) {
+        authService.me(token);
+        Object raw = repository.obtenerFirmaCierreJornada(idInicio);
+        JornadaImagen imagen = decodeImagen(raw);
+        if (imagen == null || imagen.getBytes().length == 0) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro firma de cierre para la jornada.");
+        }
+        return imagen;
     }
 
     public Map<String, Object> aprobarInicioPendiente(Integer idInicio, String token) {

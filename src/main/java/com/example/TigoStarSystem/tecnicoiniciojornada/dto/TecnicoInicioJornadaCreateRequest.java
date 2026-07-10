@@ -19,6 +19,7 @@ public class TecnicoInicioJornadaCreateRequest {
     private String imagen;
     private String imagenAuxiliar;
     private String ubicacionGeoRef;
+    private String firmaInicio;
     private String aceptoInicioJornada;
     private String sucursal;
 
@@ -148,6 +149,14 @@ public class TecnicoInicioJornadaCreateRequest {
 
     public void setUbicacionGeoRef(String ubicacionGeoRef) {
         this.ubicacionGeoRef = ubicacionGeoRef;
+    }
+
+    public String getFirmaInicio() {
+        return firmaInicio;
+    }
+
+    public void setFirmaInicio(String firmaInicio) {
+        this.firmaInicio = firmaInicio;
     }
 
     public String getAceptoInicioJornada() {

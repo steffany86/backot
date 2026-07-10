@@ -6,7 +6,13 @@ import org.springframework.stereotype.Repository;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeParseException;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,7 +58,7 @@ public class BoletaDigitalRepository {
 
     public Map<String, Object> obtenerCita(Integer codigoCliente, Integer ordenTrabajo) {
         List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
-                "SELECT TOP 1 cliente_nro, OT, OT_FISICA, Estado " +
+                "SELECT * " +
                         "FROM dbo.tbl_BO_CITA_MAKIRO_Historial " +
                         "WHERE Vigente = 2 " +
                         "  AND OT_FISICA IS NOT NULL " +
@@ -61,7 +67,7 @@ public class BoletaDigitalRepository {
                 String.valueOf(codigoCliente),
                 String.valueOf(ordenTrabajo)
         );
-        return rows == null || rows.isEmpty() ? null : rows.get(0);
+        return elegirMejorCita(rows);
     }
 
     public void asegurarTablaArchivoDigital(JdbcTemplate jdbcTemplate) {
@@ -113,7 +119,7 @@ public class BoletaDigitalRepository {
 
     private Map<String, CitaInfo> cargarCitasFinalizadas() {
         List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
-                "SELECT cliente_nro, OT, OT_FISICA, Estado " +
+                "SELECT * " +
                         "FROM dbo.tbl_BO_CITA_MAKIRO_Historial " +
                         "WHERE Vigente = 2 " +
                         "  AND OT_FISICA IS NOT NULL"
@@ -125,13 +131,149 @@ public class BoletaDigitalRepository {
             if (cliente == null || ot == null) {
                 continue;
             }
-            CitaInfo info = new CitaInfo(
-                    toStringValue(findValue(row, "OT_FISICA")),
-                    toStringValue(findValue(row, "Estado"))
-            );
-            out.put(buildKey(cliente, ot), info);
+            CitaInfo info = toCitaInfo(row);
+            String key = buildKey(cliente, ot);
+            CitaInfo current = out.get(key);
+            if (esMejorCita(info, current)) {
+                out.put(key, info);
+            }
         }
         return out;
+    }
+
+    private Map<String, Object> elegirMejorCita(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+        Map<String, Object> bestRow = null;
+        CitaInfo bestInfo = null;
+        for (Map<String, Object> row : rows) {
+            CitaInfo info = toCitaInfo(row);
+            if (esMejorCita(info, bestInfo)) {
+                bestInfo = info;
+                bestRow = row;
+            }
+        }
+        return bestRow;
+    }
+
+    private CitaInfo toCitaInfo(Map<String, Object> row) {
+        return new CitaInfo(
+                toStringValue(findValue(row, "OT_FISICA")),
+                toStringValue(findValue(row, "Estado")),
+                estadoRank(findValue(row, "Estado")),
+                fechaRank(row),
+                idRank(row)
+        );
+    }
+
+    private boolean esMejorCita(CitaInfo candidate, CitaInfo current) {
+        if (candidate == null) {
+            return false;
+        }
+        if (current == null) {
+            return true;
+        }
+        if (candidate.estadoRank != current.estadoRank) {
+            return candidate.estadoRank > current.estadoRank;
+        }
+        if (candidate.fechaRank != current.fechaRank) {
+            return candidate.fechaRank > current.fechaRank;
+        }
+        if (candidate.idRank != current.idRank) {
+            return candidate.idRank > current.idRank;
+        }
+        return false;
+    }
+
+    private int estadoRank(Object value) {
+        String estado = toStringValue(value);
+        if (estado == null) {
+            return 0;
+        }
+        String normalized = estado.trim().toUpperCase();
+        if ("FINALIZADO".equals(normalized)) {
+            return 3;
+        }
+        if (normalized.contains("FINAL")) {
+            return 2;
+        }
+        return 1;
+    }
+
+    private long fechaRank(Map<String, Object> row) {
+        Object value = findValue(
+                row,
+                "Fecha", "fecha",
+                "Fecha_Carga", "fecha_carga",
+                "Fecha_Registro", "fecha_registro",
+                "FechaActualizacion", "fechaActualizacion",
+                "Fecha_Modificacion", "fecha_modificacion"
+        );
+        return temporalRank(value);
+    }
+
+    private long idRank(Map<String, Object> row) {
+        Object value = findValue(row, "Id", "ID", "id", "Id_Cita", "id_cita", "IdBOCita", "idBOCita");
+        return numericRank(value);
+    }
+
+    private long temporalRank(Object value) {
+        if (value == null) {
+            return 0L;
+        }
+        if (value instanceof Timestamp) {
+            return ((Timestamp) value).getTime();
+        }
+        if (value instanceof Date) {
+            return ((Date) value).getTime();
+        }
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        }
+        if (value instanceof LocalDate) {
+            return ((LocalDate) value).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        }
+        String raw = toStringValue(value);
+        if (raw == null || raw.trim().isEmpty()) {
+            return 0L;
+        }
+        String text = raw.trim();
+        try {
+            return OffsetDateTime.parse(text).toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDateTime.parse(text).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        } catch (DateTimeParseException ignored) {
+        }
+        try {
+            return LocalDate.parse(text.substring(0, Math.min(10, text.length()))).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        } catch (RuntimeException ignored) {
+        }
+        return numericRank(value);
+    }
+
+    private long numericRank(Object value) {
+        if (value == null) {
+            return 0L;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        String raw = toStringValue(value);
+        if (raw == null) {
+            return 0L;
+        }
+        String digits = raw.replaceAll("[^0-9]", "");
+        if (digits.isEmpty()) {
+            return 0L;
+        }
+        try {
+            return Long.parseLong(digits);
+        } catch (NumberFormatException ex) {
+            return 0L;
+        }
     }
 
     private Map<String, Object> normalizarRow(
@@ -274,10 +416,16 @@ public class BoletaDigitalRepository {
     private static final class CitaInfo {
         private final String otFisica;
         private final String estado;
+        private final int estadoRank;
+        private final long fechaRank;
+        private final long idRank;
 
-        private CitaInfo(String otFisica, String estado) {
+        private CitaInfo(String otFisica, String estado, int estadoRank, long fechaRank, long idRank) {
             this.otFisica = otFisica;
             this.estado = estado;
+            this.estadoRank = estadoRank;
+            this.fechaRank = fechaRank;
+            this.idRank = idRank;
         }
     }
 
