@@ -16,7 +16,9 @@ public class CentralDbConfig {
     @Bean
     @Primary
     public JdbcTemplate jdbcTemplate(DataSource dataSource) {
-        return new JdbcTemplate(dataSource);
+        JdbcTemplate template = new JdbcTemplate(dataSource);
+        template.setQueryTimeout(300);
+        return template;
     }
 
     @Bean
@@ -56,7 +58,9 @@ public class CentralDbConfig {
         config.setKeepaliveTime(keepaliveTime);
         config.setInitializationFailTimeout(initializationFailTimeout);
         config.setConnectionTestQuery(connectionTestQuery);
-        return new JdbcTemplate(new HikariDataSource(config));
+        JdbcTemplate template = new JdbcTemplate(new HikariDataSource(config));
+        template.setQueryTimeout(300);
+        return template;
     }
 
     @Bean
@@ -96,7 +100,9 @@ public class CentralDbConfig {
         config.setKeepaliveTime(keepaliveTime);
         config.setInitializationFailTimeout(initializationFailTimeout);
         config.setConnectionTestQuery(connectionTestQuery);
-        return new JdbcTemplate(new HikariDataSource(config));
+        JdbcTemplate template = new JdbcTemplate(new HikariDataSource(config));
+        template.setQueryTimeout(300);
+        return template;
     }
 
     private String requireValue(String propertyName, String value) {

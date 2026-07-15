@@ -15,7 +15,7 @@ import java.util.Map;
 import java.time.LocalDate;
 
 @RestController
-@RequestMapping("/supervisor/spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO")
+@RequestMapping("/supervisor")
 public class EstadoDiaBoCitaController {
     private final EstadoDiaBoCitaService service;
 
@@ -23,7 +23,7 @@ public class EstadoDiaBoCitaController {
         this.service = service;
     }
 
-    @GetMapping
+    @GetMapping("/spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> obtenerUltimoEstadoDia(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
             @RequestParam(value = "fecha", required = false)
@@ -32,6 +32,17 @@ public class EstadoDiaBoCitaController {
         return ResponseEntity.ok(ApiResponse.of(
                 service.consultarUltimoEstadoDia(fecha, tecnico, token),
                 "Consulta ejecutada en BDControlOrdenes."
+        ));
+    }
+
+    @GetMapping("/cruce-ordenes-agenda-makiro")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> obtenerCruceOrdenesAgendaMakiro(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.consultarCruceOrdenesAgendaMakiro(fecha, token),
+                "Cruce Agenda vs Makiro ejecutado en BDControlOrdenes."
         ));
     }
 }

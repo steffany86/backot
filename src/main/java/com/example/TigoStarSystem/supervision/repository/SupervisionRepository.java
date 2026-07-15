@@ -369,8 +369,33 @@ public class SupervisionRepository {
     public List<Map<String, Object>> listarTecnicosDeGrupos(String sucursal) {
         JdbcTemplate sucursalTemplate = resolveJdbcTemplateBySucursalNombre(sucursal);
         List<Map<String, Object>> ids = cargarTecnicosDesdeTodosLosGrupos(sucursalTemplate);
+        if (ids.isEmpty()) {
+            ids.addAll(cargarTecnicosActivosDesdeVendedor(sucursalTemplate));
+        }
         ids = dedupeTecnicos(ids);
         return enriquecerTecnicosDesdeSucursal(ids, sucursalTemplate);
+    }
+
+    private List<Map<String, Object>> cargarTecnicosActivosDesdeVendedor(JdbcTemplate template) {
+        if (template == null) {
+            return new ArrayList<>();
+        }
+        String sql =
+                "SELECT " +
+                        "  CAST(v.Id_Vendedor AS INT) AS idTecnico, " +
+                        "  CAST(v.Id_Vendedor AS INT) AS id_tecnico, " +
+                        "  CAST(v.Nombre AS NVARCHAR(200)) AS tecnico, " +
+                        "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codigo, " +
+                        "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codEmpleado " +
+                        "FROM dbo.tbl_Vendedor v " +
+                        "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                        "  AND v.Id_Vendedor IS NOT NULL " +
+                        "ORDER BY v.Nombre, v.Id_Vendedor";
+        try {
+            return template.queryForList(sql);
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
     }
 
     private List<Map<String, Object>> cargarTecnicosDesdeGruposSupervisor(
@@ -1976,6 +2001,8 @@ public class SupervisionRepository {
     }
 
     public List<Map<String, Object>> listarTecnicosPorSupervisorBackoffice(Integer idSupervisor, String sucursal, String supervisorNombre) {
-        return listarTecnicosPorSupervisor(idSupervisor, sucursal, supervisorNombre);
+        // Requisito funcional: en agendar supervision se debe mostrar siempre el universo de tecnicos.
+        // Se ignora idSupervisor y se lista desde todos los grupos de la sucursal.
+        return listarTecnicosDeGrupos(sucursal);
     }
 }

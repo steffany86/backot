@@ -58,6 +58,8 @@ public class OtRegistrarVentaRequest {
     @NotNull(message = "boca es requerido")
     private Integer boca;
     private String tipoTecnologia;
+    @JsonAlias({"inicioAgendado", "inicio_agendado", "Fecha_Agenda", "fecha_agenda"})
+    private String fechaAgenda;
     @JsonAlias({"CheckPlantaExterna", "check_planta_externa"})
     private Boolean checkPlantaExterna;
     @JsonAlias({"TieneDetalle", "tiene_detalle"})
@@ -237,6 +239,14 @@ public class OtRegistrarVentaRequest {
 
     public void setTipoTecnologia(String tipoTecnologia) {
         this.tipoTecnologia = tipoTecnologia;
+    }
+
+    public String getFechaAgenda() {
+        return fechaAgenda;
+    }
+
+    public void setFechaAgenda(String fechaAgenda) {
+        this.fechaAgenda = fechaAgenda;
     }
 
     public Boolean getCheckPlantaExterna() {

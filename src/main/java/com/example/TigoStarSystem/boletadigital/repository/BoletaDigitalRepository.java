@@ -97,6 +97,27 @@ public class BoletaDigitalRepository {
         );
     }
 
+    public int marcarActualizacionBoletaHistorial(
+            Integer codigoCliente,
+            Integer ordenTrabajo,
+            String usuarioModifica) {
+        if (codigoCliente == null || ordenTrabajo == null) {
+            return 0;
+        }
+        return centralJdbcTemplate.update(
+            "UPDATE dbo.tbl_BO_CITA_MAKIRO_Historial " +
+                "SET Actualizado_BOLETA = 1, " +
+                "usuarioModifica_BOLETA = ?, " +
+                "fechaRegistroModifica_BOLETA = GETDATE() " +
+                "WHERE cliente_nro = ? " +
+                "AND OT = ? " +
+                "AND Vigente = 2",
+            usuarioModifica,
+            String.valueOf(codigoCliente),
+            String.valueOf(ordenTrabajo)
+        );
+    }
+
     public int registrarCambioArchivo(
             JdbcTemplate jdbcTemplate,
             Integer idVenta,

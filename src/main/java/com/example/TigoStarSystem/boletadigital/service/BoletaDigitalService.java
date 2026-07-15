@@ -10,7 +10,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -30,6 +33,8 @@ import java.util.Map;
 
 @Service
 public class BoletaDigitalService {
+    private static final Logger logger = LoggerFactory.getLogger(BoletaDigitalService.class);
+
     private final BoletaDigitalRepository repository;
     private final AuthService authService;
     private final DbConnectionManager dbConnectionManager;
@@ -142,15 +147,17 @@ public class BoletaDigitalService {
 
         boolean archivoCopiado = false;
         try {
-            Files.createDirectories(destino.getParent());
-            try (InputStream in = archivo.getInputStream()) {
-                Files.copy(in, destino);
-            }
+            destino = guardarArchivo(destino, nuevaRuta, archivo);
+            nuevaRuta = toRutaServidor(destino);
             archivoCopiado = true;
 
-            String usuario = me != null && me.getUsuario() != null ? me.getUsuario().getNombre() : null;
+            String usuario = me != null && me.getUsuario() != null ? trimToNull(me.getUsuario().getLoggin()) : null;
+            if (usuario == null && me != null && me.getUsuario() != null) {
+                usuario = trimToNull(me.getUsuario().getNombre());
+            }
             repository.registrarCambioArchivo(template, idVenta, fileNameOrPath(rutaAnterior), originalName, comparacion, usuario);
             repository.actualizarRutaPdf(template, idVenta, nuevaRuta);
+            marcarHistorialSinFallar(codigoCliente, ordenTrabajo, usuario);
 
             Map<String, Object> out = new HashMap<>();
             out.put("idVenta", idVenta);
@@ -190,6 +197,47 @@ public class BoletaDigitalService {
         String relative = normalized.substring(prefix.length());
         String uncBase = pdfUncShare.endsWith("\\") ? pdfUncShare.substring(0, pdfUncShare.length() - 1) : pdfUncShare;
         return Paths.get(uncBase + "\\" + relative).normalize();
+    }
+
+    private Path guardarArchivo(Path destino, String rutaServidor, MultipartFile archivo) throws IOException {
+        try {
+            copiarArchivo(destino, archivo);
+            return destino;
+        } catch (IOException ex) {
+            Path destinoLocal = Paths.get(rutaServidor).toAbsolutePath().normalize();
+            if (destinoLocal.equals(destino)) {
+                throw ex;
+            }
+            logger.warn(
+                    "No se pudo guardar PDF en ruta primaria {}; se intentara ruta local {}",
+                    destino,
+                    destinoLocal,
+                    ex
+            );
+            copiarArchivo(destinoLocal, archivo);
+            return destinoLocal;
+        }
+    }
+
+    private void copiarArchivo(Path destino, MultipartFile archivo) throws IOException {
+        Files.createDirectories(destino.getParent());
+        try (InputStream in = archivo.getInputStream()) {
+            Files.copy(in, destino);
+        }
+    }
+
+    private void marcarHistorialSinFallar(Integer codigoCliente, Integer ordenTrabajo, String usuario) {
+        try {
+            repository.marcarActualizacionBoletaHistorial(codigoCliente, ordenTrabajo, usuario);
+        } catch (DataAccessException ex) {
+            logger.warn(
+                    "No se pudo marcar actualizacion BOLETA en historial central. cliente={}, ot={}, usuario={}",
+                    codigoCliente,
+                    ordenTrabajo,
+                    usuario,
+                    ex
+            );
+        }
     }
 
     private String construirRutaDestino(

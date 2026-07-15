@@ -1,5 +1,7 @@
 package com.example.TigoStarSystem.ot.dto;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+
 import java.util.List;
 
 public class OtRegistrarDetalleAgendaRequest {
@@ -7,6 +9,8 @@ public class OtRegistrarDetalleAgendaRequest {
     private Long idVenta;
     private Integer codigoCliente;
     private String fechaEjecucion;
+    @JsonAlias({"inicioAgendado", "inicio_agendado", "Fecha_Agenda", "fecha_agenda"})
+    private String fechaAgenda;
     private Integer idEstado;
     private String observacion;
     private List<OtDetalleMaterialRequest> materiales;
@@ -41,6 +45,14 @@ public class OtRegistrarDetalleAgendaRequest {
 
     public void setFechaEjecucion(String fechaEjecucion) {
         this.fechaEjecucion = fechaEjecucion;
+    }
+
+    public String getFechaAgenda() {
+        return fechaAgenda;
+    }
+
+    public void setFechaAgenda(String fechaAgenda) {
+        this.fechaAgenda = fechaAgenda;
     }
 
     public Integer getIdEstado() {

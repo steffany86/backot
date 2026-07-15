@@ -33,8 +33,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.math.BigDecimal;
 import java.sql.SQLException;
+import java.sql.Timestamp;
 import java.text.Normalizer;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -596,7 +600,7 @@ public class OtService {
         );
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    @Transactional(timeout = 300, rollbackFor = Exception.class)
     public OtRegistrarVentaResponse registrarVentaParaRegistroOtWb(
             OtRegistrarVentaRequest request,
             Integer idSucursalSesion,
@@ -699,6 +703,16 @@ public class OtService {
                 }
             }
             logRegistroOtWbTiming("resolver-venta-dia", stepStart, totalStart, request);
+            stepStart = System.nanoTime();
+
+            if (idVentaRegistro != null && idVentaRegistro > 0) {
+                actualizarFechaAgendaVentaSiCorresponde(
+                        idVentaRegistro.longValue(),
+                        request.getFechaAgenda(),
+                        idSucursalResolucion
+                );
+            }
+            logRegistroOtWbTiming("actualizar-fecha-agenda", stepStart, totalStart, request);
             stepStart = System.nanoTime();
 
             if (idVentaRegistro != null && idVentaRegistro > 0 && rutaPdf != null) {
@@ -1649,6 +1663,7 @@ public class OtService {
         final LocalDate fechaTrabajoFinal = fechaTrabajo;
         final String numeroOrdenFinal = numeroOrden;
         return ejecutarEnTransaccionSucursal(idSucursal, () -> {
+            actualizarFechaAgendaVentaSiCorresponde(idVentaFinal, request.getFechaAgenda(), idSucursal);
             int inserted = 0;
             List<OtDetalleMaterialRequest> devoluciones = new ArrayList<>();
             for (OtDetalleMaterialRequest material : request.getMateriales()) {
@@ -2586,6 +2601,64 @@ public class OtService {
                 "VALIDATION_ERROR",
                 "fecha invalida. Use yyyy-MM-dd, dd/MM/yyyy o yyyyMMdd."
         );
+    }
+
+    private void actualizarFechaAgendaVentaSiCorresponde(Long idVenta, String fechaAgendaRaw, Integer idSucursal) {
+        Timestamp fechaAgenda = parseFechaAgendaFlexible(fechaAgendaRaw);
+        if (fechaAgenda == null) {
+            return;
+        }
+        try {
+            int filas = otRepository.actualizarFechaAgendaVenta(idVenta, fechaAgenda, idSucursal);
+            if (filas <= 0) {
+                throw new ApiException(
+                        HttpStatus.INTERNAL_SERVER_ERROR,
+                        "FECHA_AGENDA_ERROR",
+                        "No se pudo registrar Fecha_Agenda en tbl_Venta."
+                );
+            }
+        } catch (DataAccessException ex) {
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "FECHA_AGENDA_ERROR",
+                    "No se pudo registrar Fecha_Agenda en tbl_Venta."
+            );
+        }
+    }
+
+    private Timestamp parseFechaAgendaFlexible(String fechaAgenda) {
+        if (fechaAgenda == null || fechaAgenda.trim().isEmpty()) {
+            return null;
+        }
+        String value = fechaAgenda.trim();
+        try {
+            return Timestamp.from(OffsetDateTime.parse(value).toInstant());
+        } catch (DateTimeParseException ignored) {
+            // Intentar formatos sin zona horaria.
+        }
+        DateTimeFormatter[] dateTimeFormatters = new DateTimeFormatter[] {
+                DateTimeFormatter.ISO_LOCAL_DATE_TIME,
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"),
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"),
+                DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"),
+                DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm")
+        };
+        for (DateTimeFormatter formatter : dateTimeFormatters) {
+            try {
+                return Timestamp.valueOf(LocalDateTime.parse(value, formatter));
+            } catch (DateTimeParseException ignored) {
+                // Intentar con el siguiente formato.
+            }
+        }
+        try {
+            return Timestamp.valueOf(parseFechaFlexible(value).atTime(LocalTime.MIN));
+        } catch (ApiException ignored) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "fechaAgenda invalida. Use yyyy-MM-ddTHH:mm:ss, yyyy-MM-dd HH:mm:ss o dd/MM/yyyy HH:mm:ss."
+            );
+        }
     }
 
     private LocalDate toLocalDate(Object value) {

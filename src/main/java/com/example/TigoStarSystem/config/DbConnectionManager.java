@@ -131,7 +131,9 @@ public class DbConnectionManager {
         config.setMaximumPoolSize(5);
         config.setMinimumIdle(0);
         config.setInitializationFailTimeout(-1);
-        return new JdbcTemplate(new HikariDataSource(config));
+        JdbcTemplate template = new JdbcTemplate(new HikariDataSource(config));
+        template.setQueryTimeout(300);
+        return template;
     }
 
     private String construirUrl(String host, String baseDeDatos) {

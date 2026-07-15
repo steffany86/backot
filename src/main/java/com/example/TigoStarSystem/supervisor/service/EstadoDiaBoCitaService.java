@@ -27,6 +27,19 @@ public class EstadoDiaBoCitaService {
         return repository.obtenerUltimoEstadoDia(fechaConsulta, tecnicoResuelto);
     }
 
+    public List<Map<String, Object>> consultarCruceOrdenesAgendaMakiro(LocalDate fecha, String token) {
+        if (trimToNull(token) == null) {
+            throw new ApiException(
+                    HttpStatus.UNAUTHORIZED,
+                    "AUTH_REQUIRED",
+                    "Debes enviar un X-Session-Token valido."
+            );
+        }
+        authService.me(token);
+        LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
+        return repository.obtenerCruceOrdenesAgendaMakiro(fechaConsulta);
+    }
+
     private String resolveTecnico(String tecnico, String token) {
         String tecnicoParam = trimToNull(tecnico);
         if (tecnicoParam != null) {

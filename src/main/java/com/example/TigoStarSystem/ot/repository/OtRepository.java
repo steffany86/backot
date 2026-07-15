@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
+import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -1218,6 +1219,17 @@ public class OtRepository {
         return template(idSucursalSesion).update(
                 "UPDATE dbo.tbl_Venta SET RutaPdf = ? WHERE Id_Venta = ?",
                 rutaPdf.trim(),
+                idVenta
+        );
+    }
+
+    public int actualizarFechaAgendaVenta(Long idVenta, Timestamp fechaAgenda, Integer idSucursalSesion) {
+        if (idVenta == null || idVenta <= 0 || fechaAgenda == null) {
+            return 0;
+        }
+        return template(idSucursalSesion).update(
+                "UPDATE dbo.tbl_Venta SET Fecha_Agenda = ? WHERE Id_Venta = ?",
+                fechaAgenda,
                 idVenta
         );
     }
