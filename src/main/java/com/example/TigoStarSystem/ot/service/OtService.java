@@ -2241,10 +2241,7 @@ public class OtService {
         if (request.getTipoTecnologia() == null || request.getTipoTecnologia().trim().isEmpty()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tipoTecnologia es requerido.");
         }
-        boolean registroManual = "MANUAL".equalsIgnoreCase(request.getOrigen().trim());
-        if (!registroManual && parseFechaAgendaFlexible(request.getFechaAgenda()) == null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "fechaAgenda es requerida y debe tener un formato valido.");
-        }
+        request.setFechaAgenda(resolverFechaAgendaParaRegistro(request.getFechaAgenda()));
         if (request.getCheckPlantaExterna() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "checkPlantaExterna es requerido.");
         }
@@ -2695,6 +2692,20 @@ public class OtService {
                     "No se pudo registrar Fecha_Agenda en tbl_Venta."
             );
         }
+    }
+
+    private String resolverFechaAgendaParaRegistro(String fechaAgendaRaw) {
+        Timestamp fechaAgenda = parseFechaAgendaFlexible(fechaAgendaRaw);
+        if (fechaAgenda != null) {
+            return fechaAgendaRaw == null ? null : fechaAgendaRaw.trim();
+        }
+        String fechaHoy = LocalDate.now().toString();
+        logger.warn(
+                "fechaAgenda ausente o invalida en registro OT, se usara la fecha actual. valorRecibido={}, fechaUsada={}",
+                fechaAgendaRaw,
+                fechaHoy
+        );
+        return fechaHoy;
     }
 
     private Timestamp parseFechaAgendaFlexible(String fechaAgenda) {
