@@ -75,4 +75,20 @@ public class BoletaDigitalController {
                 "Archivo digital actualizado."
         ));
     }
+
+    @PostMapping("/todo-ok")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> marcarTodoOk(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idVenta", required = false) Integer idVenta,
+            @RequestParam(value = "id_venta", required = false) Integer idVentaSnake,
+            @RequestParam(value = "todoOk", required = false, defaultValue = "true") boolean todoOk) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.marcarTodoOk(
+                        token,
+                        idVenta != null ? idVenta : idVentaSnake,
+                        todoOk
+                ),
+                "Boleta marcada como Todo OK."
+        ));
+    }
 }

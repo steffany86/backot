@@ -8,6 +8,7 @@ import com.example.TigoStarSystem.centralgrupos.repository.CentralGruposReposito
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.config.DbConnectionManager;
 import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -24,14 +25,17 @@ public class CentralGruposService {
     private final CentralGruposRepository repository;
     private final DbConnectionManager dbConnectionManager;
     private final AuthService authService;
+    private final JdbcTemplate tigohogarJdbcTemplate;
 
     public CentralGruposService(
             CentralGruposRepository repository,
             DbConnectionManager dbConnectionManager,
-            AuthService authService) {
+            AuthService authService,
+            @Qualifier("tigohogarJdbcTemplate") JdbcTemplate tigohogarJdbcTemplate) {
         this.repository = repository;
         this.dbConnectionManager = dbConnectionManager;
         this.authService = authService;
+        this.tigohogarJdbcTemplate = tigohogarJdbcTemplate;
     }
 
     public List<Map<String, Object>> listarGrupos(String token, String sucursal) {
@@ -119,12 +123,21 @@ public class CentralGruposService {
                 idUsuarioSupervisor,
                 nombreSupervisor
         );
+        int iniciosPendientesActualizados = repository.actualizarSupervisorIniciosPendientesPorGrupo(
+                tigohogarJdbcTemplate,
+                dbConnectionManager.connDb("bdcontrolordenes"),
+                sucursalResuelta,
+                nombreGrupo,
+                null,
+                idUsuarioSupervisor
+        );
         if (actualizados <= 0 && rows.isEmpty()) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "NO_DATA", "No se pudo asignar supervisor al grupo.");
         }
 
         Map<String, Object> out = rows.isEmpty() ? new HashMap<>() : new HashMap<>(rows.get(0));
         out.put("actualizadosConformacion", actualizados);
+        out.put("iniciosPendientesActualizados", iniciosPendientesActualizados);
         out.put("idGrupo", idGrupo);
         out.put("idSupervisor", idUsuarioSupervisor);
         return out;
@@ -254,6 +267,7 @@ public class CentralGruposService {
         }
 
         int actualizados = 0;
+        int iniciosPendientesActualizados = 0;
         List<Integer> aplicados = new ArrayList<>();
         for (Map<String, Object> row : gruposObjetivo) {
             Integer idGrupo = toInteger(row.get("id_grupo"));
@@ -267,6 +281,14 @@ public class CentralGruposService {
             );
             if (affected > 0) {
                 actualizados += affected;
+                iniciosPendientesActualizados += repository.actualizarSupervisorIniciosPendientesPorGrupo(
+                        tigohogarJdbcTemplate,
+                        dbConnectionManager.connDb("bdcontrolordenes"),
+                        sucursalResuelta,
+                        nombreGrupo,
+                        idSupervisorOrigen,
+                        idSupervisorDestino
+                );
                 if (idGrupo != null) {
                     aplicados.add(idGrupo);
                 }
@@ -275,6 +297,7 @@ public class CentralGruposService {
 
         Map<String, Object> out = new HashMap<>();
         out.put("actualizados", actualizados);
+        out.put("iniciosPendientesActualizados", iniciosPendientesActualizados);
         out.put("idSupervisorOrigen", idSupervisorOrigen);
         out.put("idSupervisorDestino", idSupervisorDestino);
         out.put("idGruposAplicados", aplicados);

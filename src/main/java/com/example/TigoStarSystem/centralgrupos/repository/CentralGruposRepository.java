@@ -308,4 +308,118 @@ public class CentralGruposRepository {
             }
         }
     }
+
+    public int actualizarSupervisorIniciosPendientesPorGrupo(
+            JdbcTemplate tigohogarTemplate,
+            JdbcTemplate centralTemplate,
+            String sucursal,
+            String nombreGrupo,
+            Integer idSupervisorOrigen,
+            Integer idSupervisorDestino) {
+        if (tigohogarTemplate == null
+                || centralTemplate == null
+                || nombreGrupo == null
+                || nombreGrupo.trim().isEmpty()
+                || idSupervisorDestino == null
+                || idSupervisorDestino <= 0) {
+            return 0;
+        }
+
+        List<Integer> idsTecnicos = listarIdsTecnicosGrupoCentral(centralTemplate, sucursal, nombreGrupo);
+        if (idsTecnicos.isEmpty()) {
+            return 0;
+        }
+
+        String placeholders = buildPlaceholders(idsTecnicos.size());
+        StringBuilder sql = new StringBuilder(
+                "UPDATE dbo.tbl_InicioJornadaAlturas " +
+                        "SET id_encargado = ?, id_usuario_supervisor_grupo = ? " +
+                        "WHERE ISNULL(e_eliminado, 0) = 0 " +
+                        "  AND ISNULL(pendiente, 0) = 1 " +
+                        "  AND fecha_cierre IS NULL " +
+                        "  AND (? IS NULL OR LTRIM(RTRIM(ISNULL(sucursal, ''))) = LTRIM(RTRIM(?))) "
+        );
+        if (idSupervisorOrigen != null && idSupervisorOrigen > 0) {
+            sql.append("  AND (id_encargado = ? OR id_usuario_supervisor_grupo = ?) ");
+        }
+        sql.append("  AND (id_tecnico IN (")
+                .append(placeholders)
+                .append(") OR id_auxiliar IN (")
+                .append(placeholders)
+                .append("))");
+
+        List<Object> params = new ArrayList<>();
+        params.add(idSupervisorDestino);
+        params.add(idSupervisorDestino);
+        params.add(sucursal);
+        params.add(sucursal);
+        if (idSupervisorOrigen != null && idSupervisorOrigen > 0) {
+            params.add(idSupervisorOrigen);
+            params.add(idSupervisorOrigen);
+        }
+        params.addAll(idsTecnicos);
+        params.addAll(idsTecnicos);
+
+        try {
+            return tigohogarTemplate.update(sql.toString(), params.toArray());
+        } catch (DataAccessException ex) {
+            String fallbackSql = sql.toString().replace(", id_usuario_supervisor_grupo = ?", "");
+            List<Object> fallbackParams = new ArrayList<>(params);
+            fallbackParams.remove(1);
+            return tigohogarTemplate.update(fallbackSql, fallbackParams.toArray());
+        }
+    }
+
+    private List<Integer> listarIdsTecnicosGrupoCentral(JdbcTemplate centralTemplate, String sucursal, String nombreGrupo) {
+        List<Map<String, Object>> rows = centralTemplate.queryForList(
+                "SELECT DISTINCT idTecnico FROM ( " +
+                        "  SELECT CAST(id_tecnico AS INT) AS idTecnico " +
+                        "  FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "  WHERE ISNULL(e_eliminado, 0) = 0 " +
+                        "    AND id_tecnico IS NOT NULL " +
+                        "    AND LTRIM(RTRIM(ISNULL(grupo, ''))) = LTRIM(RTRIM(?)) " +
+                        "    AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                        "                    LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', ''))) " +
+                        "  UNION ALL " +
+                        "  SELECT CAST(id_tecnicoAuxiliar AS INT) AS idTecnico " +
+                        "  FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                        "  WHERE ISNULL(e_eliminado, 0) = 0 " +
+                        "    AND id_tecnicoAuxiliar IS NOT NULL " +
+                        "    AND LTRIM(RTRIM(ISNULL(grupo, ''))) = LTRIM(RTRIM(?)) " +
+                        "    AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                        "                    LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', ''))) " +
+                        ") t WHERE idTecnico IS NOT NULL AND idTecnico > 0",
+                nombreGrupo,
+                sucursal,
+                sucursal,
+                nombreGrupo,
+                sucursal,
+                sucursal
+        );
+        Set<Integer> ids = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            Object value = firstValue(row, "idTecnico", "id_tecnico");
+            if (value instanceof Number) {
+                ids.add(((Number) value).intValue());
+                continue;
+            }
+            try {
+                ids.add(Integer.parseInt(String.valueOf(value).trim()));
+            } catch (Exception ignored) {
+                // Omite ids no numericos.
+            }
+        }
+        return new ArrayList<>(ids);
+    }
+
+    private String buildPlaceholders(int size) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < size; i++) {
+            if (i > 0) {
+                out.append(",");
+            }
+            out.append("?");
+        }
+        return out.toString();
+    }
 }

@@ -77,18 +77,19 @@ public class BoletaDigitalService {
 
         Path path = resolvePdfPath(ruta);
         if (!Files.exists(path) || !Files.isRegularFile(path)) {
-            throw new ApiException(HttpStatus.NOT_FOUND, "PDF_NOT_FOUND", "Archivo PDF no encontrado.");
+            throw new ApiException(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "Archivo no encontrado.");
         }
-        String fileName = path.getFileName() == null ? "boleta.pdf" : path.getFileName().toString();
-        if (!fileName.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La ruta no corresponde a un archivo PDF.");
+        String fileName = path.getFileName() == null ? "archivo" : path.getFileName().toString();
+        String contentType = contentTypeArchivo(fileName);
+        if (contentType == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La ruta no corresponde a un archivo permitido.");
         }
 
         try {
             byte[] content = Files.readAllBytes(path);
-            return new ArchivoPdf(new ByteArrayResource(content), fileName, "application/pdf");
+            return new ArchivoPdf(new ByteArrayResource(content), fileName, contentType);
         } catch (IOException ex) {
-            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "PDF_READ_ERROR", "No se pudo leer el archivo PDF.");
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "FILE_READ_ERROR", "No se pudo leer el archivo.");
         }
     }
 
@@ -99,11 +100,12 @@ public class BoletaDigitalService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idVenta es requerido.");
         }
         if (archivo == null || archivo.isEmpty()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Archivo PDF es requerido.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Archivo es requerido.");
         }
         String originalName = archivo.getOriginalFilename();
-        if (originalName == null || !originalName.toLowerCase(Locale.ROOT).endsWith(".pdf")) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Solo se permite archivo PDF.");
+        String originalContentType = contentTypeArchivo(originalName);
+        if (originalName == null || originalContentType == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Solo se permite PDF o imagen JPG/PNG.");
         }
 
         JdbcTemplate template = resolveSucursalTemplate(me);
@@ -116,25 +118,31 @@ public class BoletaDigitalService {
         if (codigoCliente == null || ordenTrabajo == null) {
             throw new ApiException(HttpStatus.CONFLICT, "VENTA_INVALIDA", "La venta no tiene cliente u orden valida.");
         }
+        String rutaAnterior = trimToNull(valueOf(venta, "rutaPdf") == null ? null : String.valueOf(valueOf(venta, "rutaPdf")));
+        boolean reemplazoImagen = esImagen(originalName);
+        boolean rutaAnteriorImagen = esImagen(rutaAnterior);
+        if (reemplazoImagen && !rutaAnteriorImagen) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Solo se permite reemplazar por imagen cuando el registro actual tiene imagen.");
+        }
         Map<String, Object> cita = repository.obtenerCita(codigoCliente, ordenTrabajo);
         String otFisica = trimToNull(cita == null ? null : String.valueOf(valueOf(cita, "OT_FISICA")));
-        if (otFisica == null) {
-            throw new ApiException(HttpStatus.CONFLICT, "OT_FISICA_NOT_FOUND", "No se encontro OT_FISICA para esta venta.");
+        String comparacion = reemplazoImagen ? "IMAGEN" : calcularComparacionArchivo(originalName, otFisica);
+        if (!reemplazoImagen) {
+            if (otFisica == null) {
+                throw new ApiException(HttpStatus.CONFLICT, "OT_FISICA_NOT_FOUND", "No se encontro OT_FISICA para esta venta.");
+            }
+            if (!"IGUAL".equals(comparacion)) {
+                Map<String, Object> details = new HashMap<>();
+                details.put("archivo", originalName);
+                details.put("otFisicaEsperada", otFisica);
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "PDF_NAME_MISMATCH",
+                        "No coincide el nombre del PDF con la OT fisica esperada.",
+                        details
+                );
+            }
         }
-        String comparacion = calcularComparacionArchivo(originalName, otFisica);
-        if (!"IGUAL".equals(comparacion)) {
-            Map<String, Object> details = new HashMap<>();
-            details.put("archivo", originalName);
-            details.put("otFisicaEsperada", otFisica);
-            throw new ApiException(
-                    HttpStatus.CONFLICT,
-                    "PDF_NAME_MISMATCH",
-                    "No coincide el nombre del PDF con la OT fisica esperada.",
-                    details
-            );
-        }
-
-        String rutaAnterior = trimToNull(valueOf(venta, "rutaPdf") == null ? null : String.valueOf(valueOf(venta, "rutaPdf")));
         String nuevaRuta = construirRutaDestino(venta, rutaAnterior, originalName, me);
         Path destino = resolvePdfPath(nuevaRuta);
         if (Files.exists(destino)) {
@@ -160,16 +168,18 @@ public class BoletaDigitalService {
             if (usuario == null && me != null && me.getUsuario() != null) {
                 usuario = trimToNull(me.getUsuario().getNombre());
             }
-            repository.registrarCambioArchivo(template, idVenta, fileNameOrPath(rutaAnterior), originalName, comparacion, usuario);
+            repository.registrarCambioArchivo(template, idVenta, fileNameOrPath(rutaAnterior), originalName, reemplazoImagen ? "IMAGEN" : comparacion, usuario);
             repository.actualizarRutaPdf(template, idVenta, nuevaRuta);
-            marcarHistorialSinFallar(codigoCliente, ordenTrabajo, usuario);
+            if (!reemplazoImagen) {
+                marcarHistorialSinFallar(codigoCliente, ordenTrabajo, usuario);
+            }
 
             Map<String, Object> out = new HashMap<>();
             out.put("idVenta", idVenta);
             out.put("rutaPdfAnterior", rutaAnterior);
             out.put("rutaPdf", nuevaRuta);
             out.put("OT_FISICA", otFisica);
-            out.put("Comparacion", comparacion);
+            out.put("Comparacion", reemplazoImagen ? "IMAGEN" : comparacion);
             out.put("usuario", usuario);
             return out;
         } catch (IOException ex) {
@@ -184,6 +194,24 @@ public class BoletaDigitalService {
             }
             throw ex;
         }
+    }
+
+    @Transactional
+    public Map<String, Object> marcarTodoOk(String token, Integer idVenta, boolean todoOk) {
+        AuthMeResponse me = authService.me(token);
+        if (idVenta == null || idVenta <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idVenta es requerido.");
+        }
+        JdbcTemplate template = resolveSucursalTemplate(me);
+        Map<String, Object> venta = repository.obtenerVenta(template, idVenta);
+        if (venta == null || venta.isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "VENTA_NOT_FOUND", "Venta no encontrada.");
+        }
+        repository.marcarTodoOk(template, idVenta, todoOk);
+        Map<String, Object> out = new HashMap<>();
+        out.put("idVenta", idVenta);
+        out.put("TodoOk", todoOk);
+        return out;
     }
 
     private Path resolvePdfPath(String ruta) {
@@ -329,6 +357,36 @@ public class BoletaDigitalService {
             return "DIFERENTE";
         }
         return normalizarComparacion(nombre).contains(normalizarComparacion(ot)) ? "IGUAL" : "DIFERENTE";
+    }
+
+    private String contentTypeArchivo(String nombreArchivo) {
+        String name = trimToNull(nombreArchivo);
+        if (name == null) {
+            return null;
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        int queryIndex = lower.indexOf('?');
+        if (queryIndex >= 0) {
+            lower = lower.substring(0, queryIndex);
+        }
+        if (lower.endsWith(".pdf")) {
+            return "application/pdf";
+        }
+        if (lower.endsWith(".png")) {
+            return "image/png";
+        }
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+            return "image/jpeg";
+        }
+        if (lower.endsWith(".webp")) {
+            return "image/webp";
+        }
+        return null;
+    }
+
+    private boolean esImagen(String nombreArchivo) {
+        String contentType = contentTypeArchivo(nombreArchivo);
+        return contentType != null && contentType.startsWith("image/");
     }
 
     private String normalizarComparacion(String value) {

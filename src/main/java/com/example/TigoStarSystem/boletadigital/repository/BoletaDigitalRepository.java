@@ -35,8 +35,9 @@ public class BoletaDigitalRepository {
         );
         Map<String, CitaInfo> citas = cargarCitasFinalizadas();
         Map<String, CambioInfo> cambios = cargarUltimosCambios(jdbcTemplate);
+        Map<String, Boolean> todoOkPorVenta = cargarTodoOkVentas(jdbcTemplate, rows);
         for (int i = 0; i < rows.size(); i++) {
-            rows.set(i, normalizarRow(rows.get(i), citas, cambios));
+            rows.set(i, normalizarRow(rows.get(i), citas, cambios, todoOkPorVenta));
         }
         return rows;
     }
@@ -87,6 +88,16 @@ public class BoletaDigitalRepository {
                         "IF COL_LENGTH('dbo.tbl_ventaArchivoDigital', 'comparacion') IS NULL " +
                         "BEGIN ALTER TABLE dbo.tbl_ventaArchivoDigital ADD comparacion NVARCHAR(30) NULL; END;"
         );
+        jdbcTemplate.execute(
+                "SET ANSI_NULLS ON; " +
+                        "SET QUOTED_IDENTIFIER ON; " +
+                        "SET ANSI_WARNINGS ON; " +
+                        "SET ANSI_PADDING ON; " +
+                        "SET CONCAT_NULL_YIELDS_NULL ON; " +
+                        "SET NUMERIC_ROUNDABORT OFF; " +
+                        "IF COL_LENGTH('dbo.tbl_Venta', 'todoOk') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_Venta ADD todoOk BIT NOT NULL DEFAULT(0); END;"
+        );
     }
 
     public int actualizarRutaPdf(JdbcTemplate jdbcTemplate, Integer idVenta, String nuevaRutaPdf) {
@@ -115,6 +126,15 @@ public class BoletaDigitalRepository {
             usuarioModifica,
             String.valueOf(codigoCliente),
             String.valueOf(ordenTrabajo)
+        );
+    }
+
+    public int marcarTodoOk(JdbcTemplate jdbcTemplate, Integer idVenta, boolean todoOk) {
+        asegurarTablaArchivoDigital(jdbcTemplate);
+        return jdbcTemplate.update(
+                "UPDATE dbo.tbl_Venta SET todoOk = ? WHERE Id_Venta = ?",
+                todoOk ? 1 : 0,
+                idVenta
         );
     }
 
@@ -300,7 +320,8 @@ public class BoletaDigitalRepository {
     private Map<String, Object> normalizarRow(
             Map<String, Object> row,
             Map<String, CitaInfo> citas,
-            Map<String, CambioInfo> cambios) {
+            Map<String, CambioInfo> cambios,
+            Map<String, Boolean> todoOkPorVenta) {
         Map<String, Object> out = new LinkedHashMap<String, Object>(row);
         Object idVenta = findValue(row, "Id_Venta", "idVenta", "id_venta", "idventa", "nventa", "NVenta", "NVENTA");
         Object cuadrilla = findValue(row, "Cuadrilla", "cuadrilla");
@@ -309,16 +330,22 @@ public class BoletaDigitalRepository {
         String rutaPdf = toStringValue(findValue(row, "RutaPdf", "rutapdf"));
         String estadoOt = toStringValue(findValue(row, "Estado", "estado", "EstadoOT", "estadoOT", "EstadoOt", "estado_ot", "EstadoBO", "estadoBO"));
         Object otFisica = findValue(row, "OT_FIsica", "OT_FISICA", "otFisica", "ot_fisica");
-        boolean tienePdf = rutaPdf != null && !rutaPdf.trim().isEmpty();
+        boolean tieneRutaArchivo = rutaPdf != null && !rutaPdf.trim().isEmpty();
+        boolean tienePdf = tieneRutaArchivo && esRutaPdf(rutaPdf);
+        boolean tieneImagen = tieneRutaArchivo && esRutaImagen(rutaPdf);
 
         out.put("Tecnico", cuadrilla);
         out.put("NroTransaccion", idVenta);
         out.put("OT", ordenTrabajo);
         out.put("cliente", codigoCliente);
-        out.put("EstadoArchivo", tienePdf ? "CON_PDF" : "SIN_PDF");
+        out.put("EstadoArchivo", tienePdf ? "CON_PDF" : tieneImagen ? "CON_IMAGEN" : "SIN_PDF");
         out.put("OT_FIsica", otFisica);
-        out.put("VerPdfUrl", tienePdf ? buildArchivoUrl(rutaPdf, false) : null);
-        out.put("DescargarPdfUrl", tienePdf ? buildArchivoUrl(rutaPdf, true) : null);
+        out.put("VerPdfUrl", (tienePdf || tieneImagen) ? buildArchivoUrl(rutaPdf, false) : null);
+        out.put("DescargarPdfUrl", (tienePdf || tieneImagen) ? buildArchivoUrl(rutaPdf, true) : null);
+        out.put("RutaArchivoNoPdf", tieneRutaArchivo && !tienePdf);
+        out.put("RutaArchivoImagen", tieneImagen);
+        Boolean todoOk = todoOkPorVenta.get(normalizeNumber(idVenta));
+        out.put("TodoOk", todoOk != null ? todoOk : toBoolean(findValue(row, "TodoOk", "todoOk", "todo_ok")));
 
         CitaInfo cita = citas.get(buildKey(normalizeNumber(codigoCliente), normalizeNumber(ordenTrabajo)));
         if (cita != null) {
@@ -336,7 +363,50 @@ public class BoletaDigitalRepository {
             out.put("Comparacion", cambio.comparacion);
             out.put("NombreArchivoNuevo", cambio.nombreArchivoNuevo);
         } else {
-            out.put("Comparacion", calcularComparacion(tienePdf, rutaPdf, cita));
+            out.put("Comparacion", tieneImagen ? "IMAGEN" : calcularComparacion(tienePdf, rutaPdf, cita));
+        }
+        return out;
+    }
+
+    private Map<String, Boolean> cargarTodoOkVentas(JdbcTemplate jdbcTemplate, List<Map<String, Object>> rows) {
+        asegurarTablaArchivoDigital(jdbcTemplate);
+        Map<String, Boolean> out = new HashMap<String, Boolean>();
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+        java.util.ArrayList<Object> params = new java.util.ArrayList<Object>();
+        for (Map<String, Object> row : rows) {
+            String idVenta = normalizeNumber(findValue(row, "Id_Venta", "idVenta", "id_venta", "idventa", "nventa", "NVenta", "NVENTA"));
+            if (idVenta == null || out.containsKey(idVenta)) {
+                continue;
+            }
+            params.add(idVenta);
+            out.put(idVenta, false);
+        }
+        if (params.isEmpty()) {
+            return out;
+        }
+        for (int start = 0; start < params.size(); start += 900) {
+            int end = Math.min(start + 900, params.size());
+            StringBuilder chunkPlaceholders = new StringBuilder();
+            java.util.ArrayList<Object> chunkParams = new java.util.ArrayList<Object>();
+            for (int i = start; i < end; i++) {
+                if (chunkPlaceholders.length() > 0) {
+                    chunkPlaceholders.append(",");
+                }
+                chunkPlaceholders.append("?");
+                chunkParams.add(params.get(i));
+            }
+            List<Map<String, Object>> ventas = jdbcTemplate.queryForList(
+                    "SELECT Id_Venta, todoOk FROM dbo.tbl_Venta WHERE Id_Venta IN (" + chunkPlaceholders + ")",
+                    chunkParams.toArray()
+            );
+            for (Map<String, Object> venta : ventas) {
+                String idVenta = normalizeNumber(findValue(venta, "Id_Venta", "idVenta"));
+                if (idVenta != null) {
+                    out.put(idVenta, toBoolean(findValue(venta, "todoOk", "TodoOk")));
+                }
+            }
         }
         return out;
     }
@@ -374,6 +444,33 @@ public class BoletaDigitalRepository {
             return "SIN_HISTORIAL";
         }
         return rutaPdf.toUpperCase().contains(cita.otFisica.trim().toUpperCase()) ? "IGUAL" : "DIFERENTE";
+    }
+
+    private boolean esRutaPdf(String ruta) {
+        if (ruta == null) {
+            return false;
+        }
+        String normalized = ruta.trim().toLowerCase();
+        int queryIndex = normalized.indexOf('?');
+        if (queryIndex >= 0) {
+            normalized = normalized.substring(0, queryIndex);
+        }
+        return normalized.endsWith(".pdf");
+    }
+
+    private boolean esRutaImagen(String ruta) {
+        if (ruta == null) {
+            return false;
+        }
+        String normalized = ruta.trim().toLowerCase();
+        int queryIndex = normalized.indexOf('?');
+        if (queryIndex >= 0) {
+            normalized = normalized.substring(0, queryIndex);
+        }
+        return normalized.endsWith(".jpg")
+                || normalized.endsWith(".jpeg")
+                || normalized.endsWith(".png")
+                || normalized.endsWith(".webp");
     }
 
     private String buildArchivoUrl(String rutaPdf, boolean download) {
@@ -432,6 +529,20 @@ public class BoletaDigitalRepository {
 
     private String toStringValue(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private boolean toBoolean(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof Boolean) {
+            return ((Boolean) value).booleanValue();
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue() != 0;
+        }
+        String text = String.valueOf(value).trim().toLowerCase();
+        return "1".equals(text) || "true".equals(text) || "si".equals(text) || "sí".equals(text);
     }
 
     private static final class CitaInfo {

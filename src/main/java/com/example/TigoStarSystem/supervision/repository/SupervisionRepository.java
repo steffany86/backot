@@ -1104,7 +1104,7 @@ public class SupervisionRepository {
                             "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                             "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                             "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen_auxiliar, firma_inicio, firma_cierre " +
+                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre " +
                             "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ?",
                     idInicio
             );
@@ -1359,7 +1359,7 @@ public class SupervisionRepository {
                 }
             }
             if (inicioDetalle != null && !inicioDetalle.isEmpty()) {
-                copyIfMissing(row, inicioDetalle, "capacitado", "charla", "botiquin", "extintor", "fecha_vencimiento", "equipo_epp", "estado_epp", "apr", "escalera", "anclaje", "ubicacion_georef", "imagen_auxiliar");
+                copyIfMissing(row, inicioDetalle, "capacitado", "charla", "botiquin", "extintor", "fecha_vencimiento", "equipo_epp", "estado_epp", "apr", "escalera", "anclaje", "ubicacion_georef");
                 copyIfMissing(row, inicioDetalle,
                         "codigo_cliente_cierre", "codigoClienteCierre", "codigo_cliente", "codigoCliente",
                         "dano_material", "danoMaterial",
@@ -1410,7 +1410,7 @@ public class SupervisionRepository {
                         "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                         "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                         "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen_auxiliar, firma_inicio, firma_cierre " +
+                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre " +
                         "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio IN ("
         );
         Object[] params = new Object[ids.size()];
