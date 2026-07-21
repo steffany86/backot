@@ -718,6 +718,163 @@ public class SupervisionRepository {
         return out;
     }
 
+    public List<Map<String, Object>> listarHistoricoJornadasRango(
+            java.time.LocalDate desde,
+            java.time.LocalDate hasta,
+            String sucursal,
+            Integer idSupervisor,
+            Integer idTecnico,
+            boolean limitarSupervisor) {
+        java.time.LocalDate fechaDesde = desde == null ? java.time.LocalDate.now() : desde;
+        java.time.LocalDate fechaHasta = hasta == null ? fechaDesde : hasta;
+        if (fechaHasta.isBefore(fechaDesde)) {
+            java.time.LocalDate tmp = fechaDesde;
+            fechaDesde = fechaHasta;
+            fechaHasta = tmp;
+        }
+
+        List<Map<String, Object>> esperados = listarTecnicosEsperadosJornada(sucursal, limitarSupervisor ? idSupervisor : null);
+        Map<Integer, Map<String, Object>> esperadosPorTecnico = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> esperadosPorSucursalNombre = new LinkedHashMap<>();
+        for (Map<String, Object> esperado : esperados) {
+            Integer id = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+            if (id == null || id <= 0) {
+                continue;
+            }
+            if (idTecnico != null && !idTecnico.equals(id)) {
+                continue;
+            }
+            esperadosPorTecnico.putIfAbsent(id, esperado);
+            String claveSucursalNombre = claveSucursalTecnico(esperado);
+            if (claveSucursalNombre != null) {
+                esperadosPorSucursalNombre.putIfAbsent(claveSucursalNombre, esperado);
+            }
+        }
+
+        Set<Integer> idsParaResolverUsuario = new LinkedHashSet<>(esperadosPorTecnico.keySet());
+        if (idTecnico != null && idTecnico > 0) {
+            idsParaResolverUsuario.add(idTecnico);
+        }
+        Map<Integer, Set<Integer>> usuariosPorTecnico = resolverUsuariosPorTecnico(sucursal, idsParaResolverUsuario);
+        Map<Integer, Integer> filtroUsuarioTecnico = construirFiltroUsuarioTecnico(idTecnico, esperadosPorTecnico.keySet(), usuariosPorTecnico);
+
+        List<Map<String, Object>> jornadas = queryHistoricoJornadasRangoRows(fechaDesde, fechaHasta, sucursal);
+        anotarTecnicosEsperados(jornadas, filtroUsuarioTecnico);
+        jornadas = enriquecerNombresTecnicos(jornadas, sucursal);
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        Set<String> conRegistroPorFechaTecnico = new LinkedHashSet<>();
+        for (Map<String, Object> row : jornadas) {
+            Integer tecnicoId = resolverTecnicoHistorico(row, esperadosPorTecnico, usuariosPorTecnico);
+            if (tecnicoId == null || tecnicoId <= 0) {
+                continue;
+            }
+            Map<String, Object> esperado = esperadosPorTecnico.get(tecnicoId);
+            if (esperado == null) {
+                esperado = buscarEsperadoPorSucursalTecnico(row, esperadosPorSucursalNombre);
+            }
+            Integer tecnicoIdResuelto = esperado == null
+                    ? tecnicoId
+                    : toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+            if (idTecnico != null && !idTecnico.equals(tecnicoIdResuelto)) {
+                continue;
+            }
+            boolean tecnicoEsperado = esperado != null;
+            if (!tecnicoEsperado && limitarSupervisor && !registroPerteneceSupervisor(row, idSupervisor)) {
+                continue;
+            }
+            java.time.LocalDate fechaRegistro = fechaHistoricoDesdeRow(row, fechaDesde);
+            Map<String, Object> mapped = normalizarHistoricoJornada(row, esperado, fechaRegistro);
+            if (!tecnicoEsperado) {
+                mapped.put("usuarioRetirado", true);
+                mapped.put("usuario_retirado", true);
+            }
+            out.add(mapped);
+            Integer idEsperado = toInteger(findValue(mapped, "idTecnico", "id_tecnico"));
+            conRegistroPorFechaTecnico.add(claveFechaTecnico(fechaRegistro, idEsperado == null ? tecnicoId : idEsperado));
+        }
+
+        java.time.LocalDate cursor = fechaDesde;
+        while (!cursor.isAfter(fechaHasta)) {
+            for (Map.Entry<Integer, Map<String, Object>> entry : esperadosPorTecnico.entrySet()) {
+                if (!conRegistroPorFechaTecnico.contains(claveFechaTecnico(cursor, entry.getKey()))) {
+                    out.add(crearJornadaSinInicio(entry.getKey(), entry.getValue(), cursor));
+                }
+            }
+            cursor = cursor.plusDays(1);
+        }
+
+        out.sort((a, b) -> {
+            String fechaA = toText(findValue(a, "fecha"));
+            String fechaB = toText(findValue(b, "fecha"));
+            int fechaCompare = String.valueOf(fechaA == null ? "" : fechaA).compareToIgnoreCase(String.valueOf(fechaB == null ? "" : fechaB));
+            if (fechaCompare != 0) return fechaCompare;
+            String sucA = toText(findValue(a, "sucursal"));
+            String sucB = toText(findValue(b, "sucursal"));
+            int sucCompare = String.valueOf(sucA == null ? "" : sucA).compareToIgnoreCase(String.valueOf(sucB == null ? "" : sucB));
+            if (sucCompare != 0) return sucCompare;
+            String tecA = toText(findValue(a, "tecnicoNombre", "tecnico"));
+            String tecB = toText(findValue(b, "tecnicoNombre", "tecnico"));
+            return String.valueOf(tecA == null ? "" : tecA).compareToIgnoreCase(String.valueOf(tecB == null ? "" : tecB));
+        });
+        return out;
+    }
+
+    private Map<Integer, Integer> construirFiltroUsuarioTecnico(
+            Integer idTecnico,
+            Set<Integer> idsEsperados,
+            Map<Integer, Set<Integer>> usuariosPorTecnico) {
+        Map<Integer, Integer> filtroUsuarioTecnico = new LinkedHashMap<>();
+        if (idsEsperados != null && !idsEsperados.isEmpty()) {
+            for (Integer idEsperado : idsEsperados) {
+                Set<Integer> idsUsuario = usuariosPorTecnico == null ? null : usuariosPorTecnico.get(idEsperado);
+                if (idsUsuario == null || idsUsuario.isEmpty()) {
+                    filtroUsuarioTecnico.put(idEsperado, idEsperado);
+                } else {
+                    for (Integer idUsuario : idsUsuario) {
+                        filtroUsuarioTecnico.put(idUsuario, idEsperado);
+                    }
+                }
+            }
+        }
+        if (idTecnico != null && idTecnico > 0 && filtroUsuarioTecnico.isEmpty()) {
+            Set<Integer> idsUsuario = usuariosPorTecnico == null ? null : usuariosPorTecnico.get(idTecnico);
+            if (idsUsuario == null || idsUsuario.isEmpty()) {
+                filtroUsuarioTecnico.put(idTecnico, idTecnico);
+            } else {
+                for (Integer idUsuario : idsUsuario) {
+                    filtroUsuarioTecnico.put(idUsuario, idTecnico);
+                }
+            }
+        }
+        return filtroUsuarioTecnico;
+    }
+
+    private String claveFechaTecnico(java.time.LocalDate fecha, Integer idTecnico) {
+        return String.valueOf(fecha) + "|" + String.valueOf(idTecnico == null ? 0 : idTecnico);
+    }
+
+    private java.time.LocalDate fechaHistoricoDesdeRow(Map<String, Object> row, java.time.LocalDate fallback) {
+        Object value = findValue(row, "fechaRegistro", "fecha_registro", "fechaInicio", "fecha_inicio");
+        if (value instanceof java.sql.Timestamp) {
+            return ((java.sql.Timestamp) value).toLocalDateTime().toLocalDate();
+        }
+        if (value instanceof java.sql.Date) {
+            return ((java.sql.Date) value).toLocalDate();
+        }
+        if (value instanceof java.util.Date) {
+            return new java.sql.Date(((java.util.Date) value).getTime()).toLocalDate();
+        }
+        String text = toText(value);
+        if (text != null && text.length() >= 10) {
+            try {
+                return java.time.LocalDate.parse(text.substring(0, 10));
+            } catch (Exception ignored) {
+            }
+        }
+        return fallback;
+    }
+
     private Map<String, Object> buscarEsperadoPorSucursalTecnico(
             Map<String, Object> row,
             Map<String, Map<String, Object>> esperadosPorSucursalNombre) {
@@ -838,6 +995,37 @@ public class SupervisionRepository {
                 }
             }
             return rows;
+        } catch (Exception ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    private List<Map<String, Object>> queryHistoricoJornadasRangoRows(
+            java.time.LocalDate desde,
+            java.time.LocalDate hasta,
+            String sucursal) {
+        StringBuilder sql = new StringBuilder(
+                "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
+                        "ij.fecha_registro, ij.fecha_cierre, ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, " +
+                        "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
+                        "ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre " +
+                        "FROM dbo.tbl_InicioJornadaAlturas ij " +
+                        "WHERE ij.fecha_registro >= ? " +
+                        "  AND ij.fecha_registro < ? " +
+                        "  AND ISNULL(ij.e_eliminado, 0) = 0 "
+        );
+        List<Object> params = new ArrayList<>();
+        params.add(Date.valueOf(desde));
+        params.add(Date.valueOf(hasta.plusDays(1)));
+        String sucursalNorm = trimToNull(sucursal);
+        if (sucursalNorm != null) {
+            sql.append(" AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(ij.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = ")
+                    .append("LOWER(REPLACE(REPLACE(REPLACE(?, '_', ''), '-', ''), ' ', '')) ");
+            params.add(sucursalNorm);
+        }
+        sql.append("ORDER BY ij.fecha_registro ASC, ij.id_inicio ASC");
+        try {
+            return tigohogarJdbcTemplate.queryForList(sql.toString(), params.toArray());
         } catch (Exception ex) {
             return new ArrayList<>();
         }
@@ -1404,6 +1592,18 @@ public class SupervisionRepository {
         if (ids.isEmpty()) {
             return out;
         }
+        int chunkSize = 800;
+        for (int from = 0; from < ids.size(); from += chunkSize) {
+            int to = Math.min(from + chunkSize, ids.size());
+            cargarDetallesInicioJornadaChunk(ids.subList(from, to), out);
+        }
+        return out;
+    }
+
+    private void cargarDetallesInicioJornadaChunk(List<Integer> ids, Map<Integer, Map<String, Object>> out) {
+        if (ids == null || ids.isEmpty() || out == null) {
+            return;
+        }
         StringBuilder sql = new StringBuilder(
                 "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
                         "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
@@ -1425,7 +1625,7 @@ public class SupervisionRepository {
         try {
             List<Map<String, Object>> detalles = tigohogarJdbcTemplate.queryForList(sql.toString(), params);
             if (detalles == null || detalles.isEmpty()) {
-                return out;
+                return;
             }
             for (Map<String, Object> detalle : detalles) {
                 Integer idInicio = toInteger(findValue(detalle, "id_inicio", "idInicio"));
@@ -1434,9 +1634,7 @@ public class SupervisionRepository {
                 }
             }
         } catch (Exception ignored) {
-            return out;
         }
-        return out;
     }
 
     private void copyIfMissing(Map<String, Object> target, Map<String, Object> source, String... keys) {

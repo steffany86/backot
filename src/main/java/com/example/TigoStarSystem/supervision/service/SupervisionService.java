@@ -343,13 +343,7 @@ public class SupervisionService {
             Integer idSupervisor,
             Integer idTecnico,
             boolean limitarSupervisor) {
-        List<Map<String, Object>> out = new ArrayList<>();
-        LocalDate cursor = desde;
-        while (!cursor.isAfter(hasta)) {
-            out.addAll(repository.listarHistoricoJornadas(cursor, sucursal, idSupervisor, idTecnico, limitarSupervisor));
-            cursor = cursor.plusDays(1);
-        }
-        return out;
+        return repository.listarHistoricoJornadasRango(desde, hasta, sucursal, idSupervisor, idTecnico, limitarSupervisor);
     }
 
     public Map<String, Object> obtenerDetalleInicioJornada(Integer idInicio, String token) {
