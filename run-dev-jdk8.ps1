@@ -22,3 +22,4 @@ Write-Host "JAVA_TOOL_OPTIONS=$env:JAVA_TOOL_OPTIONS"
 
 & "$root\\mvnw.cmd" -q -DskipTests clean package
 & "$env:JAVA_HOME\\bin\\java.exe" -jar "$root\\target\\TigoStarSystem-generated.jar" --spring.profiles.active=jtds
+

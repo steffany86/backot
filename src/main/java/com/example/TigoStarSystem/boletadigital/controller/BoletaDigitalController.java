@@ -78,6 +78,22 @@ public class BoletaDigitalController {
         ));
     }
 
+    @PostMapping("/renombrar-archivo")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> renombrarArchivo(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idVenta", required = false) Integer idVenta,
+            @RequestParam(value = "id_venta", required = false) Integer idVentaSnake,
+            @RequestParam("nombreArchivo") String nombreArchivo) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.renombrarArchivoDigital(
+                        token,
+                        idVenta != null ? idVenta : idVentaSnake,
+                        nombreArchivo
+                ),
+                "Archivo digital renombrado."
+        ));
+    }
+
     @PostMapping("/todo-ok")
     public ResponseEntity<ApiResponse<Map<String, Object>>> marcarTodoOk(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

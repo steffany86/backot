@@ -109,7 +109,7 @@ public class CatalogoRepository {
         String[] statements = new String[] {
                 "SELECT DISTINCT " +
                         "r.id_ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.id_ruta)) AS ruta, " +
                         "r.id_vendedor AS id_vendedor, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
@@ -120,7 +120,7 @@ public class CatalogoRepository {
                         "ORDER BY 2",
                 "SELECT DISTINCT " +
                         "r.id_ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.id_ruta)) AS ruta, " +
                         "r.id_tecnico AS id_tecnico, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
@@ -131,7 +131,7 @@ public class CatalogoRepository {
                         "ORDER BY 2",
                 "SELECT DISTINCT " +
                         "r.Id_Ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.Id_Ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.Id_Ruta)) AS ruta, " +
                         "r.Id_Vendedor AS id_vendedor, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +
@@ -142,7 +142,7 @@ public class CatalogoRepository {
                         "ORDER BY 2",
                 "SELECT DISTINCT " +
                         "r.Id_Ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.Id_Ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.Id_Ruta)) AS ruta, " +
                         "r.Id_Tecnico AS id_tecnico, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +
@@ -397,7 +397,7 @@ public class CatalogoRepository {
         String[] statements = new String[] {
                 "SELECT DISTINCT " +
                         "r.id_ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.id_ruta)) AS ruta, " +
                         "r.id_vendedor AS id_vendedor, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
@@ -406,7 +406,7 @@ public class CatalogoRepository {
                         "ORDER BY 2",
                 "SELECT DISTINCT " +
                         "r.id_ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.id_ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.id_ruta)) AS ruta, " +
                         "r.id_tecnico AS id_tecnico, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
@@ -415,7 +415,7 @@ public class CatalogoRepository {
                         "ORDER BY 2",
                 "SELECT DISTINCT " +
                         "r.Id_Ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.Id_Ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.Id_Ruta)) AS ruta, " +
                         "r.Id_Vendedor AS id_vendedor, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +
@@ -424,7 +424,7 @@ public class CatalogoRepository {
                         "ORDER BY 2",
                 "SELECT DISTINCT " +
                         "r.Id_Ruta AS idRuta, " +
-                        "CONVERT(NVARCHAR(200), r.Id_Ruta) AS ruta, " +
+                        "ISNULL(r.Nombre, CONVERT(NVARCHAR(200), r.Id_Ruta)) AS ruta, " +
                         "r.Id_Tecnico AS id_tecnico, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +
@@ -451,7 +451,7 @@ public class CatalogoRepository {
         String[] statements = new String[] {
                 "SELECT DISTINCT " +
                         "CAST(r.id_ruta AS INT) AS idRuta, " +
-                        "CAST(r.id_ruta AS NVARCHAR(200)) AS ruta, " +
+                        "ISNULL(r.Nombre, CAST(r.id_ruta AS NVARCHAR(200))) AS ruta, " +
                         "CAST(r.id_vendedor AS INT) AS id_vendedor, " +
                         "ISNULL(r.e_eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_ruta r " +
@@ -459,7 +459,7 @@ public class CatalogoRepository {
                         "ORDER BY 2",
                 "SELECT DISTINCT " +
                         "CAST(r.Id_Ruta AS INT) AS idRuta, " +
-                        "CAST(r.Id_Ruta AS NVARCHAR(200)) AS ruta, " +
+                        "ISNULL(r.Nombre, CAST(r.Id_Ruta AS NVARCHAR(200))) AS ruta, " +
                         "CAST(r.Id_Vendedor AS INT) AS id_vendedor, " +
                         "ISNULL(r.E_Eliminado, 0) AS e_eliminado " +
                         "FROM dbo.tbl_Ruta r " +

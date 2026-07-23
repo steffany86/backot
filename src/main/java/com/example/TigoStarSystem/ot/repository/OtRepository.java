@@ -4,6 +4,7 @@ import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataAccessException;
+import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
@@ -12,8 +13,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.Date;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDate;
@@ -619,6 +623,69 @@ public class OtRepository {
                 "EXEC dbo.spb_SaldoRutasCantidad_X_Ruta ?",
                 idRuta
         );
+    }
+
+    public List<Map<String, Object>> obtenerProductosNoEntregadosRuta(Integer idRuta, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.spx_ObtenerProductosNoEntregadosOT ?",
+                idRuta
+        );
+    }
+
+    public List<Map<String, Object>> obtenerVentaDiaRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.sp_TraerVentaDiaRuta ?, ?",
+                idRuta,
+                sqlDate(fecha)
+        );
+    }
+
+    public Integer registrarCuadreTecnico(
+            Integer idRuta,
+            Integer idVendedor,
+            Integer idUsuario,
+            LocalDate fecha,
+            String observacion,
+            List<Map<String, Object>> detalle,
+            List<Map<String, Object>> retiros,
+            Integer idSucursal) {
+        return template(idSucursal).execute((ConnectionCallback<Integer>) connection -> {
+            boolean previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                Integer idCuadre = insertarCuadre(connection, idRuta, idVendedor, idUsuario, fecha, observacion);
+                for (Map<String, Object> item : detalle) {
+                    Integer idProducto = toInteger(item.get("idProducto"));
+                    if (idProducto == null || idProducto <= 0) {
+                        continue;
+                    }
+                    BigDecimal sobrante = toBigDecimal(item.get("sobrante"));
+                    BigDecimal vendido = toBigDecimal(item.get("vendido"));
+                    BigDecimal retirado = toBigDecimal(item.get("retirado"));
+                    BigDecimal precio = toBigDecimal(item.get("precio"));
+                    BigDecimal totalVendido = toBigDecimal(item.get("totalVendido"));
+                    insertarCodigoCuadre(connection, idCuadre, idProducto, sobrante, vendido, retirado, precio, totalVendido);
+                    actualizarSaldoTarjeta(connection, idRuta, idProducto, sobrante);
+                }
+                if (retiros != null) {
+                    for (Map<String, Object> retiro : retiros) {
+                        insertarSaldoRetiro(connection, idCuadre, retiro);
+                    }
+                }
+                registrarProductosSaldos(connection, idRuta);
+                cambiarVendedor(connection, idVendedor, idRuta);
+                connection.commit();
+                return idCuadre;
+            } catch (Exception ex) {
+                rollbackCuadre(connection, idRuta, ex);
+                if (ex instanceof SQLException) {
+                    throw (SQLException) ex;
+                }
+                throw new SQLException(ex);
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+            }
+        });
     }
 
     public int modificarOtRealizada(String observacion, Integer idEstado, String numeroOrden, Integer idSucursal) {
@@ -1306,6 +1373,192 @@ public class OtRepository {
             throw lastError;
         }
         return 0;
+    }
+
+    private Integer insertarCuadre(
+            Connection connection,
+            Integer idRuta,
+            Integer idVendedor,
+            Integer idUsuario,
+            LocalDate fecha,
+            String observacion) throws SQLException {
+        String sql = "EXEC dbo.spx_RegistrarCuadre ?, ?, ?, ?, ?";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, idRuta);
+            ps.setInt(2, idVendedor);
+            ps.setInt(3, idUsuario);
+            ps.setDate(4, sqlDate(fecha));
+            ps.setString(5, observacion == null ? "" : observacion);
+            boolean hasResults = ps.execute();
+            while (!hasResults && ps.getUpdateCount() != -1) {
+                hasResults = ps.getMoreResults();
+            }
+            if (hasResults) {
+                try (ResultSet rs = ps.getResultSet()) {
+                    if (rs != null && rs.next()) {
+                        return rs.getInt(1);
+                    }
+                }
+            }
+        }
+        throw new SQLException("No se pudo obtener Id_Cuadre generado.");
+    }
+
+    private void insertarCodigoCuadre(
+            Connection connection,
+            Integer idCuadre,
+            Integer idProducto,
+            BigDecimal sobrante,
+            BigDecimal vendido,
+            BigDecimal retirado,
+            BigDecimal precio,
+            BigDecimal totalVendido) throws SQLException {
+        String sql = "EXEC dbo.spx_RegistrarCodigoCuadre ?, ?, ?, ?, ?, ?, ?";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, idCuadre);
+            ps.setInt(2, idProducto);
+            ps.setBigDecimal(3, sobrante);
+            ps.setBigDecimal(4, vendido);
+            ps.setBigDecimal(5, retirado);
+            ps.setBigDecimal(6, precio);
+            ps.setBigDecimal(7, totalVendido);
+            ps.execute();
+        }
+    }
+
+    private void actualizarSaldoTarjeta(
+            Connection connection,
+            Integer idRuta,
+            Integer idProducto,
+            BigDecimal sobrante) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("EXEC dbo.spx_ActualizarSaldoTarjetaCuadre ?, ?, ?")) {
+            ps.setInt(1, idRuta);
+            ps.setInt(2, idProducto);
+            ps.setBigDecimal(3, sobrante);
+            ps.execute();
+        }
+    }
+
+    private void insertarSaldoRetiro(Connection connection, Integer idCuadre, Map<String, Object> retiro) throws SQLException {
+        Integer idVenta = toInteger(valueByKeys(retiro, "Id_Venta", "idVenta", "id_venta"));
+        Integer idDevolucion = toInteger(valueByKeys(retiro, "Id_Devolucion", "idDevolucion", "id_devolucion"));
+        Integer idProducto = toInteger(valueByKeys(retiro, "Id_Producto", "idProducto", "id_producto"));
+        BigDecimal cantidad = toBigDecimal(valueByKeys(retiro, "Cantidad", "cantidad"));
+        if (idProducto == null || idProducto <= 0 || cantidad.compareTo(BigDecimal.ZERO) == 0) {
+            return;
+        }
+        String sql = "EXEC dbo.spx_RegistrarSaldoRetiro ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, idCuadre);
+            setNullableInt(ps, 2, idVenta);
+            setNullableInt(ps, 3, idDevolucion);
+            ps.setString(4, valueAsString(valueByKeys(retiro, "NroOrdenTrabajo", "nroOrdenTrabajo", "nro_orden_trabajo")));
+            Object fechaRaw = valueByKeys(retiro, "Fecha", "fecha");
+            if (fechaRaw instanceof java.util.Date) {
+                ps.setTimestamp(5, new Timestamp(((java.util.Date) fechaRaw).getTime()));
+            } else {
+                ps.setTimestamp(5, new Timestamp(System.currentTimeMillis()));
+            }
+            ps.setInt(6, idProducto);
+            ps.setString(7, valueAsString(valueByKeys(retiro, "Nombre", "nombre", "Producto", "producto")));
+            ps.setString(8, valueAsString(valueByKeys(retiro, "Cod_Inicio", "codInicio", "cod_inicio", "Serial", "serial")));
+            ps.setString(9, valueAsString(valueByKeys(retiro, "ChipID", "chipId", "ChipId", "chip_id")));
+            ps.setBigDecimal(10, cantidad);
+            ps.execute();
+        }
+    }
+
+    private void registrarProductosSaldos(Connection connection, Integer idRuta) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("EXEC dbo.spx_RegistrarProductosSaldos 3, ?")) {
+            ps.setInt(1, idRuta);
+            ps.execute();
+        }
+    }
+
+    private void cambiarVendedor(Connection connection, Integer idVendedor, Integer idRuta) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement("EXEC dbo.sp_actualizarEquipoTecnico ?, ?")) {
+            ps.setInt(1, idVendedor);
+            ps.setInt(2, idRuta);
+            ps.execute();
+        }
+    }
+
+    private void rollbackCuadre(Connection connection, Integer idRuta, Exception cause) throws SQLException {
+        try {
+            connection.rollback();
+        } catch (SQLException rollbackEx) {
+            logger.error("Fallo rollback de registro de cuadre para ruta={}.", idRuta, rollbackEx);
+            rollbackEx.addSuppressed(cause);
+            throw rollbackEx;
+        }
+    }
+
+    private Object valueByKeys(Map<String, Object> row, String... keys) {
+        if (row == null || keys == null) {
+            return null;
+        }
+        for (Map.Entry<String, Object> entry : row.entrySet()) {
+            String current = normalizeKey(entry.getKey());
+            for (String key : keys) {
+                if (current.equals(normalizeKey(key))) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return null;
+    }
+
+    private String normalizeKey(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("_", "").trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private BigDecimal toBigDecimal(Object value) {
+        if (value == null) {
+            return BigDecimal.ZERO;
+        }
+        if (value instanceof BigDecimal) {
+            return (BigDecimal) value;
+        }
+        if (value instanceof Number) {
+            return BigDecimal.valueOf(((Number) value).doubleValue());
+        }
+        try {
+            return new BigDecimal(String.valueOf(value).trim().replace(",", "."));
+        } catch (NumberFormatException ex) {
+            return BigDecimal.ZERO;
+        }
+    }
+
+    private String valueAsString(Object value) {
+        if (value == null) {
+            return "";
+        }
+        return String.valueOf(value).trim();
+    }
+
+    private void setNullableInt(PreparedStatement ps, int index, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(index, java.sql.Types.INTEGER);
+        } else {
+            ps.setInt(index, value);
+        }
     }
 
     private JdbcTemplate template(Integer idSucursal) {

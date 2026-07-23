@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.LocalDate;
@@ -25,6 +26,34 @@ public class CuadreController {
 
     public CuadreController(CuadreService cuadreService) {
         this.cuadreService = cuadreService;
+    }
+
+    @GetMapping({"/tecnico/actual", "/tecnico/mi-cuadre"})
+    public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerCuadreTecnicoActual(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreService.obtenerCuadreTecnicoActual(token, fechaFinal, idSucursal),
+                "Cuadre del tecnico obtenido correctamente."
+        ));
+    }
+
+    @PostMapping({"/tecnico/registrar", "/tecnico/actual"})
+    public ResponseEntity<ApiResponse<Map<String, Object>>> registrarCuadreTecnicoActual(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam("idRuta") Integer idRuta,
+            @RequestParam(value = "observacion", required = false) String observacion,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreService.registrarCuadreTecnicoActual(token, fechaFinal, idRuta, observacion, idSucursal),
+                "Cuadre del tecnico registrado correctamente."
+        ));
     }
 
     @GetMapping({"/spx_ValidarCuadreRuta", "/validar-hoy"})

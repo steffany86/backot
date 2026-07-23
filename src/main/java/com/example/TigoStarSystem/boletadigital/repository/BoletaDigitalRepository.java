@@ -215,6 +215,7 @@ public class BoletaDigitalRepository {
 
     private CitaInfo toCitaInfo(Map<String, Object> row) {
         return new CitaInfo(
+                toStringValue(findValue(row, "Id_BO_CITA_MAKIRO_Historial", "id_BO_CITA_MAKIRO_Historial", "idBoCitaMakiroHistorial")),
                 toStringValue(findValue(row, "OT_FISICA")),
                 toStringValue(findValue(row, "Estado")),
                 estadoRank(findValue(row, "Estado")),
@@ -345,6 +346,7 @@ public class BoletaDigitalRepository {
         String rutaPdf = toStringValue(findValue(row, "RutaPdf", "rutapdf"));
         String estadoOt = toStringValue(findValue(row, "Estado", "estado", "EstadoOT", "estadoOT", "EstadoOt", "estado_ot", "EstadoBO", "estadoBO"));
         Object otFisica = findValue(row, "OT_FIsica", "OT_FISICA", "otFisica", "ot_fisica");
+        Object idBoCitaHistorial = findValue(row, "Id_BO_CITA_MAKIRO_Historial", "id_BO_CITA_MAKIRO_Historial", "idBoCitaMakiroHistorial");
         boolean tieneRutaArchivo = rutaPdf != null && !rutaPdf.trim().isEmpty();
         boolean tienePdf = tieneRutaArchivo && esRutaPdf(rutaPdf);
         boolean tieneImagen = tieneRutaArchivo && esRutaImagen(rutaPdf);
@@ -355,7 +357,11 @@ public class BoletaDigitalRepository {
         out.put("cliente", codigoCliente);
         out.put("EstadoArchivo", tienePdf ? "CON_PDF" : tieneImagen ? "CON_IMAGEN" : "SIN_PDF");
         out.put("OT_FIsica", otFisica);
-        out.put("Id_BO_CITA_MAKIRO_Historial", findValue(row, "Id_BO_CITA_MAKIRO_Historial", "id_BO_CITA_MAKIRO_Historial", "idBoCitaMakiroHistorial"));
+        CitaInfo cita = citas.get(buildKey(normalizeNumber(codigoCliente), normalizeNumber(ordenTrabajo)));
+        if (idBoCitaHistorial == null && cita != null) {
+            idBoCitaHistorial = cita.idBoCitaHistorial;
+        }
+        out.put("Id_BO_CITA_MAKIRO_Historial", idBoCitaHistorial);
         out.put("VerPdfUrl", (tienePdf || tieneImagen) ? buildArchivoUrl(rutaPdf, false) : null);
         out.put("DescargarPdfUrl", (tienePdf || tieneImagen) ? buildArchivoUrl(rutaPdf, true) : null);
         out.put("RutaArchivoNoPdf", tieneRutaArchivo && !tienePdf);
@@ -363,7 +369,6 @@ public class BoletaDigitalRepository {
         Boolean todoOk = todoOkPorVenta.get(normalizeNumber(idVenta));
         out.put("TodoOk", todoOk != null ? todoOk : toBoolean(findValue(row, "TodoOk", "todoOk", "todo_ok")));
 
-        CitaInfo cita = citas.get(buildKey(normalizeNumber(codigoCliente), normalizeNumber(ordenTrabajo)));
         if (cita != null) {
             out.put("OT_FISICA", otFisica != null ? otFisica : cita.otFisica);
             out.put("OT_FIsica", otFisica != null ? otFisica : cita.otFisica);
@@ -562,13 +567,15 @@ public class BoletaDigitalRepository {
     }
 
     private static final class CitaInfo {
+        private final String idBoCitaHistorial;
         private final String otFisica;
         private final String estado;
         private final int estadoRank;
         private final long fechaRank;
         private final long idRank;
 
-        private CitaInfo(String otFisica, String estado, int estadoRank, long fechaRank, long idRank) {
+        private CitaInfo(String idBoCitaHistorial, String otFisica, String estado, int estadoRank, long fechaRank, long idRank) {
+            this.idBoCitaHistorial = idBoCitaHistorial;
             this.otFisica = otFisica;
             this.estado = estado;
             this.estadoRank = estadoRank;

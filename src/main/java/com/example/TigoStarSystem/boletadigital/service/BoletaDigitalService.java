@@ -170,9 +170,9 @@ public class BoletaDigitalService {
             }
             repository.registrarCambioArchivo(template, idVenta, fileNameOrPath(rutaAnterior), originalName, reemplazoImagen ? "IMAGEN" : comparacion, usuario);
             repository.actualizarRutaPdf(template, idVenta, nuevaRuta);
-            if (!reemplazoImagen) {
-                marcarHistorialSinFallar(codigoCliente, ordenTrabajo, usuario);
-            }
+            // El cambio de archivo es el momento en que se confirma la boleta
+            // en el historial, tanto para PDF como para imagen.
+            marcarHistorialSinFallar(codigoCliente, ordenTrabajo, usuario);
 
             Map<String, Object> out = new HashMap<>();
             out.put("idVenta", idVenta);
@@ -197,6 +197,72 @@ public class BoletaDigitalService {
     }
 
     @Transactional
+    public Map<String, Object> renombrarArchivoDigital(String token, Integer idVenta, String nombreArchivo) {
+        AuthMeResponse me = authService.me(token);
+        if (idVenta == null || idVenta <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idVenta es requerido.");
+        }
+        String nombreNuevo = trimToNull(nombreArchivo);
+        if (nombreNuevo == null || nombreNuevo.contains("\\") || nombreNuevo.contains("/")) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El nombre de archivo no es valido.");
+        }
+
+        JdbcTemplate template = resolveSucursalTemplate(me);
+        Map<String, Object> venta = repository.obtenerVenta(template, idVenta);
+        if (venta == null || venta.isEmpty()) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "VENTA_NOT_FOUND", "Venta no encontrada.");
+        }
+        String rutaAnterior = trimToNull(valueOf(venta, "rutaPdf") == null ? null : String.valueOf(valueOf(venta, "rutaPdf")));
+        if (rutaAnterior == null) {
+            throw new ApiException(HttpStatus.CONFLICT, "FILE_NOT_FOUND", "La venta no tiene archivo para renombrar.");
+        }
+
+        String extensionActual = extensionArchivo(rutaAnterior);
+        if (extensionActual == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El archivo actual no tiene una extension permitida.");
+        }
+        if (!hasExtension(nombreNuevo, extensionActual)) {
+            nombreNuevo = nombreNuevo + extensionActual;
+        }
+
+        Path origen = resolvePdfPath(rutaAnterior);
+        if (!Files.exists(origen) || !Files.isRegularFile(origen)) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "FILE_NOT_FOUND", "El archivo actual no existe en el recurso compartido.");
+        }
+        Path destino = origen.resolveSibling(sanitizeFileName(nombreNuevo));
+        if (Files.exists(destino)) {
+            throw new ApiException(HttpStatus.CONFLICT, "FILE_ALREADY_EXISTS", "Ya existe un archivo con ese nombre.");
+        }
+
+        try {
+            Files.move(origen, destino);
+            String nuevaRuta = toRutaServidor(destino);
+            String usuario = me != null && me.getUsuario() != null ? trimToNull(me.getUsuario().getLoggin()) : null;
+            if (usuario == null && me != null && me.getUsuario() != null) {
+                usuario = trimToNull(me.getUsuario().getNombre());
+            }
+            repository.registrarCambioArchivo(template, idVenta, fileNameOrPath(rutaAnterior), nombreNuevo, "RENOMBRADO", usuario);
+            repository.actualizarRutaPdf(template, idVenta, nuevaRuta);
+
+            Integer codigoCliente = toInteger(valueOf(venta, "codigoCliente"));
+            Integer ordenTrabajo = toInteger(valueOf(venta, "ordenTrabajo"));
+            if (codigoCliente != null && ordenTrabajo != null) {
+                marcarHistorialSinFallar(codigoCliente, ordenTrabajo, usuario);
+            }
+
+            Map<String, Object> out = new HashMap<>();
+            out.put("idVenta", idVenta);
+            out.put("rutaPdfAnterior", rutaAnterior);
+            out.put("rutaPdf", nuevaRuta);
+            out.put("nombreArchivoNuevo", nombreNuevo);
+            out.put("comparacion", "RENOMBRADO");
+            return out;
+        } catch (IOException ex) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "FILE_RENAME_ERROR", "No se pudo renombrar el archivo.");
+        }
+    }
+
+    @Transactional
     public Map<String, Object> marcarTodoOk(String token, Integer idVenta, boolean todoOk) {
         AuthMeResponse me = authService.me(token);
         if (idVenta == null || idVenta <= 0) {
@@ -207,10 +273,40 @@ public class BoletaDigitalService {
         if (venta == null || venta.isEmpty()) {
             throw new ApiException(HttpStatus.NOT_FOUND, "VENTA_NOT_FOUND", "Venta no encontrada.");
         }
+
+        String usuario = me != null && me.getUsuario() != null ? trimToNull(me.getUsuario().getLoggin()) : null;
+        if (usuario == null && me != null && me.getUsuario() != null) {
+            usuario = trimToNull(me.getUsuario().getNombre());
+        }
+        if (usuario == null) {
+            usuario = "SISTEMA";
+        }
+
         repository.marcarTodoOk(template, idVenta, todoOk);
+        if (todoOk) {
+            Integer codigoCliente = toInteger(valueOf(venta, "codigoCliente"));
+            Integer ordenTrabajo = toInteger(valueOf(venta, "ordenTrabajo"));
+            if (codigoCliente == null || ordenTrabajo == null) {
+                throw new ApiException(HttpStatus.CONFLICT, "VENTA_INVALIDA", "La venta no tiene cliente u orden valida para actualizar el historial.");
+            }
+
+            Map<String, Object> cita = repository.obtenerCita(codigoCliente, ordenTrabajo);
+            Integer idBoCitaMakiroHistorial = cita == null ? null : toInteger(
+                    valueOf(cita, "Id_BO_CITA_MAKIRO_Historial", "id_BO_CITA_MAKIRO_Historial", "idBoCitaMakiroHistorial")
+            );
+            int historialActualizado = idBoCitaMakiroHistorial != null
+                    ? repository.marcarActualizacionBoletaHistorial(idBoCitaMakiroHistorial, usuario)
+                    : repository.marcarActualizacionBoletaHistorial(codigoCliente, ordenTrabajo, usuario);
+            if (historialActualizado <= 0) {
+                throw new ApiException(HttpStatus.NOT_FOUND, "HISTORIAL_NOT_FOUND", "No se encontro el historial para marcar Todo OK.");
+            }
+        }
+
         Map<String, Object> out = new HashMap<>();
         out.put("idVenta", idVenta);
         out.put("TodoOk", todoOk);
+        out.put("Actualizado_BOLETA", todoOk ? 1 : 0);
+        out.put("usuarioModifica_BOLETA", usuario);
         return out;
     }
 
@@ -263,21 +359,30 @@ public class BoletaDigitalService {
     }
 
     private Path resolvePdfPath(String ruta) {
-        Path localPath = Paths.get(ruta).toAbsolutePath().normalize();
-        if (Files.exists(localPath) && Files.isRegularFile(localPath)) {
-            return localPath;
-        }
-        if (pdfUncShare == null) {
-            return localPath;
-        }
         String normalized = ruta.replace('/', '\\');
         String prefix = "C:\\archivos_ot_pdf\\";
-        if (!normalized.toLowerCase(Locale.ROOT).startsWith(prefix.toLowerCase(Locale.ROOT))) {
-            return localPath;
+        Path localPath = Paths.get(ruta).toAbsolutePath().normalize();
+
+        // Las rutas guardadas en BD apuntan al disco C: del servidor de archivos.
+        // Cuando el back corre en otra computadora, C: es el disco local del back;
+        // por eso se debe intentar primero el recurso UNC remoto.
+        if (pdfUncShare != null && normalized.toLowerCase(Locale.ROOT).startsWith(prefix.toLowerCase(Locale.ROOT))) {
+            String relative = normalized.substring(prefix.length());
+            String uncBase = pdfUncShare.endsWith("\\")
+                    ? pdfUncShare.substring(0, pdfUncShare.length() - 1)
+                    : pdfUncShare;
+            Path uncPath = Paths.get(uncBase + "\\" + relative).normalize();
+            if (Files.exists(uncPath) && Files.isRegularFile(uncPath)) {
+                return uncPath;
+            }
+            if (Files.exists(localPath) && Files.isRegularFile(localPath)) {
+                return localPath;
+            }
+            logger.warn("No se encontro el archivo de boleta. UNC={} LOCAL={}", uncPath, localPath);
+            return uncPath;
         }
-        String relative = normalized.substring(prefix.length());
-        String uncBase = pdfUncShare.endsWith("\\") ? pdfUncShare.substring(0, pdfUncShare.length() - 1) : pdfUncShare;
-        return Paths.get(uncBase + "\\" + relative).normalize();
+
+        return localPath;
     }
 
     private Path guardarArchivo(Path destino, String rutaServidor, MultipartFile archivo) throws IOException {
@@ -438,6 +543,31 @@ public class BoletaDigitalService {
             return "image/webp";
         }
         return null;
+    }
+
+    private String extensionArchivo(String nombreArchivo) {
+        String name = trimToNull(nombreArchivo);
+        if (name == null) {
+            return null;
+        }
+        String lower = name.toLowerCase(Locale.ROOT);
+        int queryIndex = lower.indexOf('?');
+        if (queryIndex >= 0) {
+            lower = lower.substring(0, queryIndex);
+        }
+        String[] extensions = {".pdf", ".png", ".jpg", ".jpeg", ".webp"};
+        for (String extension : extensions) {
+            if (lower.endsWith(extension)) {
+                return extension;
+            }
+        }
+        return null;
+    }
+
+    private boolean hasExtension(String nombreArchivo, String extension) {
+        return nombreArchivo != null
+                && extension != null
+                && nombreArchivo.toLowerCase(Locale.ROOT).endsWith(extension.toLowerCase(Locale.ROOT));
     }
 
     private boolean esImagen(String nombreArchivo) {
