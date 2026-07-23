@@ -64,8 +64,7 @@ public class BoletaDigitalService {
         if (fechaInicioConsulta.isAfter(fechaFinConsulta)) {
             fechaInicioConsulta = fechaFinConsulta.withDayOfMonth(1);
         }
-        JdbcTemplate template = resolveSucursalTemplate(me);
-        return repository.listarOtArchivo(template, fechaInicioConsulta, fechaFinConsulta);
+        return repository.listarAnalisisDocumentoDigital(fechaInicioConsulta, fechaFinConsulta);
     }
 
     public ArchivoPdf cargarArchivo(String token, String rutaRaw) {

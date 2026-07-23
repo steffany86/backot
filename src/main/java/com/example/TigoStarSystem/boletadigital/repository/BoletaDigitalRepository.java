@@ -42,6 +42,33 @@ public class BoletaDigitalRepository {
         return rows;
     }
 
+    public List<Map<String, Object>> listarAnalisisDocumentoDigital(LocalDate fechaInicio, LocalDate fechaFin) {
+        List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
+                "EXEC dbo.spy_AnalisisDocumento_Digital"
+        );
+        java.util.ArrayList<Map<String, Object>> out = new java.util.ArrayList<Map<String, Object>>();
+        java.util.ArrayList<Object> historialIds = new java.util.ArrayList<Object>();
+        for (Map<String, Object> row : rows) {
+            if (!fechaEnRango(findValue(row, "Fecha_Ejecucion", "fechaEjecucion"), fechaInicio, fechaFin)) {
+                continue;
+            }
+            Object idHistorial = findValue(row, "Id_BO_CITA_MAKIRO_Historial", "idBoCitaMakiroHistorial");
+            if (idHistorial != null) {
+                historialIds.add(idHistorial);
+            }
+            out.add(normalizarAnalisisDocumentoDigital(row));
+        }
+        Map<String, Map<String, Object>> datosHistorial = cargarDatosHistorialBoleta(historialIds);
+        for (Map<String, Object> row : out) {
+            String idHistorial = normalizeNumber(findValue(row, "Id_BO_CITA_MAKIRO_Historial", "idBoCitaMakiroHistorial"));
+            Map<String, Object> historial = idHistorial == null ? null : datosHistorial.get(idHistorial);
+            if (historial != null) {
+                completarTecnicoHistorial(row, historial);
+            }
+        }
+        return out;
+    }
+
     public Map<String, Object> obtenerVenta(JdbcTemplate jdbcTemplate, Integer idVenta) {
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(
                 "SELECT TOP 1 " +
@@ -387,6 +414,167 @@ public class BoletaDigitalRepository {
             out.put("Comparacion", tieneImagen ? "IMAGEN" : calcularComparacion(tienePdf, rutaPdf, cita));
         }
         return out;
+    }
+
+    private Map<String, Object> normalizarAnalisisDocumentoDigital(Map<String, Object> row) {
+        Map<String, Object> out = new LinkedHashMap<String, Object>(row);
+        Object idVenta = findValue(row, "Id_Venta", "idVenta", "id_venta");
+        Object cliente = findValue(row, "cliente_nro", "clienteNro", "CodigoCliente", "codigoCliente");
+        Object rutaPdf = findValue(row, "RutaPdf", "rutaPdf");
+        Object fechaEjecucion = findValue(row, "Fecha_Ejecucion", "fechaEjecucion");
+        Object otFisica = findValue(row, "OT_FISICA", "otFisica");
+        Object comparacion = findValue(row, "Comparacion", "comparacion");
+
+        out.put("NroTransaccion", idVenta);
+        out.put("id_venta", idVenta);
+        out.put("idVenta", idVenta);
+        out.put("cliente", cliente);
+        out.put("CodigoCliente", cliente);
+        out.put("Fecha", fechaEjecucion);
+        out.put("OT_FISICA", otFisica);
+        out.put("OT_FIsica", otFisica);
+        out.put("EstadoArchivo", esRutaImagen(toStringValue(rutaPdf)) ? "CON_IMAGEN" : esRutaPdf(toStringValue(rutaPdf)) ? "CON_PDF" : "SIN_PDF");
+        out.put("RutaArchivoNoPdf", rutaPdf != null && !esRutaPdf(toStringValue(rutaPdf)));
+        out.put("RutaArchivoImagen", esRutaImagen(toStringValue(rutaPdf)));
+        out.put("VerPdfUrl", rutaPdf == null ? null : buildArchivoUrl(String.valueOf(rutaPdf), false));
+        out.put("DescargarPdfUrl", rutaPdf == null ? null : buildArchivoUrl(String.valueOf(rutaPdf), true));
+        out.put("PreviamenteModificada", esBoletaEditada(findValue(row, "Actualizado_BOLETA", "actualizadoBoleta")));
+        out.put("TodoOk", false);
+        out.put("Comparacion", comparacion == null ? "" : comparacion);
+
+        Object ot = findValue(row, "OT", "ot", "OrdenTrabajo", "ordenTrabajo", "OT_int", "ot_int");
+        if (ot == null) {
+            ot = extraerOtDesdeWoExternalId(toStringValue(findValue(row, "wo_external_id")));
+        }
+        out.put("OT", ot == null ? "" : ot);
+        out.put("OrdenTrabajo", ot == null ? "" : ot);
+        return out;
+    }
+
+    private Map<String, Map<String, Object>> cargarDatosHistorialBoleta(List<Object> historialIds) {
+        Map<String, Map<String, Object>> out = new HashMap<String, Map<String, Object>>();
+        if (historialIds == null || historialIds.isEmpty()) {
+            return out;
+        }
+        for (int start = 0; start < historialIds.size(); start += 900) {
+            int end = Math.min(start + 900, historialIds.size());
+            StringBuilder placeholders = new StringBuilder();
+            java.util.ArrayList<Object> params = new java.util.ArrayList<Object>();
+            for (int i = start; i < end; i++) {
+                String id = normalizeNumber(historialIds.get(i));
+                if (id == null || out.containsKey(id)) {
+                    continue;
+                }
+                if (placeholders.length() > 0) {
+                    placeholders.append(",");
+                }
+                placeholders.append("?");
+                params.add(id);
+            }
+            if (params.isEmpty()) {
+                continue;
+            }
+            List<Map<String, Object>> rows = centralJdbcTemplate.queryForList(
+                    "SELECT Id_BO_CITA_MAKIRO_Historial, TECNICO, tecnico_nombre, Grupo " +
+                            "FROM dbo.tbl_BO_CITA_MAKIRO_Historial " +
+                            "WHERE Id_BO_CITA_MAKIRO_Historial IN (" + placeholders + ")",
+                    params.toArray()
+            );
+            for (Map<String, Object> row : rows) {
+                String id = normalizeNumber(findValue(row, "Id_BO_CITA_MAKIRO_Historial"));
+                if (id != null) {
+                    out.put(id, row);
+                }
+            }
+        }
+        return out;
+    }
+
+    private void completarTecnicoHistorial(Map<String, Object> row, Map<String, Object> historial) {
+        String tecnico = firstNonBlank(
+                toStringValue(findValue(historial, "TECNICO")),
+                toStringValue(findValue(historial, "tecnico_nombre")),
+                toStringValue(findValue(historial, "Grupo"))
+        );
+        row.put("Tecnico", tecnico);
+        row.put("tecnico", tecnico);
+        row.put("tecnico_nombre", findValue(historial, "tecnico_nombre"));
+        row.put("Grupo", findValue(historial, "Grupo"));
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String value : values) {
+            if (value != null && !value.trim().isEmpty()) {
+                return value.trim();
+            }
+        }
+        return "";
+    }
+
+    private boolean fechaEnRango(Object value, LocalDate fechaInicio, LocalDate fechaFin) {
+        if (fechaInicio == null && fechaFin == null) {
+            return true;
+        }
+        LocalDate fecha = toLocalDate(value);
+        if (fecha == null) {
+            return false;
+        }
+        if (fechaInicio != null && fecha.isBefore(fechaInicio)) {
+            return false;
+        }
+        return fechaFin == null || !fecha.isAfter(fechaFin);
+    }
+
+    private LocalDate toLocalDate(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Timestamp) {
+            return ((Timestamp) value).toLocalDateTime().toLocalDate();
+        }
+        if (value instanceof Date) {
+            return new java.sql.Date(((Date) value).getTime()).toLocalDate();
+        }
+        if (value instanceof LocalDateTime) {
+            return ((LocalDateTime) value).toLocalDate();
+        }
+        if (value instanceof LocalDate) {
+            return (LocalDate) value;
+        }
+        String text = toStringValue(value);
+        if (text == null || text.trim().length() < 10) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(text.trim().substring(0, 10));
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private String extraerOtDesdeWoExternalId(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "";
+        }
+        String[] parts = value.trim().split("-");
+        for (String part : parts) {
+            String candidate = part == null ? "" : part.trim();
+            if (candidate.matches("\\d{6,}")) {
+                return candidate;
+            }
+        }
+        return "";
+    }
+
+    private boolean esBoletaEditada(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).intValue() == 1;
+        }
+        String text = toStringValue(value);
+        return text != null && "1".equals(text.trim());
     }
 
     private Map<String, Boolean> cargarTodoOkVentas(JdbcTemplate jdbcTemplate, List<Map<String, Object>> rows) {
