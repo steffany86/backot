@@ -42,7 +42,11 @@ BEGIN
     SET CONCAT_NULL_YIELDS_NULL ON;
     SET ARITHABORT ON;
     SET NUMERIC_ROUNDABORT OFF;
-    SET XACT_ABORT ON;
+    -- El endpoint puede ejecutar este SP dentro de una transaccion Spring.
+    -- XACT_ABORT OFF permite volver al savepoint sin destruir la transaccion externa.
+    SET XACT_ABORT OFF;
+
+    DECLARE @TranCountInicial INT = @@TRANCOUNT;
 
     BEGIN TRY
         IF @Origen IS NULL OR LTRIM(RTRIM(@Origen)) = ''
@@ -57,7 +61,10 @@ BEGIN
             RETURN;
         END
 
-        BEGIN TRANSACTION;
+        IF @TranCountInicial = 0
+            BEGIN TRANSACTION;
+        ELSE
+            SAVE TRANSACTION RegistrarVentaOTwb;
 
         IF EXISTS (
             SELECT 1
@@ -68,8 +75,6 @@ BEGIN
         )
         BEGIN
             RAISERROR('Ya existe una OT activa registrada con el mismo numero de orden y codigo cliente.',16,1);
-            ROLLBACK TRANSACTION;
-            RETURN;
         END
 
         INSERT INTO dbo.tbl_venta (
@@ -118,7 +123,8 @@ BEGIN
         DECLARE @Id_Venta INT;
         SET @Id_Venta = CAST(SCOPE_IDENTITY() AS INT);
 
-        COMMIT TRANSACTION;
+        IF @TranCountInicial = 0
+            COMMIT TRANSACTION;
 
         SELECT
             @Id_Venta AS Id_Venta,
@@ -130,11 +136,25 @@ BEGIN
             @Longitud AS Longitud;
     END TRY
     BEGIN CATCH
-        IF XACT_STATE() <> 0
-            ROLLBACK TRANSACTION;
-
         DECLARE @ErrMsg NVARCHAR(4000) = ERROR_MESSAGE();
-        RAISERROR(@ErrMsg,16,1);
+        DECLARE @ErrSeverity INT = ERROR_SEVERITY();
+        DECLARE @ErrState INT = ERROR_STATE();
+
+        IF XACT_STATE() = 1
+        BEGIN
+            IF @TranCountInicial = 0
+                ROLLBACK TRANSACTION;
+            ELSE
+                ROLLBACK TRANSACTION RegistrarVentaOTwb;
+        END
+        ELSE IF XACT_STATE() = -1
+        BEGIN
+            -- SQL Server no permite volver a un savepoint si la transaccion quedo
+            -- no confirmable; en ese caso solo es valido revertirla completamente.
+            ROLLBACK TRANSACTION;
+        END
+
+        RAISERROR(@ErrMsg, @ErrSeverity, @ErrState);
     END CATCH
 END;
 GO

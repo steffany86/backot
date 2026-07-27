@@ -770,23 +770,10 @@ public class OtRepository {
     public List<Map<String, Object>> validaMovimientos(LocalDate fecha, Integer idSucursal) {
         JdbcTemplate target = template(idSucursal);
         Date fechaSql = sqlDate(fecha);
-        try {
-            return target.queryForList(
-                    "EXEC spx_ValidaMovimientos ?",
-                    fechaSql
-            );
-        } catch (DataAccessException ex) {
-            logger.warn(
-                    "Fallo SP spx_ValidaMovimientos para fecha={} sucursal={}. Intentando fallback sp_ValidaMovimientos.",
-                    fecha,
-                    idSucursal,
-                    ex
-            );
-            return target.queryForList(
-                    "EXEC sp_ValidaMovimientos ?",
-                    fechaSql
-            );
-        }
+        return target.queryForList(
+                "EXEC dbo.spx_ValidaMovimientos ?",
+                fechaSql
+        );
     }
 
     public boolean existeConformacionCuadrillaTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {
