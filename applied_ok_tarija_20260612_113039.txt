@@ -1,0 +1,3 @@
+
+ALTER	spx_existecierrealmacenhoy
+ALTER	spx_obtenerrutaxidtecnico
