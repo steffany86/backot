@@ -49,6 +49,7 @@ public class ListaOtController {
             @RequestParam(value = "fecha", required = false) String fecha,
             @RequestParam(value = "rol", required = false) String rol,
             @RequestParam(value = "idUsuario", required = false) Integer idUsuario,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal,
             @RequestParam(value = "tecnico", required = false) String tecnico,
             @RequestParam(value = "estado", required = false) String estado,
             @RequestParam(value = "estados", required = false) List<String> estados) {
@@ -84,13 +85,14 @@ public class ListaOtController {
         logger.info("{}", flujo);
 
         List<String> estadosFiltro = resolveEstados(estado, estados);
+        Integer idSucursalResuelta = idSucursal != null && idSucursal > 0 ? idSucursal : extractIdSucursal(me);
         List<Map<String, Object>> data = listaOtService.listar(
                 fechaFiltro,
                 tecnicoFiltro,
                 tecnicoExacto,
                 estadosFiltro,
                 idUsuarioFiltro,
-                extractIdSucursal(me)
+                idSucursalResuelta
         );
         return ResponseEntity.ok(ApiResponse.of(data, "Listado de OT (SP BO CITA MAKIRO)."));
     }

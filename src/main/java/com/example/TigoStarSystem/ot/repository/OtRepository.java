@@ -21,6 +21,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -612,9 +613,8 @@ public class OtRepository {
 
     public List<Map<String, Object>> obtenerSaldoRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
         return template(idSucursal).queryForList(
-                "EXEC dbo.spx_ObtenerSaldoRuta ?, ?",
-                idRuta,
-                sqlDate(fecha)
+                "EXEC dbo.sp_TraerSaldoTarjetasRuta ?",
+                idRuta
         );
     }
 
@@ -640,6 +640,14 @@ public class OtRepository {
         );
     }
 
+    public List<Map<String, Object>> obtenerCantidadOtDiaRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.sp_TraerVentaDiaRuta_CantOt ?, ?",
+                idRuta,
+                sqlDate(fecha)
+        );
+    }
+
     public Integer registrarCuadreTecnico(
             Integer idRuta,
             Integer idVendedor,
@@ -648,11 +656,15 @@ public class OtRepository {
             String observacion,
             List<Map<String, Object>> detalle,
             List<Map<String, Object>> retiros,
-            Integer idSucursal) {
+        Integer idSucursal) {
         return template(idSucursal).execute((ConnectionCallback<Integer>) connection -> {
             boolean previousAutoCommit = connection.getAutoCommit();
-            connection.setAutoCommit(false);
+            int previousIsolation = connection.getTransactionIsolation();
+            boolean transactionStarted = false;
             try {
+                connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+                connection.setAutoCommit(false);
+                transactionStarted = true;
                 Integer idCuadre = insertarCuadre(connection, idRuta, idVendedor, idUsuario, fecha, observacion);
                 for (Map<String, Object> item : detalle) {
                     Integer idProducto = toInteger(item.get("idProducto"));
@@ -677,13 +689,19 @@ public class OtRepository {
                 connection.commit();
                 return idCuadre;
             } catch (Exception ex) {
-                rollbackCuadre(connection, idRuta, ex);
+                if (transactionStarted) {
+                    rollbackCuadre(connection, idRuta, ex);
+                }
                 if (ex instanceof SQLException) {
                     throw (SQLException) ex;
                 }
                 throw new SQLException(ex);
             } finally {
-                connection.setAutoCommit(previousAutoCommit);
+                try {
+                    connection.setAutoCommit(previousAutoCommit);
+                } finally {
+                    connection.setTransactionIsolation(previousIsolation);
+                }
             }
         });
     }
@@ -1387,7 +1405,7 @@ public class OtRepository {
             ps.setInt(1, idRuta);
             ps.setInt(2, idVendedor);
             ps.setInt(3, idUsuario);
-            ps.setDate(4, sqlDate(fecha));
+            ps.setTimestamp(4, Timestamp.valueOf(fecha.atTime(LocalTime.now())));
             ps.setString(5, observacion == null ? "" : observacion);
             boolean hasResults = ps.execute();
             while (!hasResults && ps.getUpdateCount() != -1) {

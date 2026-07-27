@@ -7,7 +7,6 @@ import com.example.TigoStarSystem.catalogo.repository.CatalogoRepository;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.ot.repository.CuadreRepository;
 import com.example.TigoStarSystem.ot.repository.OtRepository;
-import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -62,10 +61,12 @@ public class CuadreService {
             if (idRuta == null) {
                 continue;
             }
-            List<Map<String, Object>> saldoRows = obtenerSaldoRutaConFallback(idRuta, fechaFinal, sucursalFinal);
+            List<Map<String, Object>> saldoRows = obtenerSaldoRutaConVentas(idRuta, fechaFinal, sucursalFinal);
             List<Map<String, Object>> retiros = obtenerRetirosConFallback(idRuta, sucursalFinal);
             List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros);
+            List<Map<String, Object>> detalleRetiros = normalizarRetiros(retiros);
             Map<String, Object> resumen = resumir(detalle);
+            int cantidadOt = obtenerCantidadOtDiaRuta(idRuta, fechaFinal, sucursalFinal);
             boolean cuadreRegistrado = coerceCount(otRepository.validarCuadreRuta(idRuta, fechaFinal, sucursalFinal)) > 0;
             boolean registroDisponible = !cuadreRegistrado && !cierreAlmacenRegistrado && !cierrePrPdRegistrado;
             String bloqueoRegistro = null;
@@ -89,8 +90,10 @@ public class CuadreService {
             item.put("cierrePrPdRegistrado", cierrePrPdRegistrado);
             item.put("registroDisponible", registroDisponible);
             item.put("bloqueoRegistro", bloqueoRegistro);
+            item.put("cantidadOt", cantidadOt);
             item.put("resumen", resumen);
             item.put("detalle", detalle);
+            item.put("retiros", detalleRetiros);
             rutasCuadre.add(item);
         }
 
@@ -117,12 +120,16 @@ public class CuadreService {
             LocalDate fecha,
             Integer idRuta,
             String observacion,
+            Integer cantidadOt,
             Integer idSucursal) {
         AuthLoginResponse tecnico = requireTecnico(token);
         LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
         Integer sucursalFinal = idSucursal != null && idSucursal > 0 ? idSucursal : tecnico.getIdSucursal();
         if (idRuta == null || idRuta <= 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idRuta es requerido.");
+        }
+        if (cantidadOt == null || cantidadOt < 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "cantidadOt es requerido y no puede ser negativo.");
         }
 
         Map<String, Object> ruta = resolverRutaTecnico(tecnico, idRuta, sucursalFinal);
@@ -133,21 +140,40 @@ public class CuadreService {
 
         validarRegistroPermitido(idRuta, fechaFinal, sucursalFinal);
 
-        List<Map<String, Object>> saldoRows = obtenerSaldoRutaConFallback(idRuta, fechaFinal, sucursalFinal);
+        List<Map<String, Object>> saldoRows = obtenerSaldoRutaConVentas(idRuta, fechaFinal, sucursalFinal);
         List<Map<String, Object>> retiros = obtenerRetirosConFallback(idRuta, sucursalFinal);
         List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros);
+        List<Map<String, Object>> detalleRetiros = normalizarRetiros(retiros);
+        int cantidadOtActual = obtenerCantidadOtDiaRuta(idRuta, fechaFinal, sucursalFinal);
+        if (cantidadOtActual != cantidadOt) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "CANTIDAD_OT_NO_COINCIDE",
+                    "La cantidad de OT cambio mientras se cargaba el cuadre. Vuelva a cargar el cuadre."
+            );
+        }
         validarDetalleCuadre(idRuta, fechaFinal, detalle, sucursalFinal);
 
-        Integer idCuadre = otRepository.registrarCuadreTecnico(
-                idRuta,
-                idVendedor,
-                tecnico.getIdUsuario(),
-                fechaFinal,
-                observacion == null ? "" : observacion.trim(),
-                detalle,
-                retiros,
-                sucursalFinal
-        );
+        Integer idCuadre;
+        try {
+            idCuadre = otRepository.registrarCuadreTecnico(
+                    idRuta,
+                    idVendedor,
+                    tecnico.getIdUsuario(),
+                    fechaFinal,
+                    observacion == null ? "" : observacion.trim(),
+                    detalle,
+                    retiros,
+                    sucursalFinal
+            );
+        } catch (RuntimeException ex) {
+            String detail = detalleError(ex);
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "CUADRE_ROLLBACK",
+                    "No se pudo guardar el cuadre. Se revirtieron todos los cambios. Detalle: " + detail
+            );
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("idCuadre", idCuadre);
@@ -159,32 +185,72 @@ public class CuadreService {
         ));
         out.put("idTecnico", tecnico.getIdUsuario());
         out.put("tecnico", tecnico.getNombre());
+        out.put("cantidadOt", cantidadOtActual);
         out.put("resumen", resumir(detalle));
         out.put("detalle", detalle);
+        out.put("retiros", detalleRetiros);
         return out;
+    }
+
+    private String detalleError(Throwable error) {
+        Throwable actual = error;
+        while (actual.getCause() != null && actual.getCause() != actual) {
+            actual = actual.getCause();
+        }
+        String mensaje = actual.getMessage();
+        return mensaje == null || mensaje.trim().isEmpty()
+                ? actual.getClass().getSimpleName()
+                : mensaje;
     }
 
     /**
      * Ejecuta la validacion de cuadre para una ruta y fecha.
      */
     public List<Map<String, Object>> validarCuadreRuta(Integer idRuta, LocalDate fecha) {
-        return cuadreRepository.validarCuadreRuta(idRuta, fecha);
+        return validarCuadreRuta(idRuta, fecha, null);
     }
 
-    private List<Map<String, Object>> obtenerSaldoRutaConFallback(Integer idRuta, LocalDate fecha, Integer idSucursal) {
-        try {
-            return otRepository.obtenerSaldoRuta(idRuta, fecha, idSucursal);
-        } catch (DataAccessException ex) {
-            return otRepository.obtenerSaldoRutaBasico(idRuta, idSucursal);
+    public List<Map<String, Object>> validarCuadreRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        return otRepository.validarCuadreRuta(idRuta, fecha, idSucursal);
+    }
+
+    private List<Map<String, Object>> obtenerSaldoRutaConVentas(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        List<Map<String, Object>> saldoRows = otRepository.obtenerSaldoRuta(idRuta, fecha, idSucursal);
+        return combinarSaldoConVentas(saldoRows, otRepository.obtenerVentaDiaRuta(idRuta, fecha, idSucursal));
+    }
+
+    private List<Map<String, Object>> combinarSaldoConVentas(
+            List<Map<String, Object>> saldoRows,
+            List<Map<String, Object>> ventas) {
+        Map<Integer, Double> ventaPorProducto = agruparVentasPorProducto(ventas);
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (saldoRows == null) {
+            return out;
         }
+        for (Map<String, Object> row : saldoRows) {
+            Map<String, Object> copy = new LinkedHashMap<>(row);
+            Integer idProducto = toPositiveInteger(findValue(row, "idProducto", "Id_Producto", "id_producto"));
+            copy.put("Venta", ventaPorProducto.getOrDefault(idProducto, 0d));
+            out.add(copy);
+        }
+        return out;
     }
 
     private List<Map<String, Object>> obtenerRetirosConFallback(Integer idRuta, Integer idSucursal) {
         try {
             return otRepository.obtenerProductosNoEntregadosRuta(idRuta, idSucursal);
         } catch (RuntimeException ex) {
-            return new ArrayList<>();
+            String detail = ex.getMessage() == null ? "Error no especificado" : ex.getMessage();
+            throw new ApiException(
+                    HttpStatus.INTERNAL_SERVER_ERROR,
+                    "RETIROS_NO_CARGADOS",
+                    "No se pudieron cargar los retiros del grupo. Verifique el procedimiento spx_ObtenerProductosNoEntregadosOT. Detalle: " + detail
+            );
         }
+    }
+
+    private int obtenerCantidadOtDiaRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        return coerceCount(otRepository.obtenerCantidadOtDiaRuta(idRuta, fecha, idSucursal));
     }
 
     private List<Map<String, Object>> normalizarDetalle(List<Map<String, Object>> rows, List<Map<String, Object>> retiros) {
@@ -205,7 +271,9 @@ public class CuadreService {
                     ? retiradoPorProducto.get(idProducto)
                     : toDouble(findValue(row, "retirado", "Retirado", "ItemsRetirados", "itemsRetirados", "NoEntregado", "noEntregado"));
             Object sobranteRaw = findValue(row, "sobrante", "Sobrante", "ItemsSobrantes", "itemsSobrantes");
-            double sobrante = sobranteRaw == null ? Math.max(0, saldo - vendido - retirado) : toDouble(sobranteRaw);
+            // Igual que frm_Cuadre: los retiros se muestran por separado y no
+            // descuentan dos veces el saldo. El sobrante es saldo - vendido.
+            double sobrante = sobranteRaw == null ? saldo - vendido : toDouble(sobranteRaw);
             double precio = toDouble(findValue(row, "precio", "Precio", "PrecioVenta", "precioVenta"));
             double totalVendido = toDouble(findValue(row, "totalVendido", "TotalVendido", "TotalVendidos", "totalVendidos"));
             if (totalVendido == 0 && precio != 0 && vendido != 0) {
@@ -221,6 +289,25 @@ public class CuadreService {
             item.put("sobrante", sobrante);
             item.put("precio", precio);
             item.put("totalVendido", totalVendido);
+            out.add(item);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> normalizarRetiros(List<Map<String, Object>> rows) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (rows == null) {
+            return out;
+        }
+        for (Map<String, Object> row : rows) {
+            Integer idProducto = toPositiveInteger(findValue(row, "Id_Producto", "idProducto", "id_producto"));
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idProducto", idProducto);
+            item.put("producto", firstNonBlank(
+                    valueAsString(findValue(row, "Nombre", "nombre", "Producto", "producto")),
+                    idProducto == null ? "Producto" : "Producto " + idProducto
+            ));
+            item.put("cantidad", toDouble(findValue(row, "Cantidad", "cantidad")));
             out.add(item);
         }
         return out;

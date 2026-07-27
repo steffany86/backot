@@ -48,10 +48,11 @@ public class CuadreController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
             @RequestParam("idRuta") Integer idRuta,
             @RequestParam(value = "observacion", required = false) String observacion,
+            @RequestParam("cantidadOt") Integer cantidadOt,
             @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
         LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
         return ResponseEntity.ok(ApiResponse.of(
-                cuadreService.registrarCuadreTecnicoActual(token, fechaFinal, idRuta, observacion, idSucursal),
+                cuadreService.registrarCuadreTecnicoActual(token, fechaFinal, idRuta, observacion, cantidadOt, idSucursal),
                 "Cuadre del tecnico registrado correctamente."
         ));
     }
@@ -61,7 +62,8 @@ public class CuadreController {
             @RequestParam(value = "ruta", required = false) Integer ruta,
             @RequestParam(value = "idRuta", required = false) Integer idRuta,
             @RequestParam(value = "fecha", required = false)
-            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
         Integer rutaFinal = idRuta != null ? idRuta : ruta;
         if (rutaFinal == null) {
             throw new ApiException(
@@ -72,7 +74,7 @@ public class CuadreController {
         }
         LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
         return ResponseEntity.ok(ApiResponse.of(
-                cuadreService.validarCuadreRuta(rutaFinal, fechaFinal),
+                cuadreService.validarCuadreRuta(rutaFinal, fechaFinal, idSucursal),
                 "Validacion de cuadre ejecutada correctamente."
         ));
     }
@@ -80,7 +82,8 @@ public class CuadreController {
     @PostMapping("/validar")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> validarCuadre(
             @RequestParam("ruta") Integer idRuta,
-            @RequestParam("fecha") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+            @RequestParam("fecha") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
         if (idRuta == null || fecha == null) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
@@ -89,7 +92,7 @@ public class CuadreController {
             );
         }
         return ResponseEntity.ok(ApiResponse.of(
-                cuadreService.validarCuadreRuta(idRuta, fecha),
+                cuadreService.validarCuadreRuta(idRuta, fecha, idSucursal),
                 "Validación de cuadre."
         ));
     }

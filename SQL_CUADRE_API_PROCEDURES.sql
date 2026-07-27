@@ -23,6 +23,25 @@ BEGIN
 END;
 GO
 
+/*
+   El front usa esta consulta para tomar una fotografia de la cantidad de OT
+   antes de confirmar el cuadre. El backend vuelve a ejecutarla al guardar.
+*/
+CREATE OR ALTER PROCEDURE dbo.sp_TraerVentaDiaRuta_CantOt
+    @Id_Ruta INT,
+    @Fecha DATETIME
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    SELECT COUNT(Id_Venta) AS CantOrden
+    FROM dbo.tbl_Venta
+    WHERE Id_Ruta = @Id_Ruta
+      AND dbo.DateOnly(Fecha_Ejecucion) = dbo.DateOnly(@Fecha)
+      AND E_Eliminado = 0;
+END;
+GO
+
 CREATE OR ALTER PROCEDURE dbo.spx_RegistrarCodigoCuadre
     @Id_Cuadre INT,
     @Id_Producto INT,

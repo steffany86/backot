@@ -74,7 +74,7 @@ public class GlobalExceptionHandler {
         details.put("rootCause", root == null ? ex.getMessage() : root.getMessage());
         ApiError apiError = new ApiError(
                 "DATABASE_ERROR",
-                "Error en base de datos.",
+                "Error en base de datos: " + (root == null ? ex.getMessage() : root.getMessage()),
                 details,
                 OffsetDateTime.now(),
                 request.getRequestURI()
