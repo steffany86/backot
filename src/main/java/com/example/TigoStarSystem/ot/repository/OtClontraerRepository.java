@@ -226,6 +226,19 @@ public class OtClontraerRepository {
 				"AddMaterial_o_CargoUsuario", "addmaterial_o_cargousuario", "addMaterialOCargoUsuario");
 		putFromValidation(row, validationRow, "HabilitarCargarMaterial",
 				"HabilitarCargarMaterial", "habilitarcargarmaterial", "puedeCargarMaterial");
+		if (esTorSip(row)) {
+			row.put("AddMaterial_o_CargoUsuario", 0);
+			row.put("HabilitarCargarMaterial", 0);
+		}
+	}
+
+	private boolean esTorSip(Map<String, Object> row) {
+		Object value = findValue(row, "TOR", "tor", "Prefijo", "prefijo", "TipoServicio", "tipoServicio");
+		if (value == null) {
+			return false;
+		}
+		String normalized = String.valueOf(value).trim().toUpperCase(java.util.Locale.ROOT);
+		return "SIP".equals(normalized);
 	}
 
 	private void putFromValidation(Map<String, Object> target, Map<String, Object> source, String targetKey, String... sourceKeys) {

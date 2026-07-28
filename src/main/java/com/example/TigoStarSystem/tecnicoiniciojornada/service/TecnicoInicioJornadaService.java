@@ -178,6 +178,8 @@ public class TecnicoInicioJornadaService {
         Integer idAuxiliarRegistro = request.getIdAuxiliar() != null && request.getIdAuxiliar() > 0
                 ? request.getIdAuxiliar()
                 : idAuxiliarConformacion;
+        boolean tieneAuxiliar = idAuxiliarRegistro != null && idAuxiliarRegistro > 0;
+        boolean estoyTrabajandoSolo = !tieneAuxiliar && Boolean.TRUE.equals(request.getEstoyTrabajandoSolo());
         if (idAuxiliarRegistro != null && isBlank(request.getImagenAuxiliar())) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
@@ -220,11 +222,10 @@ public class TecnicoInicioJornadaService {
             repository.marcarNoMarcoCierreInicio(tigohogarJdbcTemplate, idInicio);
             result.put("no_marco_cierre", true);
             result.put("noMarcoCierre", true);
-            if (request.getEstoyTrabajandoSolo() != null) {
-                repository.actualizarEstoyTrabajandoSolo(tigohogarJdbcTemplate, idInicio, request.getEstoyTrabajandoSolo());
-                result.put("estoy_trabajando_solo", request.getEstoyTrabajandoSolo());
-                result.put("estoyTrabajandoSolo", request.getEstoyTrabajandoSolo());
-            }
+            repository.actualizarEstoyTrabajandoSolo(tigohogarJdbcTemplate, idInicio, estoyTrabajandoSolo);
+            result.put("EstoyTrabajandoSolo", estoyTrabajandoSolo ? 1 : 0);
+            result.put("estoy_trabajando_solo", estoyTrabajandoSolo);
+            result.put("estoyTrabajandoSolo", estoyTrabajandoSolo);
             if (!isBlank(request.getUbicacionGeoRef())) {
                 repository.actualizarUbicacionInicio(tigohogarJdbcTemplate, idInicio, request.getUbicacionGeoRef().trim());
             }

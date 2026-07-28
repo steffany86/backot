@@ -241,29 +241,29 @@ public class PrivilegioRepository {
         String[] sqls = new String[] {
                 "SELECT TOP 1 CAST(ut.id AS INT) AS alt_id " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT TOP 1 CAST(ut.id_vendedor AS INT) AS alt_id " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0 " +
                         "  AND ut.id_vendedor IS NOT NULL",
                 "SELECT TOP 1 CAST(ut.Id AS INT) AS alt_id " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ? OR ut.Id_Tecnico = ? OR ut.IdTecnico = ?) " +
+                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ?) " +
                         "  AND ISNULL(ut.E_Eliminado, 0) = 0",
                 "SELECT TOP 1 CAST(ut.Id_Vendedor AS INT) AS alt_id " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ? OR ut.Id_Tecnico = ? OR ut.IdTecnico = ?) " +
+                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ?) " +
                         "  AND ISNULL(ut.E_Eliminado, 0) = 0 " +
                         "  AND ut.Id_Vendedor IS NOT NULL",
                 "SELECT TOP 1 CAST(ut.id AS INT) AS alt_id " +
                         "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT TOP 1 CAST(ut.id_vendedor AS INT) AS alt_id " +
                         "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0 " +
                         "  AND ut.id_vendedor IS NOT NULL"
         };
@@ -271,8 +271,6 @@ public class PrivilegioRepository {
             try {
                 List<Map<String, Object>> rows = template.queryForList(
                         sql,
-                        idUsuarioSesion,
-                        idUsuarioSesion,
                         idUsuarioSesion,
                         idUsuarioSesion
                 );

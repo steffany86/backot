@@ -522,11 +522,11 @@ public class LlamadaAtencionService {
                 }
             }
 
-            Integer idUsuarioTecnico = toInteger(findValue(
+            Integer idTecnico = toInteger(findValue(
                     mapped,
-                    "idTecnico", "id_tecnico", "idtecnico", "idUsuarioTecnico", "id_usuariotecnico"));
-            if (idUsuarioTecnico != null && idUsuarioTecnico > 0) {
-                String tecnicoNombre = tecnicoCache.computeIfAbsent(idUsuarioTecnico, id -> obtenerNombreTecnicoPorUsuarioTecnico(template, id));
+                    "idTecnico", "id_tecnico", "idtecnico", "idVendedor", "id_vendedor", "Id_Vendedor"));
+            if (idTecnico != null && idTecnico > 0) {
+                String tecnicoNombre = tecnicoCache.computeIfAbsent(idTecnico, id -> obtenerNombreTecnicoPorId(template, id));
                 if (!isBlank(tecnicoNombre)) {
                     mapped.put("tecnico", tecnicoNombre.trim());
                     mapped.put("tecnicoNombre", tecnicoNombre.trim());
@@ -537,35 +537,19 @@ public class LlamadaAtencionService {
         return out;
     }
 
-    private String obtenerNombreTecnicoPorUsuarioTecnico(JdbcTemplate template, Integer idUsuarioTecnico) {
-        if (template == null || idUsuarioTecnico == null || idUsuarioTecnico <= 0) {
+    private String obtenerNombreTecnicoPorId(JdbcTemplate template, Integer idTecnico) {
+        if (template == null || idTecnico == null || idTecnico <= 0) {
             return null;
         }
-
-        Integer idVendedor = null;
-        try {
-            List<Map<String, Object>> utRows = template.queryForList(
-                    "SELECT TOP 1 Id_Vendedor FROM dbo.tbl_UsuarioTecnico WHERE id_Usuario = ? AND ISNULL(e_eliminado,0)=0",
-                    idUsuarioTecnico
-            );
-            if (!utRows.isEmpty()) {
-                idVendedor = toInteger(findValue(utRows.get(0), "Id_Vendedor", "id_vendedor", "idVendedor"));
-            }
-        } catch (Exception ignored) {
+        String nombreVendedor = queryNombre(
+                template,
+                "SELECT TOP 1 Nombre FROM dbo.tbl_Vendedor WHERE Id_Vendedor = ? AND ISNULL(E_Eliminado,0)=0",
+                idTecnico
+        );
+        if (!isBlank(nombreVendedor)) {
+            return nombreVendedor;
         }
-
-        if (idVendedor != null && idVendedor > 0) {
-            String nombreVendedor = queryNombre(
-                    template,
-                    "SELECT TOP 1 Nombre FROM dbo.tbl_Vendedor WHERE Id_Vendedor = ? AND ISNULL(E_Eliminado,0)=0",
-                    idVendedor
-            );
-            if (!isBlank(nombreVendedor)) {
-                return nombreVendedor;
-            }
-        }
-
-        return obtenerNombreUsuarioPorId(template, idUsuarioTecnico);
+        return null;
     }
 
     private String obtenerNombreUsuarioPorId(JdbcTemplate template, Integer idUsuario) {

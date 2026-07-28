@@ -117,6 +117,7 @@ public class SupervisionService {
     public Map<String, Object> registrar(SupervisionCrearRequest request, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
+        String sucursal = resolveSucursalNombre(me);
 
         if (request == null) {
             throw new ApiException(
@@ -125,6 +126,7 @@ public class SupervisionService {
                     "Request de supervision es requerido."
             );
         }
+        validarTecnicoPrincipalExiste(request.getIdTecnicoPrincipal(), sucursal);
 
         String idGenerado = repository.registrar(
                 idSupervisor,
@@ -597,7 +599,7 @@ public class SupervisionService {
             String tecnicoNombre = asText(findValue(item, "tecnicoPrincipal", "tecnicoPrincipalNombre", "tecnico_nombre"));
             Map<String, Object> match = tecnicoPorNombre.get(normalizeName(tecnicoNombre));
             if (match != null) {
-                Object idTecnico = findValue(match, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico");
+                Object idTecnico = findValue(match, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor");
                 if (idTecnico != null) {
                     item.put("idTecnicoPrincipal", String.valueOf(idTecnico));
                     item.put("id_tecnico_principal", String.valueOf(idTecnico));
@@ -653,6 +655,8 @@ public class SupervisionService {
                     "Request de supervision es requerido."
             );
         }
+        String sucursal = resolveSucursalNombre(me);
+        validarTecnicoPrincipalExiste(request.getIdTecnicoPrincipal(), sucursal);
 
         String idGenerado = repository.registrarPendiente(
                 request.getIdSupervisorAsignado(),
@@ -715,6 +719,36 @@ public class SupervisionService {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private void validarTecnicoPrincipalExiste(String idTecnicoPrincipal, String sucursal) {
+        Integer idTecnico = parsePositiveInteger(idTecnicoPrincipal);
+        if (idTecnico == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "idTecnicoPrincipal debe ser un id tecnico valido."
+            );
+        }
+        if (!repository.existeTecnico(sucursal, idTecnico)) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "idTecnicoPrincipal no existe como tecnico activo en la sucursal."
+            );
+        }
+    }
+
+    private Integer parsePositiveInteger(String value) {
+        if (isBlank(value)) {
+            return null;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return parsed > 0 ? parsed : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private String resolveNombreUsuario(AuthMeResponse me) {

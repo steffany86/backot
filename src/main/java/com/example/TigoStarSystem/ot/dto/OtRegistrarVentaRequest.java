@@ -66,7 +66,6 @@ public class OtRegistrarVentaRequest {
     @JsonAlias({"inicioAgendado", "inicio_agendado", "Fecha_Agenda", "fecha_agenda"})
     private String fechaAgenda;
 
-    @NotNull(message = "checkPlantaExterna es requerido")
     @JsonAlias({"CheckPlantaExterna", "check_planta_externa"})
     private Boolean checkPlantaExterna;
 

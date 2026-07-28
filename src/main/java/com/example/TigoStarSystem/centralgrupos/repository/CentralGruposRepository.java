@@ -190,7 +190,8 @@ public class CentralGruposRepository {
                         "  SELECT " +
                         "    LTRIM(RTRIM(ISNULL(grupo, ''))) AS grupo, " +
                         "    LTRIM(RTRIM(ISNULL(supervisorACargo, ''))) AS supervisor, " +
-                        "    CAST(id_tecnico AS INT) AS id_usuario_tecnico, " +
+                        "    CAST(NULL AS INT) AS id_usuario_tecnico, " +
+                        "    CAST(id_tecnico AS INT) AS id_tecnico, " +
                         "    LTRIM(RTRIM(ISNULL(tecnico, ''))) AS tecnico, " +
                         "    fechaRegistro, " +
                         "    ROW_NUMBER() OVER ( " +
@@ -208,6 +209,7 @@ public class CentralGruposRepository {
                         "  grupo AS nombre, " +
                         "  supervisor AS supervisor, " +
                         "  id_usuario_tecnico, " +
+                        "  id_tecnico, " +
                         "  tecnico, " +
                         "  fechaRegistro AS fecha_registro " +
                         "FROM base " +

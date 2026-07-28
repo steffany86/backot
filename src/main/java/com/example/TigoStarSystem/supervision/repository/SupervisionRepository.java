@@ -410,18 +410,20 @@ public class SupervisionRepository {
                         "  g.nombre AS grupo, " +
                         "  gs.id_usuario AS idSupervisor, " +
                         "  dg.id_usuario_tecnico AS idUsuarioTecnico, " +
-                        "  COALESCE(CAST(v.Id_Vendedor AS INT), CAST(ut.id_Vendedor AS INT), CAST(dg.id_usuario_tecnico AS INT)) AS idTecnico, " +
-                        "  COALESCE(NULLIF(LTRIM(RTRIM(v.Nombre)), ''), 'Tecnico ' + CONVERT(NVARCHAR(20), COALESCE(v.Id_Vendedor, ut.id_Vendedor, dg.id_usuario_tecnico))) AS tecnico, " +
+                        "  CAST(v.Id_Vendedor AS INT) AS idTecnico, " +
+                        "  CAST(v.Id_Vendedor AS INT) AS id_tecnico, " +
+                        "  NULLIF(LTRIM(RTRIM(v.Nombre)), '') AS tecnico, " +
                         "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codigo, " +
                         "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codEmpleado " +
                         "FROM dbo.tbl_GrupoSup gs " +
                         "INNER JOIN dbo.tbl_Grupo g ON g.id_grupo = gs.id_grupo " +
                         "INNER JOIN dbo.tbl_DetalleGrupo dg ON dg.id_grupo = gs.id_grupo " +
-                        "LEFT JOIN dbo.tbl_UsuarioTecnico ut ON ut.id = dg.id_usuario_tecnico AND ISNULL(ut.e_eliminado, 0) = 0 " +
-                        "LEFT JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ut.id_Vendedor AND ISNULL(v.E_Eliminado, 0) = 0 " +
+                        "INNER JOIN dbo.tbl_UsuarioTecnico ut ON ut.id = dg.id_usuario_tecnico AND ISNULL(ut.e_eliminado, 0) = 0 " +
+                        "INNER JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ut.id_Vendedor AND ISNULL(v.E_Eliminado, 0) = 0 " +
                         "WHERE gs.id_usuario = ? " +
                         "  AND ISNULL(g.e_eliminado, 0) = 0 " +
-                        "  AND COALESCE(CAST(v.Id_Vendedor AS INT), CAST(ut.id_Vendedor AS INT), CAST(dg.id_usuario_tecnico AS INT)) > 0 " +
+                        "  AND v.Id_Vendedor IS NOT NULL " +
+                        "  AND v.Id_Vendedor > 0 " +
                         "ORDER BY tecnico, idTecnico";
         try {
             return template.queryForList(sql, idSupervisor);
@@ -439,16 +441,18 @@ public class SupervisionRepository {
                         "  g.id_grupo, " +
                         "  g.nombre AS grupo, " +
                         "  dg.id_usuario_tecnico AS idUsuarioTecnico, " +
-                        "  COALESCE(CAST(v.Id_Vendedor AS INT), CAST(ut.id_Vendedor AS INT), CAST(dg.id_usuario_tecnico AS INT)) AS idTecnico, " +
-                        "  COALESCE(NULLIF(LTRIM(RTRIM(v.Nombre)), ''), 'Tecnico ' + CONVERT(NVARCHAR(20), COALESCE(v.Id_Vendedor, ut.id_Vendedor, dg.id_usuario_tecnico))) AS tecnico, " +
+                        "  CAST(v.Id_Vendedor AS INT) AS idTecnico, " +
+                        "  CAST(v.Id_Vendedor AS INT) AS id_tecnico, " +
+                        "  NULLIF(LTRIM(RTRIM(v.Nombre)), '') AS tecnico, " +
                         "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codigo, " +
                         "  CAST(v.CodEmpleado AS NVARCHAR(100)) AS codEmpleado " +
                         "FROM dbo.tbl_Grupo g " +
                         "INNER JOIN dbo.tbl_DetalleGrupo dg ON dg.id_grupo = g.id_grupo " +
-                        "LEFT JOIN dbo.tbl_UsuarioTecnico ut ON ut.id = dg.id_usuario_tecnico AND ISNULL(ut.e_eliminado, 0) = 0 " +
-                        "LEFT JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ut.id_Vendedor AND ISNULL(v.E_Eliminado, 0) = 0 " +
+                        "INNER JOIN dbo.tbl_UsuarioTecnico ut ON ut.id = dg.id_usuario_tecnico AND ISNULL(ut.e_eliminado, 0) = 0 " +
+                        "INNER JOIN dbo.tbl_Vendedor v ON v.Id_Vendedor = ut.id_Vendedor AND ISNULL(v.E_Eliminado, 0) = 0 " +
                         "WHERE ISNULL(g.e_eliminado, 0) = 0 " +
-                        "  AND COALESCE(CAST(v.Id_Vendedor AS INT), CAST(ut.id_Vendedor AS INT), CAST(dg.id_usuario_tecnico AS INT)) > 0 " +
+                        "  AND v.Id_Vendedor IS NOT NULL " +
+                        "  AND v.Id_Vendedor > 0 " +
                         "ORDER BY tecnico, idTecnico";
         try {
             return template.queryForList(sql);
@@ -583,7 +587,7 @@ public class SupervisionRepository {
         }
         Set<Integer> seen = new LinkedHashSet<>();
         for (Map<String, Object> row : rows) {
-            Integer id = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico", "id"));
+            Integer id = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor"));
             if (id == null || id <= 0 || !seen.add(id)) {
                 continue;
             }
@@ -646,7 +650,7 @@ public class SupervisionRepository {
         Map<Integer, Map<String, Object>> esperadosPorTecnico = new LinkedHashMap<>();
         Map<String, Map<String, Object>> esperadosPorSucursalNombre = new LinkedHashMap<>();
         for (Map<String, Object> esperado : esperados) {
-            Integer id = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+            Integer id = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor"));
             if (id == null || id <= 0) {
                 continue;
             }
@@ -681,7 +685,7 @@ public class SupervisionRepository {
             }
             Integer tecnicoIdResuelto = esperado == null
                     ? tecnicoId
-                    : toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+                    : toInteger(findValue(esperado, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor"));
             if (idTecnico != null && !idTecnico.equals(tecnicoIdResuelto)) {
                 continue;
             }
@@ -921,7 +925,7 @@ public class SupervisionRepository {
         if (idTecnicoEsperado != null && idTecnicoEsperado > 0) {
             return idTecnicoEsperado;
         }
-        Integer idRow = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+        Integer idRow = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor"));
         if (idRow != null && esperadosPorTecnico != null && esperadosPorTecnico.containsKey(idRow)) {
             return idRow;
         }
@@ -1010,13 +1014,13 @@ public class SupervisionRepository {
             java.time.LocalDate fechaConsulta) {
         Map<String, Object> out = new LinkedHashMap<>(row);
         Integer idInicio = toInteger(findValue(row, "idInicio", "id_inicio"));
-        Integer idTecnico = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+        Integer idTecnico = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor"));
         Integer idTecnicoEsperado = toInteger(findValue(row, "idTecnicoEsperado", "id_tecnico_esperado"));
         if (idTecnicoEsperado != null && idTecnicoEsperado > 0) {
             idTecnico = idTecnicoEsperado;
         }
         if (esperado != null) {
-            Integer idEsperado = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "idUsuarioTecnico", "id_usuario_tecnico"));
+            Integer idEsperado = toInteger(findValue(esperado, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor"));
             if (idEsperado != null && idEsperado > 0) {
                 idTecnico = idEsperado;
             }
@@ -1596,9 +1600,10 @@ public class SupervisionRepository {
         List<Map<String, Object>> out = new ArrayList<>();
         if (idsRows == null || idsRows.isEmpty()) return out;
         for (Map<String, Object> row : idsRows) {
-            Integer idTecnico = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "idUsuarioTecnico"));
+            Integer idTecnico = toInteger(findValue(row, "idTecnico", "id_tecnico", "id_vendedor", "Id_Vendedor"));
             if (idTecnico == null || idTecnico <= 0) continue;
             Map<String, Object> vendedor = obtenerDatosVendedorSucursal(sucursalTemplate, idTecnico);
+            if (vendedor == null || vendedor.isEmpty()) continue;
             String nombre = toText(findValue(vendedor, "Nombre", "nombre"));
             if (nombre == null) {
                 nombre = obtenerNombreTecnicoSucursal(sucursalTemplate, idTecnico);
@@ -1642,6 +1647,15 @@ public class SupervisionRepository {
         return java.util.Collections.emptyMap();
     }
 
+    public boolean existeTecnico(String sucursal, Integer idTecnico) {
+        if (idTecnico == null || idTecnico <= 0) {
+            return false;
+        }
+        JdbcTemplate template = resolveJdbcTemplateBySucursalNombre(sucursal);
+        Map<String, Object> vendedor = obtenerDatosVendedorSucursal(template, idTecnico);
+        return vendedor != null && !vendedor.isEmpty();
+    }
+
     private String obtenerNombreUsuarioSucursal(JdbcTemplate template, Integer idUsuario) {
         if (template == null || idUsuario == null || idUsuario <= 0) {
             return null;
@@ -1670,30 +1684,6 @@ public class SupervisionRepository {
         String nombre = queryNombre(
                 template,
                 "SELECT TOP 1 Nombre FROM dbo.tbl_Vendedor WHERE Id_Vendedor = ? AND ISNULL(E_Eliminado,0)=0",
-                idTecnico
-        );
-        if (nombre != null) return nombre;
-        nombre = queryNombre(
-                template,
-                "SELECT TOP 1 u.Nombre AS Nombre " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "LEFT JOIN dbo.tbl_Usuario u ON u.Id_Usuario = ut.id_Usuario " +
-                        "WHERE ut.Id_Vendedor = ? AND ISNULL(ut.e_eliminado,0)=0",
-                idTecnico
-        );
-        if (nombre != null) return nombre;
-        nombre = queryNombre(
-                template,
-                "SELECT TOP 1 u.Nombre AS Nombre " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "LEFT JOIN dbo.tbl_Usuario u ON u.Id_Usuario = ut.id_Usuario " +
-                        "WHERE ut.id_Usuario = ? AND ISNULL(ut.e_eliminado,0)=0",
-                idTecnico
-        );
-        if (nombre != null) return nombre;
-        nombre = queryNombre(
-                template,
-                "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ? AND ISNULL(E_Eliminado,0)=0",
                 idTecnico
         );
         if (nombre != null) return nombre;

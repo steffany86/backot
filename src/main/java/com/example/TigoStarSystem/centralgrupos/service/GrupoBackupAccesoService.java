@@ -124,19 +124,19 @@ public class GrupoBackupAccesoService {
         String[] statements = new String[] {
                 "SELECT TOP 1 CAST(ut.id AS INT) AS id_usuario_tecnico " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT TOP 1 CAST(ut.Id AS INT) AS id_usuario_tecnico " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ? OR ut.Id_Tecnico = ? OR ut.IdTecnico = ?) " +
+                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ?) " +
                         "  AND ISNULL(ut.E_Eliminado, 0) = 0",
                 "SELECT TOP 1 CAST(ut.id AS INT) AS id_usuario_tecnico " +
                         "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT TOP 1 CAST(ut.id AS INT) AS id_usuario_tecnico " +
                         "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0"
         };
 
@@ -144,8 +144,6 @@ public class GrupoBackupAccesoService {
             try {
                 List<Map<String, Object>> rows = template.queryForList(
                         sql,
-                        idUsuarioSesion,
-                        idUsuarioSesion,
                         idUsuarioSesion,
                         idUsuarioSesion
                 );
@@ -199,15 +197,15 @@ public class GrupoBackupAccesoService {
         String[] statements = new String[] {
                 "SELECT TOP 1 CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0 AND ut.id_vendedor IS NOT NULL",
                 "SELECT TOP 1 CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ? OR ut.Id = ? OR ut.Id_Tecnico = ? OR ut.IdTecnico = ?) " +
+                        "WHERE (ut.Id_Usuario = ? OR ut.IdUsuario = ? OR ut.Id = ?) " +
                         "  AND ISNULL(ut.E_Eliminado, 0) = 0 AND ut.Id_Vendedor IS NOT NULL",
                 "SELECT TOP 1 CAST(ut.idvendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id = ? OR ut.id_tecnico = ? OR ut.idtecnico = ?) " +
+                        "WHERE (ut.id_usuario = ? OR ut.idusuario = ? OR ut.id = ?) " +
                         "  AND ISNULL(ut.e_eliminado, 0) = 0 AND ut.idvendedor IS NOT NULL"
         };
         Integer tecnico = idUsuarioTecnico == null ? -1 : idUsuarioTecnico;
@@ -217,9 +215,7 @@ public class GrupoBackupAccesoService {
                         sql,
                         idUsuarioSesion,
                         idUsuarioSesion,
-                        tecnico,
-                        idUsuarioSesion,
-                        idUsuarioSesion
+                        tecnico
                 );
                 if (rows == null || rows.isEmpty()) {
                     continue;

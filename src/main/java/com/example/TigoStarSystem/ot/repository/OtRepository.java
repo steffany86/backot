@@ -188,6 +188,12 @@ public class OtRepository {
         return Collections.emptyList();
     }
 
+    public List<Map<String, Object>> obtenerOrdenesPendientesRegistroMaterial(Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.spx_ListadoOrdenesPendientesDRegMaterial"
+        );
+    }
+
     public List<Map<String, Object>> obtenerOrdenTrabajoPorNumero(String numeroOrden, Integer idSucursal) {
         return template(idSucursal).queryForList(
                 "EXEC sp_ObtenerOrdenTrabajo_X_Numero ?",
@@ -225,7 +231,9 @@ public class OtRepository {
                             "v.TipoTecnologia AS TipoTecnologia, " +
                             "v.CheckPlantaExterna AS CheckPlantaExterna, " +
                             "e.Nombre AS Estado, " +
-                            "ts.Nombre AS TipoServicio " +
+                            "ts.Nombre AS TipoServicio, " +
+                            "ts.Prefijo AS TOR, " +
+                            "ts.Prefijo AS tor " +
                             "FROM dbo.tbl_Venta v " +
                             "LEFT JOIN dbo.tbl_estado e ON e.Id_Estado = v.Id_Estado " +
                             "LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio " +
@@ -342,12 +350,6 @@ public class OtRepository {
                         "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.id_tecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.idtecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
                         "WHERE ut.id_usuario = ?",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
@@ -358,36 +360,18 @@ public class OtRepository {
                 "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
                         "WHERE ut.idusuario = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.id_tecnico = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.idtecnico = ?",
                 "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.Id_Usuario = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
                 "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.IdUsuario = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.Id_Tecnico = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.IdTecnico = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.id_usuario = ?",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.idusuario = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.id_tecnico = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.idtecnico = ?",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.id_usuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
@@ -402,12 +386,6 @@ public class OtRepository {
                         "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.id_tecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.idtecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.id_usuario = ?",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
@@ -418,12 +396,9 @@ public class OtRepository {
                 "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.idusuario = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
+                "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.id_tecnico = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.idtecnico = ?"
+                        "WHERE ut.idusuario = ?"
         };
 
         RuntimeException lastError = null;
@@ -457,7 +432,7 @@ public class OtRepository {
         if (lastError != null) {
             logger.warn(
                     "No se pudo resolver mapeo idUsuario->idVendedor para idUsuario={}, idSucursal={}. " +
-                            "Se usara fallback con idUsuario como vendedor. Causa: {}",
+                            "No se usara idUsuario como vendedor. Causa: {}",
                     idUsuario,
                     idSucursal,
                     lastError.getMessage()
@@ -774,6 +749,28 @@ public class OtRepository {
                 "EXEC dbo.spx_ValidaMovimientos ?",
                 fechaSql
         );
+    }
+
+    public Map<String, Object> obtenerTipoServicioPorId(Integer idTipoServicio, Integer idSucursal) {
+        if (idTipoServicio == null || idTipoServicio <= 0) {
+            return Collections.emptyMap();
+        }
+        try {
+            List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                    "SELECT TOP (1) " +
+                            "Id_TipoServicio AS idTipoServicio, " +
+                            "Nombre AS tipoServicio, " +
+                            "Prefijo AS prefijo, " +
+                            "Prefijo AS TOR " +
+                            "FROM dbo.tbl_tiposervicio " +
+                            "WHERE Id_TipoServicio = ? AND ISNULL(E_Eliminado, 0) = 0",
+                    idTipoServicio
+            );
+            return rows == null || rows.isEmpty() ? Collections.emptyMap() : rows.get(0);
+        } catch (DataAccessException ex) {
+            logger.warn("No se pudo obtener tipo servicio por idTipoServicio={} idSucursal={}", idTipoServicio, idSucursal, ex);
+            return Collections.emptyMap();
+        }
     }
 
     public boolean existeConformacionCuadrillaTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {

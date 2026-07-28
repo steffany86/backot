@@ -618,8 +618,10 @@ public class TecnicoInicioJornadaRepository {
         Set<String> columnas = obtenerColumnasInicioJornada(template);
         String columnaTrabajoSolo = firstExistingColumn(
                 columnas,
+                "EstoyTrabajandoSolo",
                 "estoy_trabajando_solo",
                 "estoyTrabajandoSolo",
+                "trabajo_solo",
                 "trabajando_solo",
                 "trabajandoSolo"
         );
@@ -629,7 +631,7 @@ public class TecnicoInicioJornadaRepository {
         try {
             return template.update(
                     "UPDATE dbo.tbl_InicioJornadaAlturas SET [" + columnaTrabajoSolo + "] = ? WHERE id_inicio = ?",
-                    estoyTrabajandoSolo,
+                    estoyTrabajandoSolo ? 1 : 0,
                     idInicio
             );
         } catch (Exception ex) {

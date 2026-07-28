@@ -135,7 +135,11 @@ public class CuadreService {
         Map<String, Object> ruta = resolverRutaTecnico(tecnico, idRuta, sucursalFinal);
         Integer idVendedor = toPositiveInteger(findValue(ruta, "idVendedor", "id_vendedor", "Id_Vendedor", "idTecnico", "id_tecnico"));
         if (idVendedor == null) {
-            idVendedor = tecnico.getIdUsuario();
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "TECNICO_SIN_ID_VENDEDOR",
+                    "No se pudo resolver el id tecnico/vendedor requerido para registrar el cuadre."
+            );
         }
 
         validarRegistroPermitido(idRuta, fechaFinal, sucursalFinal);

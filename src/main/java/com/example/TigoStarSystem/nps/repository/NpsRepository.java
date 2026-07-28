@@ -157,13 +157,9 @@ public class NpsRepository {
         List<Integer> out = new ArrayList<Integer>();
         String[] sqls = new String[] {
                 "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_UsuarioTecnico ut WHERE ut.id_usuario = ? AND ut.id_vendedor IS NOT NULL",
-                "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_UsuarioTecnico ut WHERE ut.id_tecnico = ? AND ut.id_vendedor IS NOT NULL",
-                "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_UsuarioTecnico ut WHERE ut.Id_Tecnico = ? AND ut.id_vendedor IS NOT NULL",
                 "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_UsuarioTecnico ut WHERE ut.Id_Usuario = ? AND ut.id_vendedor IS NOT NULL",
                 "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_usuariotecnico ut WHERE ut.id_usuario = ? AND ut.id_vendedor IS NOT NULL",
-                "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_usuariotecnico ut WHERE ut.id_tecnico = ? AND ut.id_vendedor IS NOT NULL",
-                "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_usuaritecnico ut WHERE ut.id_usuario = ? AND ut.id_vendedor IS NOT NULL",
-                "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_usuaritecnico ut WHERE ut.id_tecnico = ? AND ut.id_vendedor IS NOT NULL"
+                "SELECT DISTINCT ut.id_vendedor AS idTecnicoNps FROM dbo.tbl_usuaritecnico ut WHERE ut.id_usuario = ? AND ut.id_vendedor IS NOT NULL"
         };
         for (String sql : sqls) {
             try {

@@ -322,12 +322,6 @@ public class ListaOtRepository {
                         "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.id_tecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.idtecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
                         "WHERE ut.id_usuario = ?",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
@@ -338,12 +332,6 @@ public class ListaOtRepository {
                 "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
                         "WHERE ut.idusuario = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.id_tecnico = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.idtecnico = ?",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.id_usuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
@@ -358,12 +346,6 @@ public class ListaOtRepository {
                         "WHERE ut.idusuario = ? AND ISNULL(ut.e_eliminado, 0) = 0",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.id_tecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.idtecnico = ? AND ISNULL(ut.e_eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.id_usuario = ?",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
@@ -374,12 +356,6 @@ public class ListaOtRepository {
                 "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.idusuario = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.id_tecnico = ?",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.idtecnico = ?",
                 "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.Id_Usuario = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
@@ -388,22 +364,13 @@ public class ListaOtRepository {
                         "WHERE ut.IdUsuario = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
                 "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.Id_Tecnico = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.IdTecnico = ? AND ISNULL(ut.E_Eliminado, 0) = 0",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.Id_Usuario = ?",
                 "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.IdUsuario = ?",
                 "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.Id_Tecnico = ?",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.IdTecnico = ?"
+                        "WHERE ut.IdUsuario = ?"
         };
 
         for (String sql : statements) {
@@ -689,6 +656,7 @@ public class ListaOtRepository {
                 "    SELECT * FROM (VALUES " + values + ") V(OrdenTrabajo, CodigoCliente) " +
                 "), Ventas AS ( " +
                 "    SELECT s.OrdenTrabajo, s.CodigoCliente, v.Id_Venta, v.Id_Estado, ISNULL(v.TieneDetalle, 0) AS TieneDetalle, " +
+                "           ts.Prefijo AS TOR, " +
                 "           ROW_NUMBER() OVER (PARTITION BY s.OrdenTrabajo, s.CodigoCliente ORDER BY v.Id_Venta DESC) AS rn " +
                 "    FROM Solicitud s " +
                 "    LEFT JOIN dbo.tbl_Venta v ON v.OrdenTrabajo = s.OrdenTrabajo " +
@@ -696,8 +664,9 @@ public class ListaOtRepository {
                 "       AND v.Fecha_Ejecucion >= @FechaInicio " +
                 "       AND v.Fecha_Ejecucion < @FechaFin " +
                 "       AND ISNULL(v.E_Eliminado, 0) = 0 " +
+                "    LEFT JOIN dbo.tbl_tiposervicio ts ON ts.Id_TipoServicio = v.Id_TipoServicio AND ISNULL(ts.E_Eliminado, 0) = 0 " +
                 "), Detalles AS ( " +
-                "    SELECT v.OrdenTrabajo, v.CodigoCliente, v.Id_Venta, v.Id_Estado, v.TieneDetalle, " +
+                "    SELECT v.OrdenTrabajo, v.CodigoCliente, v.Id_Venta, v.Id_Estado, v.TieneDetalle, v.TOR, " +
                 "           ISNULL(cv.Cantidad, 0) + ISNULL(cu.Cantidad, 0) AS CantidadDetalles " +
                 "    FROM Ventas v " +
                 "    OUTER APPLY (SELECT COUNT(1) AS Cantidad FROM dbo.tbl_CodigoVenta cv WHERE cv.Id_Venta = v.Id_Venta AND ISNULL(cv.E_Eliminado, 0) = 0) cv " +
@@ -710,8 +679,8 @@ public class ListaOtRepository {
                 "       CASE WHEN ISNULL(d.CantidadDetalles, 0) > 0 THEN 1 ELSE 0 END AS TieneDetalleEnCodigoVenta, " +
                 "       ISNULL(d.CantidadDetalles, 0) AS CantidadDetalles, " +
                 "       CASE WHEN d.Id_Estado IS NULL THEN 0 ELSE d.Id_Estado END AS IdEstado, " +
-                "       CASE WHEN ISNULL(e.AddMaterial_o_CargoUsuario, 0) = 1 THEN 1 ELSE 0 END AS AddMaterial_o_CargoUsuario, " +
-                "       CASE WHEN ISNULL(e.AddMaterial_o_CargoUsuario, 0) = 1 AND ISNULL(d.CantidadDetalles, 0) = 0 AND d.Id_Venta IS NOT NULL THEN 1 ELSE 0 END AS HabilitarCargarMaterial, " +
+                "       CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(d.TOR, '')))) = 'SIP' THEN 0 WHEN ISNULL(e.AddMaterial_o_CargoUsuario, 0) = 1 THEN 1 ELSE 0 END AS AddMaterial_o_CargoUsuario, " +
+                "       CASE WHEN UPPER(LTRIM(RTRIM(ISNULL(d.TOR, '')))) = 'SIP' THEN 0 WHEN ISNULL(e.AddMaterial_o_CargoUsuario, 0) = 1 AND ISNULL(d.CantidadDetalles, 0) = 0 AND d.Id_Venta IS NOT NULL THEN 1 ELSE 0 END AS HabilitarCargarMaterial, " +
                 "       ISNULL(d.TieneDetalle, 0) AS TieneDetalle " +
                 "FROM Solicitud s " +
                 "LEFT JOIN Detalles d ON d.OrdenTrabajo = s.OrdenTrabajo AND d.CodigoCliente = s.CodigoCliente " +

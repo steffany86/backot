@@ -545,12 +545,11 @@ public class NpsService {
             String tecnicoNombreScopeKey = normalizeKey(tecnicoNombreScope);
             List<Map<String, Object>> propios = new ArrayList<Map<String, Object>>();
             for (Map<String, Object> row : filtrosTecnicos) {
-                Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+                Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idVendedor", "id_vendedor"));
                 String nombreFila = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
                 boolean coincideIdTecnico = idTecnicoScope != null && idFila != null && idTecnicoScope.equals(idFila);
-                boolean coincideIdSesion = idUsuarioSesion.equals(idFila);
                 boolean coincideNombre = !isBlank(tecnicoNombreScopeKey) && tecnicoNombreScopeKey.equals(normalizeKey(nombreFila));
-                if (coincideIdTecnico || coincideIdSesion || coincideNombre) {
+                if (coincideIdTecnico || coincideNombre) {
                     propios.add(row);
                 }
             }
@@ -718,7 +717,7 @@ public class NpsService {
             Map<String, Object> item = new LinkedHashMap<String, Object>(row);
             String nombreOperativo = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
             String nombreNps = trimToNull(asText(find(row, "nombreNps", "NombreNPS", "nombre_nps")));
-            Integer idTecnico = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario", "idVendedor", "id_vendedor"));
+            Integer idTecnico = asInteger(find(row, "idTecnico", "id_tecnico", "idVendedor", "id_vendedor"));
             if (isBlank(nombreNps) && sucursalTemplate != null && idTecnico != null) {
                 nombreNps = repository.obtenerNombreNpsVendedor(sucursalTemplate, idTecnico);
             }
@@ -766,7 +765,7 @@ public class NpsService {
         String tecnicoNombreScope = asText(scope.get("tecnicoNombre"));
         String tecnicoNombreScopeKey = normalizeKey(tecnicoNombreScope);
         for (Map<String, Object> row : tecnicos) {
-            Integer id = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+            Integer id = asInteger(find(row, "idTecnico", "id_tecnico", "idVendedor", "id_vendedor"));
             String nombre = asText(find(row, "tecnico", "nombre", "tecnico_nombre"));
             String key = normalizeKey(nombre);
             if (idTecnicoScope != null && id != null && idTecnicoScope.equals(id)) {
@@ -796,11 +795,8 @@ public class NpsService {
         );
         if (tecnicos == null || tecnicos.isEmpty()) return null;
         for (Map<String, Object> row : tecnicos) {
-            Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+            Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idVendedor", "id_vendedor"));
             if (idTecnicoScope != null && idFila != null && idTecnicoScope.equals(idFila)) {
-                return repository.obtenerNombreNpsVendedor(sucursalTemplate, idFila);
-            }
-            if (idFila != null && idUsuarioSesion != null && idUsuarioSesion.equals(idFila)) {
                 return repository.obtenerNombreNpsVendedor(sucursalTemplate, idFila);
             }
         }
@@ -833,7 +829,7 @@ public class NpsService {
     private String findNombreNpsTecnicoEnLista(List<Map<String, Object>> tecnicos, Integer idTecnico) {
         if (tecnicos == null || idTecnico == null) return null;
         for (Map<String, Object> row : tecnicos) {
-            Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idUsuario", "id_usuario"));
+            Integer idFila = asInteger(find(row, "idTecnico", "id_tecnico", "idVendedor", "id_vendedor"));
             if (idFila == null || !idTecnico.equals(idFila)) continue;
             return trimToNull(asText(find(row, "nombreNps", "NombreNPS", "nombre_nps")));
         }

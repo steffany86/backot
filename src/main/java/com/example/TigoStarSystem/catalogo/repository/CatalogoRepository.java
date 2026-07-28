@@ -181,18 +181,6 @@ public class CatalogoRepository {
                         "AND ISNULL(ut.e_eliminado, 0) = 0 " +
                         "AND ut.id_vendedor IS NOT NULL " +
                         "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.id_tecnico = ? " +
-                        "AND ISNULL(ut.e_eliminado, 0) = 0 " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.idtecnico = ? " +
-                        "AND ISNULL(ut.e_eliminado, 0) = 0 " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
                 "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
                         "WHERE ut.id_usuario = ? " +
@@ -213,16 +201,6 @@ public class CatalogoRepository {
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuariotecnico ut " +
                         "WHERE ut.idusuario = ? " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.id_tecnico = ? " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuariotecnico ut " +
-                        "WHERE ut.idtecnico = ? " +
                         "AND ut.id_vendedor IS NOT NULL " +
                         "ORDER BY 1",
                 "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +
@@ -249,18 +227,6 @@ public class CatalogoRepository {
                         "ORDER BY 1",
                 "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.Id_Tecnico = ? " +
-                        "AND ISNULL(ut.E_Eliminado, 0) = 0 " +
-                        "AND ut.Id_Vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.IdTecnico = ? " +
-                        "AND ISNULL(ut.E_Eliminado, 0) = 0 " +
-                        "AND ut.Id_Vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
                         "WHERE ut.Id_Usuario = ? " +
                         "AND ut.Id_Vendedor IS NOT NULL " +
                         "ORDER BY 1",
@@ -269,16 +235,6 @@ public class CatalogoRepository {
                         "WHERE ut.IdUsuario = ? " +
                         "AND ut.Id_Vendedor IS NOT NULL " +
                         "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.Id_Tecnico = ? " +
-                        "AND ut.Id_Vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.Id_Vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ut.IdTecnico = ? " +
-                        "AND ut.Id_Vendedor IS NOT NULL " +
-                        "ORDER BY 1",
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.id_usuario = ? " +
@@ -288,18 +244,6 @@ public class CatalogoRepository {
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.idusuario = ? " +
-                        "AND ISNULL(ut.e_eliminado, 0) = 0 " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.id_tecnico = ? " +
-                        "AND ISNULL(ut.e_eliminado, 0) = 0 " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.idtecnico = ? " +
                         "AND ISNULL(ut.e_eliminado, 0) = 0 " +
                         "AND ut.id_vendedor IS NOT NULL " +
                         "ORDER BY 1",
@@ -323,16 +267,6 @@ public class CatalogoRepository {
                 "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
                         "FROM dbo.tbl_usuaritecnico ut " +
                         "WHERE ut.idusuario = ? " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.id_tecnico = ? " +
-                        "AND ut.id_vendedor IS NOT NULL " +
-                        "ORDER BY 1",
-                "SELECT DISTINCT CAST(ut.id_vendedor AS INT) AS id_vendedor " +
-                        "FROM dbo.tbl_usuaritecnico ut " +
-                        "WHERE ut.idtecnico = ? " +
                         "AND ut.id_vendedor IS NOT NULL " +
                         "ORDER BY 1",
                 "SELECT DISTINCT CAST(ut.idvendedor AS INT) AS id_vendedor " +

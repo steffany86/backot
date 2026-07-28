@@ -142,6 +142,52 @@ public class OtService {
         return pendientes;
     }
 
+    public List<Map<String, Object>> listarOrdenesPasadasPendientesMaterial(Integer idUsuario, Integer idSucursal) {
+        LocalDate hoy = LocalDate.now();
+        List<Integer> idsVendedorFiltro = obtenerIdsVendedorFiltro(idUsuario, idSucursal, "OrdenesPasadasMaterial", hoy);
+        if (idsVendedorFiltro.isEmpty()) return Collections.emptyList();
+
+        List<Map<String, Object>> rows = otRepository.obtenerOrdenesPendientesRegistroMaterial(idSucursal);
+        if (rows == null || rows.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Integer idVendedor = toInteger(findValue(row, "Id_Vendedor", "id_vendedor", "idVendedor", "IdVendedor"));
+            if (idVendedor == null || !idsVendedorFiltro.contains(idVendedor)) {
+                continue;
+            }
+
+            LocalDate fechaEjecucion = toLocalDate(findValue(row, "Fecha_Ejecucion", "fecha_ejecucion", "FechaEjecucion", "fecha", "Fecha"));
+            LocalDate fechaAgenda = toLocalDate(findValue(row, "fecha_agenda", "Fecha_Agenda", "fechaAgenda", "FechaAgenda"));
+            LocalDate fechaRegistro = toLocalDate(findValue(row, "Fecha_Registro", "fecha_registro", "FechaRegistro"));
+            LocalDate fechaFiltro = fechaEjecucion != null ? fechaEjecucion : (fechaAgenda != null ? fechaAgenda : fechaRegistro);
+            if (fechaFiltro == null || !fechaFiltro.isBefore(hoy)) {
+                continue;
+            }
+
+            Map<String, Object> item = new LinkedHashMap<>(row);
+            item.put("pendienteMaterialPasado", true);
+            item.put("origenPendienteMaterial", "ORDEN_PASADA");
+            item.put("existeVenta", true);
+            item.put("cantidadVentas", 1);
+            item.put("TieneDetalle", true);
+            item.put("tieneDetalle", true);
+            item.put("tieneDetalleEnCodigoVenta", false);
+            item.put("cantidadDetalles", 0);
+            item.put("AddMaterial_o_CargoUsuario", true);
+            item.put("addMaterialOCargoUsuario", true);
+            item.put("HabilitarCargarMaterial", true);
+            item.put("habilitarCargarMaterial", true);
+            String estadoActual = asString(findValue(item, "Estado", "estado"));
+            item.put("estado", estadoActual == null || estadoActual.trim().isEmpty() ? "Falta cargar material" : estadoActual.trim());
+            item.put("Estado", estadoActual == null || estadoActual.trim().isEmpty() ? "Falta cargar material" : estadoActual.trim());
+            out.add(item);
+        }
+        return out;
+    }
+
     private List<Integer> obtenerIdsVendedorFiltro(Integer idUsuario, Integer idSucursal, String contexto, LocalDate fechaFiltro) {
         if (idUsuario == null || idUsuario <= 0) {
             logger.warn("{}: idUsuario no valido para filtrar tecnico. fecha={}", contexto, fechaFiltro);
@@ -156,11 +202,6 @@ public class OtService {
                     idsVendedorFiltro.add(idVendedor);
                 }
             }
-        }
-        // Fallback: en algunas sucursales no existe mapeo en tbl_usuariotecnico, pero
-        // el Id_Vendedor de tbl_venta coincide con el idUsuario del login.
-        if (!idsVendedorFiltro.contains(idUsuario)) {
-            idsVendedorFiltro.add(idUsuario);
         }
         return idsVendedorFiltro;
     }
@@ -633,7 +674,7 @@ public class OtService {
             MultipartFile pdf) {
         long totalStart = System.nanoTime();
         long stepStart = totalStart;
-        validarRegistroVentaRequest(request);
+        validarRegistroVentaRequest(request, idSucursalSesion);
         if (pdf == null || pdf.isEmpty()) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
@@ -855,10 +896,11 @@ public class OtService {
             stepStart = System.nanoTime();
 
             if (idVentaRegistro != null && idVentaRegistro > 0) {
+                Boolean checkPlantaExternaRegistro = esRegistroSip(request, idSucursalResolucion) ? Boolean.FALSE : request.getCheckPlantaExterna();
                 try {
                     int filas = otRepository.actualizarChecksVenta(
                             idVentaRegistro.longValue(),
-                            request.getCheckPlantaExterna(),
+                            checkPlantaExternaRegistro,
                             request.getTieneDetalle(),
                             idSucursalResolucion
                     );
@@ -1449,20 +1491,13 @@ public class OtService {
             logger.warn("registrarDetalleAgenda: numeroOrden vacio. idSucursal={}, codigoCliente={}", idSucursal, request.getCodigoCliente());
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "numeroOrden es requerido.");
         }
-        if (request.getMateriales() == null || request.getMateriales().isEmpty()) {
-            logger.warn(
-                    "registrarDetalleAgenda: materiales vacios. idSucursal={}, numeroOrden={}, codigoCliente={}",
-                    idSucursal,
-                    numeroOrden,
-                    request.getCodigoCliente()
-            );
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Debe enviar al menos un material.");
-        }
-
         Map<String, Object> venta = null;
         Integer ordenTrabajoRequest = toInteger(numeroOrden);
         Integer codigoClienteRequest = request.getCodigoCliente();
         String fechaEjecucionRequest = request.getFechaEjecucion();
+        boolean esOrdenPasadaPendienteMaterial = "ORDEN_PASADA".equalsIgnoreCase(
+                request.getOrigenPendienteMaterial() == null ? "" : request.getOrigenPendienteMaterial().trim()
+        );
         boolean tieneParametrosExactos =
                 ordenTrabajoRequest != null && ordenTrabajoRequest > 0
                         && codigoClienteRequest != null && codigoClienteRequest > 0
@@ -1483,12 +1518,12 @@ public class OtService {
             );
         }
 
-        // Regla principal: resolver siempre por fecha + OT + cliente para evitar
-        // tomar una venta historica cuando existen registros duplicados por OT/cliente.
+        // Regla principal: para OT normales resolver por fecha del dia + OT + cliente.
+        // Para "Ordenes pasadas" usar el idVenta recibido porque justamente son ventas historicas.
         LocalDate fechaRequest = parseFechaFlexible(fechaEjecucionRequest);
         LocalDate fechaHoy = LocalDate.now(ZoneId.of("America/La_Paz"));
         LocalDate fechaBusqueda = fechaHoy;
-        if (!fechaHoy.equals(fechaRequest)) {
+        if (!fechaHoy.equals(fechaRequest) && !esOrdenPasadaPendienteMaterial) {
             logger.warn(
                     "registrarDetalleAgenda: fecha payload {} distinta a fecha actual {}; se usara fecha actual para resolver id_venta. OT={}, cliente={}",
                     fechaRequest,
@@ -1497,13 +1532,32 @@ public class OtService {
                     codigoClienteRequest
             );
         }
-        Map<String, Object> ventaExacta = otRepository.obtenerVentaPorFechaOrdenYCliente(
-                fechaBusqueda,
-                ordenTrabajoRequest,
-                codigoClienteRequest,
-                idSucursal
-        );
-        Long idVentaExacta = toLong(findValue(ventaExacta, "idVenta", "Id_Venta", "id_venta", "idventa"));
+        Map<String, Object> ventaExacta;
+        Long idVentaExacta;
+        if (esOrdenPasadaPendienteMaterial) {
+            idVentaExacta = request.getIdVenta();
+            if (idVentaExacta == null || idVentaExacta <= 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idVenta es requerido para cargar material de ordenes pasadas.");
+            }
+            ventaExacta = obtenerPorId(idVentaExacta, idSucursal);
+            Integer ordenVenta = toInteger(findValue(ventaExacta, "OrdenTrabajo", "ordenTrabajo", "orden_trabajo", "ot"));
+            Integer clienteVenta = toInteger(findValue(ventaExacta, "CodigoCliente", "codigoCliente", "codigo_cliente", "cliente_nro", "clientenro"));
+            if (!ordenTrabajoRequest.equals(ordenVenta) || !codigoClienteRequest.equals(clienteVenta)) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "VENTA_NO_COINCIDE",
+                        "El idVenta enviado no corresponde a la OT y codigo cliente seleccionados."
+                );
+            }
+        } else {
+            ventaExacta = otRepository.obtenerVentaPorFechaOrdenYCliente(
+                    fechaBusqueda,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest,
+                    idSucursal
+            );
+            idVentaExacta = toLong(findValue(ventaExacta, "idVenta", "Id_Venta", "id_venta", "idventa"));
+        }
         if (idVentaExacta == null || idVentaExacta <= 0) {
             logger.warn(
                     "registrarDetalleAgenda:venta no encontrada por fecha+ot+cliente. idSucursal={}, fechaBusqueda={}, numeroOrden={}, codigoCliente={}, ventaExacta={}",
@@ -1534,6 +1588,7 @@ public class OtService {
         Integer codigoCliente = toInteger(findValue(venta, "CodigoCliente", "codigo_cliente", "cliente_nro", "clientenro"));
         Integer ordenTrabajo = toInteger(findValue(venta, "OrdenTrabajo", "orden_trabajo", "ot"));
         LocalDate fechaEjecucion = toLocalDate(findValue(venta, "Fecha_Ejecucion", "fecha_ejecucion", "fecha"));
+        boolean ventaSip = esVentaSip(venta);
 
         if (idVenta == null || idVenta <= 0 || idRuta == null || idRuta <= 0 || idUsuario == null || idUsuario <= 0) {
             logger.warn(
@@ -1563,13 +1618,17 @@ public class OtService {
 
         // Capa extra de seguridad: resolver nuevamente el id_venta por OT+cliente+fecha del dia
         // justo antes de persistir detalle para evitar guardar en una venta historica.
-        Map<String, Object> ventaParaPersistencia = otRepository.obtenerVentaPorFechaOrdenYCliente(
-                fechaBusqueda,
-                ordenTrabajoRequest,
-                codigoClienteRequest,
-                idSucursal
-        );
-        Long idVentaPersistencia = toLong(findValue(ventaParaPersistencia, "idVenta", "Id_Venta", "id_venta", "idventa"));
+        Map<String, Object> ventaParaPersistencia = esOrdenPasadaPendienteMaterial
+                ? venta
+                : otRepository.obtenerVentaPorFechaOrdenYCliente(
+                        fechaBusqueda,
+                        ordenTrabajoRequest,
+                        codigoClienteRequest,
+                        idSucursal
+                );
+        Long idVentaPersistencia = esOrdenPasadaPendienteMaterial
+                ? idVenta
+                : toLong(findValue(ventaParaPersistencia, "idVenta", "Id_Venta", "id_venta", "idventa"));
         if (idVentaPersistencia == null || idVentaPersistencia <= 0) {
             logger.warn(
                     "registrarDetalleAgenda:venta persistencia no encontrada. idSucursal={}, fechaBusqueda={}, numeroOrden={}, codigoCliente={}, ventaParaPersistencia={}",
@@ -1603,6 +1662,7 @@ public class OtService {
                 codigoCliente = toInteger(findValue(venta, "CodigoCliente", "codigo_cliente", "cliente_nro", "clientenro"));
                 ordenTrabajo = toInteger(findValue(venta, "OrdenTrabajo", "orden_trabajo", "ot"));
                 LocalDate fechaEjecucionPersistencia = toLocalDate(findValue(venta, "Fecha_Ejecucion", "fecha_ejecucion", "fecha"));
+                ventaSip = esVentaSip(venta);
                 if (fechaEjecucionPersistencia != null) {
                     fechaEjecucion = fechaEjecucionPersistencia;
                 }
@@ -1623,8 +1683,8 @@ public class OtService {
         }
 
         LocalDate fechaTrabajo = fechaEjecucion == null ? LocalDate.now() : fechaEjecucion;
-        OtRegistroAgendaValidacionResponse bloqueo = validarRegistroAgenda(fechaTrabajo, idSucursal);
-        if (bloqueo.isBloqueado()) {
+        OtRegistroAgendaValidacionResponse bloqueo = esOrdenPasadaPendienteMaterial ? null : validarRegistroAgenda(fechaTrabajo, idSucursal);
+        if (bloqueo != null && bloqueo.isBloqueado()) {
             logger.warn(
                     "registrarDetalleAgenda:registro bloqueado. idSucursal={}, fechaTrabajo={}, numeroOrden={}, codigoCliente={}, motivo={}",
                     idSucursal,
@@ -1636,7 +1696,9 @@ public class OtService {
             throw new ApiException(HttpStatus.CONFLICT, "REGISTRO_BLOQUEADO", bloqueo.getMensaje());
         }
 
-        List<Map<String, Object>> cuadreRows = otRepository.validarCuadreRuta(idRuta, fechaTrabajo, idSucursal);
+        List<Map<String, Object>> cuadreRows = esOrdenPasadaPendienteMaterial
+                ? Collections.emptyList()
+                : otRepository.validarCuadreRuta(idRuta, fechaTrabajo, idSucursal);
         Boolean existeCuadre = coerceFirstBoolean(cuadreRows);
         if (Boolean.TRUE.equals(existeCuadre)) {
             logger.warn(
@@ -1648,6 +1710,41 @@ public class OtService {
                     codigoClienteRequest
             );
             throw new ApiException(HttpStatus.CONFLICT, "CUADRE_REGISTRADO", "No se puede registrar el detalle porque la ruta ya realizo cuadre.");
+        }
+
+        if (ventaSip) {
+            logger.info(
+                    "registrarDetalleAgenda: TOR SIP sin carga de material. idSucursal={}, idVenta={}, numeroOrden={}, codigoCliente={}",
+                    idSucursal,
+                    idVenta,
+                    ordenTrabajoRequest,
+                    codigoClienteRequest
+            );
+            final Long idVentaFinalSip = idVenta;
+            final Integer ordenTrabajoFinalSip = ordenTrabajo;
+            final String numeroOrdenFinalSip = numeroOrden;
+            return ejecutarEnTransaccionSucursal(idSucursal, () -> {
+                actualizarFechaAgendaVentaSiCorresponde(idVentaFinalSip, request.getFechaAgenda(), idSucursal);
+                if (request.getIdEstado() != null && request.getIdEstado() > 0) {
+                    otRepository.modificarOtRealizada(
+                            request.getObservacion() == null ? "" : request.getObservacion().trim(),
+                            request.getIdEstado(),
+                            numeroOrdenFinalSip,
+                            idSucursal
+                    );
+                }
+                return new OtRegistrarDetalleAgendaResponse(idVentaFinalSip, ordenTrabajoFinalSip, 0, 0);
+            });
+        }
+
+        if (request.getMateriales() == null || request.getMateriales().isEmpty()) {
+            logger.warn(
+                    "registrarDetalleAgenda: materiales vacios. idSucursal={}, numeroOrden={}, codigoCliente={}",
+                    idSucursal,
+                    numeroOrden,
+                    request.getCodigoCliente()
+            );
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Debe enviar al menos un material.");
         }
 
         if (codigoCliente != null && ordenTrabajo != null) {
@@ -2195,7 +2292,7 @@ public class OtService {
         return new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", message);
     }
 
-    private void validarRegistroVentaRequest(OtRegistrarVentaRequest request) {
+    private void validarRegistroVentaRequest(OtRegistrarVentaRequest request, Integer idSucursal) {
         if (request == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El cuerpo de la solicitud es requerido.");
         }
@@ -2242,7 +2339,7 @@ public class OtService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "tipoTecnologia es requerido.");
         }
         request.setFechaAgenda(resolverFechaAgendaParaRegistro(request.getFechaAgenda()));
-        if (request.getCheckPlantaExterna() == null) {
+        if (!esRegistroSip(request, idSucursal) && request.getCheckPlantaExterna() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "checkPlantaExterna es requerido.");
         }
         if (request.getTieneDetalle() == null) {
@@ -2279,7 +2376,17 @@ public class OtService {
                     details
             );
         }
-        return idsVendedor.get(0);
+        Integer idVendedorResuelto = idsVendedor.get(0);
+        if (idVendedorRequest != null && idVendedorRequest > 0 && !idVendedorRequest.equals(idVendedorResuelto)) {
+            logger.warn(
+                    "id_vendedor payload ignorado por no corresponder al id_usuario. idUsuario={}, idVendedorRequest={}, idVendedorResuelto={}, idSucursal={}",
+                    idUsuario,
+                    idVendedorRequest,
+                    idVendedorResuelto,
+                    idSucursal
+            );
+        }
+        return idVendedorResuelto;
     }
 
     private void validarMayorCero(Integer value, String field) {
@@ -2332,6 +2439,45 @@ public class OtService {
 
     private String asString(Object value) {
         return value == null ? null : String.valueOf(value);
+    }
+
+    private boolean esRegistroSip(OtRegistrarVentaRequest request, Integer idSucursal) {
+        if (request == null) {
+            return false;
+        }
+        Map<String, Object> tipoServicio = otRepository.obtenerTipoServicioPorId(request.getIdTipoServicio(), idSucursal);
+        return esVentaSip(tipoServicio);
+    }
+
+    private boolean esVentaSip(Map<String, Object> venta) {
+        if (venta == null || venta.isEmpty()) {
+            return false;
+        }
+        Object value = findValue(
+                venta,
+                "TOR",
+                "tor",
+                "Prefijo",
+                "prefijo",
+                "CodigoTipoServicio",
+                "codigoTipoServicio",
+                "TipoServicio",
+                "tipoServicio",
+                "NombreTipoServicio",
+                "nombreTipoServicio",
+                "Id_TipoServicio",
+                "idTipoServicio",
+                "id_tipo_servicio"
+        );
+        return esTextoSip(asString(value));
+    }
+
+    private boolean esTextoSip(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = normalizeText(value);
+        return "sip".equals(normalized) || normalized.contains(" sip ") || normalized.startsWith("sip ") || normalized.endsWith(" sip");
     }
 
     private String clean(String value) {
@@ -2750,12 +2896,27 @@ public class OtService {
         if (value instanceof java.sql.Date) {
             return ((java.sql.Date) value).toLocalDate();
         }
+        if (value instanceof java.sql.Timestamp) {
+            return ((java.sql.Timestamp) value).toLocalDateTime().toLocalDate();
+        }
+        if (value instanceof java.util.Date) {
+            return ((java.util.Date) value).toInstant()
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate();
+        }
         if (value instanceof LocalDate) {
             return (LocalDate) value;
         }
         String text = String.valueOf(value).trim();
         if (text.isEmpty()) {
             return null;
+        }
+        if (text.length() >= 10 && text.charAt(4) == '-' && text.charAt(7) == '-') {
+            try {
+                return LocalDate.parse(text.substring(0, 10), DateTimeFormatter.ISO_LOCAL_DATE);
+            } catch (DateTimeParseException ignored) {
+                // Intentar con formatos declarados abajo.
+            }
         }
         DateTimeFormatter[] formatters = new DateTimeFormatter[] {
                 DateTimeFormatter.ISO_LOCAL_DATE,
