@@ -646,7 +646,7 @@ public class SupervisionRepository {
             Integer idTecnico,
             boolean limitarSupervisor) {
         java.time.LocalDate fechaConsulta = fecha == null ? java.time.LocalDate.now() : fecha;
-        List<Map<String, Object>> esperados = listarTecnicosEsperadosJornada(sucursal, limitarSupervisor ? idSupervisor : null);
+        List<Map<String, Object>> esperados = listarTecnicosEsperadosJornada(fechaConsulta, sucursal, limitarSupervisor ? idSupervisor : null);
         Map<Integer, Map<String, Object>> esperadosPorTecnico = new LinkedHashMap<>();
         Map<String, Map<String, Object>> esperadosPorSucursalNombre = new LinkedHashMap<>();
         for (Map<String, Object> esperado : esperados) {
@@ -796,11 +796,15 @@ public class SupervisionRepository {
     }
 
     private List<Map<String, Object>> queryHistoricoJornadasChunk(java.time.LocalDate fecha, String sucursal, Map<Integer, Integer> idsUsuarioTecnico) {
+        String trabajoSoloSelect = buildTrabajoSoloSelect("ij");
         StringBuilder sql = new StringBuilder(
                 "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
                         "ij.fecha_registro, ij.fecha_cierre, ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, " +
                         "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
-                        "ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre " +
+                        "ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre, " +
+                        trabajoSoloSelect +
+                        "CASE WHEN ij.imagen IS NULL OR DATALENGTH(ij.imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
+                        "CASE WHEN ij.imagen_auxiliar IS NULL OR DATALENGTH(ij.imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar " +
                         "FROM dbo.tbl_InicioJornadaAlturas ij " +
                         "WHERE ij.fecha_registro >= ? " +
                         "  AND ij.fecha_registro < ? " +
@@ -963,15 +967,17 @@ public class SupervisionRepository {
         return normalized.isEmpty() ? null : normalized;
     }
 
-    private List<Map<String, Object>> listarTecnicosEsperadosJornada(String sucursal, Integer idSupervisor) {
+    private List<Map<String, Object>> listarTecnicosEsperadosJornada(java.time.LocalDate fechaConsulta, String sucursal, Integer idSupervisor) {
         JdbcTemplate central = dbConnectionManager.connDb("bdcontrolordenes");
         String sucursalNorm = trimToNull(sucursal);
         Object[] params = new Object[]{
-                sucursalNorm, sucursalNorm, idSupervisor, idSupervisor,
-                sucursalNorm, sucursalNorm, idSupervisor, idSupervisor
+                Date.valueOf(fechaConsulta), Date.valueOf(fechaConsulta.plusDays(1)), sucursalNorm, sucursalNorm, idSupervisor, idSupervisor,
+                Date.valueOf(fechaConsulta), Date.valueOf(fechaConsulta.plusDays(1)), sucursalNorm, sucursalNorm, idSupervisor, idSupervisor
         };
         String baseWhere =
                 "WHERE ISNULL(c.e_eliminado, 0) = 0 " +
+                        "  AND COALESCE(c.fecha, c.fechaRegistro) >= ? " +
+                        "  AND COALESCE(c.fecha, c.fechaRegistro) < ? " +
                         "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
                         "                  LOWER(REPLACE(REPLACE(REPLACE(?, '_', ''), '-', ''), ' ', ''))) " +
                         "  AND (? IS NULL OR CAST(c.idUsuarioSupervisor AS INT) = ?) ";
@@ -990,12 +996,14 @@ public class SupervisionRepository {
 
     private String construirSqlTecnicosEsperados(String baseWhere, String auxColumn) {
         return "WITH tecnicos AS ( " +
-                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(c.id_tecnico AS INT) AS idTecnico, c.tecnico AS tecnico, c.fecha, c.fechaRegistro, c.id " +
+                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(c.id_tecnico AS INT) AS idTecnico, c.tecnico AS tecnico, " +
+                "         CAST(" + auxColumn + " AS INT) AS idAuxiliarCuadrilla, c.auxiliar AS auxiliarCuadrilla, c.fecha, c.fechaRegistro, c.id " +
                 "  FROM dbo.tbl_ConformacionCuadrillaDiario c " +
                 baseWhere +
                 "    AND c.id_tecnico IS NOT NULL AND c.id_tecnico > 0 " +
                 "  UNION ALL " +
-                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(" + auxColumn + " AS INT) AS idTecnico, c.auxiliar AS tecnico, c.fecha, c.fechaRegistro, c.id " +
+                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(" + auxColumn + " AS INT) AS idTecnico, c.auxiliar AS tecnico, " +
+                "         NULL AS idAuxiliarCuadrilla, NULL AS auxiliarCuadrilla, c.fecha, c.fechaRegistro, c.id " +
                 "  FROM dbo.tbl_ConformacionCuadrillaDiario c " +
                 baseWhere +
                 "    AND " + auxColumn + " IS NOT NULL AND " + auxColumn + " > 0 " +
@@ -1004,6 +1012,8 @@ public class SupervisionRepository {
                 "  FROM tecnicos " +
                 ") " +
                 "SELECT CAST(idTecnico AS INT) AS idTecnico, CAST(idTecnico AS INT) AS id_tecnico, tecnico AS tecnicoNombre, tecnico, " +
+                "       CAST(idAuxiliarCuadrilla AS INT) AS idAuxiliarCuadrilla, CAST(idAuxiliarCuadrilla AS INT) AS id_auxiliar_cuadrilla, " +
+                "       auxiliarCuadrilla, auxiliarCuadrilla AS auxiliar_cuadrilla, " +
                 "       sucursal, grupo, CAST(idUsuarioSupervisor AS INT) AS idSupervisor, supervisorACargo AS supervisorNombre " +
                 "FROM ranked WHERE rn = 1 ORDER BY sucursal, grupo, tecnico";
     }
@@ -1050,6 +1060,12 @@ public class SupervisionRepository {
         if (supervisorNombre == null && esperado != null) {
             supervisorNombre = toText(findValue(esperado, "supervisorNombre"));
         }
+        Integer idAuxiliarCuadrilla = esperado == null ? null : toInteger(findValue(esperado, "idAuxiliarCuadrilla", "id_auxiliar_cuadrilla"));
+        String auxiliarCuadrilla = esperado == null ? null : toText(findValue(esperado, "auxiliarCuadrilla", "auxiliar_cuadrilla"));
+        Object imagenAuxiliar = findValue(row, "imagenAuxiliar", "imagen_auxiliar");
+        Object tieneImagenInicio = findValue(row, "tieneImagenInicio", "tiene_imagen_inicio");
+        Object tieneImagenAuxiliar = findValue(row, "tieneImagenAuxiliar", "tiene_imagen_auxiliar");
+        Object estoyTrabajandoSolo = findValue(row, "estoyTrabajandoSolo", "estoy_trabajando_solo", "EstoyTrabajandoSolo", "trabajo_solo", "trabajando_solo", "trabajandoSolo");
 
         out.put("idInicio", idInicio);
         out.put("idTecnico", idTecnico);
@@ -1066,6 +1082,20 @@ public class SupervisionRepository {
         out.put("grupo", grupo);
         out.put("idSupervisor", idSupervisor);
         out.put("supervisorNombre", supervisorNombre);
+        out.put("idAuxiliarCuadrilla", idAuxiliarCuadrilla);
+        out.put("id_auxiliar_cuadrilla", idAuxiliarCuadrilla);
+        out.put("auxiliarCuadrilla", auxiliarCuadrilla);
+        out.put("auxiliar_cuadrilla", auxiliarCuadrilla);
+        out.put("requiereFotoAuxiliar", idAuxiliarCuadrilla != null && idAuxiliarCuadrilla > 0);
+        out.put("requiere_foto_auxiliar", idAuxiliarCuadrilla != null && idAuxiliarCuadrilla > 0);
+        out.put("imagenAuxiliar", imagenAuxiliar);
+        out.put("imagen_auxiliar", imagenAuxiliar);
+        out.put("tieneImagenInicio", tieneImagenInicio);
+        out.put("tiene_imagen_inicio", tieneImagenInicio);
+        out.put("tieneImagenAuxiliar", tieneImagenAuxiliar);
+        out.put("tiene_imagen_auxiliar", tieneImagenAuxiliar);
+        out.put("estoyTrabajandoSolo", estoyTrabajandoSolo);
+        out.put("estoy_trabajando_solo", estoyTrabajandoSolo);
         boolean sinCierre = (noMarcoCierre != null && noMarcoCierre == 1) || fechaCierre == null;
         out.put("sinInicio", false);
         out.put("sinCierre", sinCierre);
@@ -1091,6 +1121,14 @@ public class SupervisionRepository {
         out.put("grupo", toText(findValue(esperado, "grupo")));
         out.put("idSupervisor", findValue(esperado, "idSupervisor"));
         out.put("supervisorNombre", toText(findValue(esperado, "supervisorNombre")));
+        Integer idAuxiliarCuadrilla = toInteger(findValue(esperado, "idAuxiliarCuadrilla", "id_auxiliar_cuadrilla"));
+        String auxiliarCuadrilla = toText(findValue(esperado, "auxiliarCuadrilla", "auxiliar_cuadrilla"));
+        out.put("idAuxiliarCuadrilla", idAuxiliarCuadrilla);
+        out.put("id_auxiliar_cuadrilla", idAuxiliarCuadrilla);
+        out.put("auxiliarCuadrilla", auxiliarCuadrilla);
+        out.put("auxiliar_cuadrilla", auxiliarCuadrilla);
+        out.put("requiereFotoAuxiliar", idAuxiliarCuadrilla != null && idAuxiliarCuadrilla > 0);
+        out.put("requiere_foto_auxiliar", idAuxiliarCuadrilla != null && idAuxiliarCuadrilla > 0);
         out.put("sinInicio", true);
         out.put("sinCierre", true);
         out.put("estadoJornada", "NO_INICIO");
@@ -1102,13 +1140,17 @@ public class SupervisionRepository {
             return java.util.Collections.emptyMap();
         }
         try {
+            String trabajoSoloSelect = buildTrabajoSoloSelect(null);
             List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                     "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
                             "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
                             "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                             "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                             "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre " +
+                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen_auxiliar, firma_inicio, firma_cierre, " +
+                            trabajoSoloSelect +
+                            "CASE WHEN imagen IS NULL OR DATALENGTH(imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
+                            "CASE WHEN imagen_auxiliar IS NULL OR DATALENGTH(imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar " +
                             "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ?",
                     idInicio
             );
@@ -1233,6 +1275,53 @@ public class SupervisionRepository {
             return 200;
         }
         return Math.min(limite, 1000);
+    }
+
+    private String buildTrabajoSoloSelect(String alias) {
+        String column = resolveInicioJornadaColumn(
+                "EstoyTrabajandoSolo",
+                "estoy_trabajando_solo",
+                "estoyTrabajandoSolo",
+                "trabajo_solo",
+                "trabajando_solo",
+                "trabajandoSolo"
+        );
+        if (column == null) {
+            return "CAST(NULL AS BIT) AS estoy_trabajando_solo, ";
+        }
+        String prefix = alias == null || alias.trim().isEmpty() ? "" : alias.trim() + ".";
+        return prefix + "[" + column + "] AS estoy_trabajando_solo, ";
+    }
+
+    private String resolveInicioJornadaColumn(String... candidates) {
+        if (candidates == null || candidates.length == 0) {
+            return null;
+        }
+        try {
+            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'dbo' AND TABLE_NAME = 'tbl_InicioJornadaAlturas'"
+            );
+            Set<String> columns = new LinkedHashSet<>();
+            Map<String, String> originalByKey = new HashMap<>();
+            for (Map<String, Object> row : rows) {
+                String column = toText(findValue(row, "COLUMN_NAME", "column_name"));
+                if (column == null) {
+                    continue;
+                }
+                String key = normalize(column);
+                columns.add(key);
+                originalByKey.putIfAbsent(key, column);
+            }
+            for (String candidate : candidates) {
+                String key = normalize(candidate);
+                if (columns.contains(key)) {
+                    return originalByKey.get(key);
+                }
+            }
+        } catch (Exception ignored) {
+            return null;
+        }
+        return null;
     }
 
     private String trimToNull(String value) {
@@ -1363,7 +1452,7 @@ public class SupervisionRepository {
                 }
             }
             if (inicioDetalle != null && !inicioDetalle.isEmpty()) {
-                copyIfMissing(row, inicioDetalle, "capacitado", "charla", "botiquin", "extintor", "fecha_vencimiento", "equipo_epp", "estado_epp", "apr", "escalera", "anclaje", "ubicacion_georef");
+                copyIfMissing(row, inicioDetalle, "capacitado", "charla", "botiquin", "extintor", "fecha_vencimiento", "equipo_epp", "estado_epp", "apr", "escalera", "anclaje", "ubicacion_georef", "estoy_trabajando_solo", "estoyTrabajandoSolo", "tiene_imagen_inicio", "tieneImagenInicio", "tiene_imagen_auxiliar", "tieneImagenAuxiliar");
                 copyIfMissing(row, inicioDetalle,
                         "codigo_cliente_cierre", "codigoClienteCierre", "codigo_cliente", "codigoCliente",
                         "dano_material", "danoMaterial",
@@ -1408,13 +1497,17 @@ public class SupervisionRepository {
         if (ids.isEmpty()) {
             return out;
         }
+        String trabajoSoloSelect = buildTrabajoSoloSelect(null);
         StringBuilder sql = new StringBuilder(
                 "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
                         "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
                         "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                         "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                         "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre " +
+                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre, " +
+                        trabajoSoloSelect +
+                        "CASE WHEN imagen IS NULL OR DATALENGTH(imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
+                        "CASE WHEN imagen_auxiliar IS NULL OR DATALENGTH(imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar " +
                         "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio IN ("
         );
         Object[] params = new Object[ids.size()];

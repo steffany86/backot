@@ -60,30 +60,41 @@ public class SupervisionService {
             LocalDate fechaDesde,
             LocalDate fechaHasta,
             Integer limite,
+            String sucursal,
+            Integer idSupervisorFiltro,
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
-        return repository.listar(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite);
+        String sucursalResuelta = resolverSucursalFiltro(me, sucursal);
+        List<Integer> supervisores = resolverSupervisoresFiltro(me, sucursalResuelta, idSupervisorFiltro);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Integer idSupervisor : supervisores) {
+            out.addAll(repository.listar(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite));
+        }
+        return out;
     }
 
     public List<Map<String, Object>> listarPendientes(
             LocalDate fechaDesde,
             LocalDate fechaHasta,
             Integer limite,
+            String sucursal,
+            Integer idSupervisorFiltro,
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
-        String sucursal = resolveSucursalNombre(me);
+        String sucursalResuelta = resolverSucursalFiltro(me, sucursal);
+        List<Integer> supervisores = resolverSupervisoresFiltro(me, sucursalResuelta, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> pendiente : repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
-            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+        for (Integer idSupervisor : supervisores) {
+            for (Map<String, Object> pendiente : repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
+                out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursalResuelta));
+            }
+            out.addAll(enriquecerRevisionesPenalizadas(
+                    repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
+                    sucursalResuelta
+            ));
         }
-        out.addAll(enriquecerRevisionesPenalizadas(
-                repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
-                sucursal
-        ));
         return out;
     }
 
@@ -99,9 +110,9 @@ public class SupervisionService {
         return repository.listarPorEstado(estado, null, fechaDesde, fechaHasta, limite);
     }
 
-    public Map<String, Object> obtenerDetalle(String idSupervision, String token) {
+    public Map<String, Object> obtenerDetalle(String idSupervision, Integer idSupervisorFiltro, String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
+        Integer idSupervisor = idSupervisorFiltro != null && idSupervisorFiltro > 0 ? idSupervisorFiltro : resolveIdUsuario(me);
         String sucursal = resolveSucursalNombre(me);
         Map<String, Object> detalle = repository.obtenerDetalle(idSupervision, String.valueOf(idSupervisor));
         if (detalle == null) {
@@ -580,6 +591,33 @@ public class SupervisionService {
         return null;
     }
 
+    private String resolverSucursalFiltro(AuthMeResponse me, String sucursal) {
+        if (!isBlank(sucursal)) {
+            return SucursalCanonicalizer.canonicalize(sucursal);
+        }
+        return resolveSucursalNombre(me);
+    }
+
+    private List<Integer> resolverSupervisoresFiltro(AuthMeResponse me, String sucursal, Integer idSupervisorFiltro) {
+        if (idSupervisorFiltro != null && idSupervisorFiltro > 0) {
+            return java.util.Collections.singletonList(idSupervisorFiltro);
+        }
+        if (!isBlank(sucursal)) {
+            List<Map<String, Object>> supervisores = repository.listarSupervisores(sucursal);
+            List<Integer> ids = new ArrayList<>();
+            for (Map<String, Object> supervisor : supervisores) {
+                Integer id = asInteger(findValue(supervisor, "idSupervisor", "idUsuarioSupervisor", "id_usuario_supervisor", "id"));
+                if (id != null && id > 0 && !ids.contains(id)) {
+                    ids.add(id);
+                }
+            }
+            if (!ids.isEmpty()) {
+                return ids;
+            }
+        }
+        return java.util.Collections.singletonList(resolveIdUsuario(me));
+    }
+
     private List<Map<String, Object>> enriquecerRevisionesPenalizadas(List<Map<String, Object>> revisiones, String sucursal) {
         if (revisiones == null || revisiones.isEmpty()) {
             return new ArrayList<>();
@@ -635,6 +673,16 @@ public class SupervisionService {
         if (value == null) return null;
         String text = String.valueOf(value).trim();
         return text.isEmpty() ? null : text;
+    }
+
+    private Integer asInteger(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number) return ((Number) value).intValue();
+        try {
+            return Integer.parseInt(String.valueOf(value).replaceAll("[^0-9-]", "").trim());
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private String normalizeName(String value) {

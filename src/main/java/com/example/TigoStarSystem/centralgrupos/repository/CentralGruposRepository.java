@@ -89,6 +89,35 @@ public class CentralGruposRepository {
         return template.queryForList("EXEC dbo.spx_Grupo_FiltroTecnicosCentral");
     }
 
+    public List<Map<String, Object>> listarGruposMananaDesdeRelacionBase(JdbcTemplate template) {
+        try {
+            return template.queryForList(
+                    "SET NOCOUNT ON; " +
+                            "IF OBJECT_ID('dbo.tbl_Grupo', 'U') IS NULL " +
+                            "   OR OBJECT_ID('dbo.tbl_GrupoSup', 'U') IS NULL " +
+                            "   OR OBJECT_ID('dbo.tbl_DetalleGrupo', 'U') IS NULL " +
+                            "BEGIN SELECT TOP 0 CAST(NULL AS INT) AS idGrupo, CAST(NULL AS NVARCHAR(200)) AS grupo, CAST(NULL AS INT) AS idSupervisor, CAST(NULL AS NVARCHAR(200)) AS supervisor, CAST(NULL AS INT) AS cantidadTecnicos, CAST(NULL AS NVARCHAR(20)) AS fuente; RETURN; END; " +
+                            "EXEC sp_executesql N'" +
+                            "SELECT " +
+                            "  CAST(g.id_grupo AS INT) AS idGrupo, " +
+                            "  LTRIM(RTRIM(CAST(g.nombre AS NVARCHAR(200)))) AS grupo, " +
+                            "  CAST(gs.id_usuario AS INT) AS idSupervisor, " +
+                            "  LTRIM(RTRIM(CAST(ISNULL(u.Nombre, '''') AS NVARCHAR(200)))) AS supervisor, " +
+                            "  CAST(COUNT(DISTINCT dg.id_usuario_tecnico) AS INT) AS cantidadTecnicos, " +
+                            "  CAST(''relacion_base'' AS NVARCHAR(20)) AS fuente " +
+                            "FROM dbo.tbl_Grupo g " +
+                            "LEFT JOIN dbo.tbl_GrupoSup gs ON gs.id_grupo = g.id_grupo " +
+                            "LEFT JOIN dbo.tbl_Usuario u ON u.Id_Usuario = gs.id_usuario AND ISNULL(u.E_Eliminado, 0) = 0 " +
+                            "LEFT JOIN dbo.tbl_DetalleGrupo dg ON dg.id_grupo = g.id_grupo " +
+                            "WHERE ISNULL(g.e_eliminado, 0) = 0 " +
+                            "GROUP BY g.id_grupo, g.nombre, gs.id_usuario, u.Nombre " +
+                            "ORDER BY supervisor, grupo'"
+            );
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
     public List<Map<String, Object>> crearGrupo(JdbcTemplate template, Integer idUsuarioEjecutor, String nombre) {
         return template.queryForList(
                 "EXEC dbo.spx_Grupo_CrearCentral ?, ?",
@@ -227,6 +256,93 @@ public class CentralGruposRepository {
                         "ORDER BY CAST(v.id_grupo AS INT)",
                 idUsuarioSupervisor
         );
+    }
+
+    public List<Map<String, Object>> listarGruposMananaDesdeConformacionCentral(JdbcTemplate centralTemplate, String sucursal) {
+        try {
+            return centralTemplate.queryForList(
+                    "WITH base AS ( " +
+                            "  SELECT " +
+                            "    LTRIM(RTRIM(ISNULL(grupo, ''))) AS grupo, " +
+                            "    CAST(idUsuarioSupervisor AS INT) AS idSupervisor, " +
+                            "    LTRIM(RTRIM(ISNULL(supervisorACargo, ''))) AS supervisor, " +
+                            "    CAST(id_tecnico AS INT) AS idTecnico, " +
+                            "    ROW_NUMBER() OVER ( " +
+                            "      PARTITION BY LTRIM(RTRIM(ISNULL(grupo, ''))), CAST(id_tecnico AS INT) " +
+                            "      ORDER BY fecha DESC, fechaRegistro DESC, id DESC " +
+                            "    ) AS rn_tecnico " +
+                            "  FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                            "  WHERE ISNULL(e_eliminado, 0) = 0 " +
+                            "    AND LTRIM(RTRIM(ISNULL(grupo, ''))) <> '' " +
+                            "    AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                            "        LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', '')) " +
+                            ") " +
+                            "SELECT " +
+                            "  CAST(DENSE_RANK() OVER (ORDER BY grupo) AS INT) AS idGrupo, " +
+                            "  grupo, " +
+                            "  idSupervisor, " +
+                            "  supervisor, " +
+                            "  CAST(COUNT(DISTINCT idTecnico) AS INT) AS cantidadTecnicos, " +
+                            "  CAST('conformacion' AS NVARCHAR(20)) AS fuente " +
+                            "FROM base " +
+                            "WHERE rn_tecnico = 1 " +
+                            "GROUP BY grupo, idSupervisor, supervisor " +
+                            "ORDER BY supervisor, grupo",
+                    sucursal
+            );
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    public int reemplazarSupervisorGrupoBase(
+            JdbcTemplate template,
+            String nombreGrupo,
+            Integer idSupervisorOrigen,
+            Integer idSupervisorDestino) {
+        if (template == null
+                || nombreGrupo == null
+                || nombreGrupo.trim().isEmpty()
+                || idSupervisorDestino == null
+                || idSupervisorDestino <= 0) {
+            return 0;
+        }
+        try {
+            Integer actualizado = template.queryForObject(
+                    "SET NOCOUNT ON; " +
+                            "IF OBJECT_ID('dbo.tbl_Grupo', 'U') IS NULL OR OBJECT_ID('dbo.tbl_GrupoSup', 'U') IS NULL " +
+                            "BEGIN SELECT CAST(0 AS INT) AS actualizado; RETURN; END; " +
+                            "DECLARE @IdGrupoActual INT; " +
+                            "SELECT TOP 1 @IdGrupoActual = g.id_grupo " +
+                            "FROM dbo.tbl_Grupo g " +
+                            "WHERE ISNULL(g.e_eliminado, 0) = 0 " +
+                            "  AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(g.nombre, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                            "      LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', '')); " +
+                            "IF @IdGrupoActual IS NULL BEGIN SELECT CAST(0 AS INT) AS actualizado; RETURN; END; " +
+                            "DELETE FROM dbo.tbl_GrupoSup " +
+                            "WHERE id_grupo = @IdGrupoActual " +
+                            "  AND (? IS NULL OR id_usuario = ?) " +
+                            "  AND id_usuario <> ?; " +
+                            "IF NOT EXISTS (SELECT 1 FROM dbo.tbl_GrupoSup WHERE id_grupo = @IdGrupoActual AND id_usuario = ?) " +
+                            "BEGIN " +
+                            "  INSERT INTO dbo.tbl_GrupoSup (id_usuario, id_grupo, fecha_registro) " +
+                            "  VALUES (?, @IdGrupoActual, GETDATE()); " +
+                            "END; " +
+                            "SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.tbl_GrupoSup WHERE id_grupo = @IdGrupoActual AND id_usuario = ?) " +
+                            "       THEN CAST(1 AS INT) ELSE CAST(0 AS INT) END AS actualizado;",
+                    Integer.class,
+                    nombreGrupo,
+                    idSupervisorOrigen,
+                    idSupervisorOrigen,
+                    idSupervisorDestino,
+                    idSupervisorDestino,
+                    idSupervisorDestino,
+                    idSupervisorDestino
+            );
+            return actualizado == null ? 0 : actualizado;
+        } catch (DataAccessException ex) {
+            return 0;
+        }
     }
 
     public int actualizarSupervisorEnConformacion(

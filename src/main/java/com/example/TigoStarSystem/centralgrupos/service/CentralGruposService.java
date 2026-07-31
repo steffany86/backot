@@ -70,6 +70,23 @@ public class CentralGruposService {
         return repository.listarTecnicosFiltro(template);
     }
 
+    public List<Map<String, Object>> listarGruposManana(String token, String sucursal) {
+        AuthLoginResponse usuario = requireCentralOrBackOffice(token);
+        JdbcTemplate template = resolveTemplate(sucursal, usuario);
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
+        List<Map<String, Object>> rows = repository.listarGruposMananaDesdeRelacionBase(template);
+        if (rows != null && !rows.isEmpty()) {
+            return rows;
+        }
+        if (isBlank(sucursalResuelta)) {
+            return new ArrayList<>();
+        }
+        return repository.listarGruposMananaDesdeConformacionCentral(
+                dbConnectionManager.connDb("bdcontrolordenes"),
+                sucursalResuelta
+        );
+    }
+
     public Map<String, Object> crearGrupo(String token, String sucursal, String nombre) {
         AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
@@ -116,6 +133,12 @@ public class CentralGruposService {
                 sucursalResuelta
         );
         String nombreGrupo = findNombreGrupo(gruposRows, idGrupo);
+        int actualizadosRelacionBase = repository.reemplazarSupervisorGrupoBase(
+                template,
+                nombreGrupo,
+                null,
+                idUsuarioSupervisor
+        );
         int actualizados = repository.actualizarSupervisorEnConformacionCentral(
                 dbConnectionManager.connDb("bdcontrolordenes"),
                 sucursalResuelta,
@@ -136,6 +159,7 @@ public class CentralGruposService {
         }
 
         Map<String, Object> out = rows.isEmpty() ? new HashMap<>() : new HashMap<>(rows.get(0));
+        out.put("actualizadosRelacionBase", actualizadosRelacionBase);
         out.put("actualizadosConformacion", actualizados);
         out.put("iniciosPendientesActualizados", iniciosPendientesActualizados);
         out.put("idGrupo", idGrupo);
@@ -267,11 +291,18 @@ public class CentralGruposService {
         }
 
         int actualizados = 0;
+        int actualizadosRelacionBase = 0;
         int iniciosPendientesActualizados = 0;
         List<Integer> aplicados = new ArrayList<>();
         for (Map<String, Object> row : gruposObjetivo) {
             Integer idGrupo = toInteger(row.get("id_grupo"));
             String nombreGrupo = toText(row.get("nombre"));
+            int baseAffected = repository.reemplazarSupervisorGrupoBase(
+                    template,
+                    nombreGrupo,
+                    idSupervisorOrigen,
+                    idSupervisorDestino
+            );
             int affected = repository.actualizarSupervisorEnConformacionCentral(
                     dbConnectionManager.connDb("bdcontrolordenes"),
                     sucursalResuelta,
@@ -280,6 +311,7 @@ public class CentralGruposService {
                     nombreDestino
             );
             if (affected > 0) {
+                actualizadosRelacionBase += baseAffected;
                 actualizados += affected;
                 iniciosPendientesActualizados += repository.actualizarSupervisorIniciosPendientesPorGrupo(
                         tigohogarJdbcTemplate,
@@ -297,6 +329,7 @@ public class CentralGruposService {
 
         Map<String, Object> out = new HashMap<>();
         out.put("actualizados", actualizados);
+        out.put("actualizadosRelacionBase", actualizadosRelacionBase);
         out.put("iniciosPendientesActualizados", iniciosPendientesActualizados);
         out.put("idSupervisorOrigen", idSupervisorOrigen);
         out.put("idSupervisorDestino", idSupervisorDestino);

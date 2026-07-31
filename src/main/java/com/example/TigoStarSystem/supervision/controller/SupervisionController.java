@@ -41,9 +41,11 @@ public class SupervisionController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
             @RequestParam(value = "fechaHasta", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
+            @RequestParam(value = "sucursal", required = false) String sucursal,
+            @RequestParam(value = "idSupervisor", required = false) Integer idSupervisor,
             @RequestParam(value = "limite", required = false) Integer limite) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listar(fechaDesde, fechaHasta, limite, token),
+                service.listar(fechaDesde, fechaHasta, limite, sucursal, idSupervisor, token),
                 "Listado de notas de supervision."
         ));
     }
@@ -55,9 +57,11 @@ public class SupervisionController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
             @RequestParam(value = "fechaHasta", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
+            @RequestParam(value = "sucursal", required = false) String sucursal,
+            @RequestParam(value = "idSupervisor", required = false) Integer idSupervisor,
             @RequestParam(value = "limite", required = false) Integer limite) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarPendientes(fechaDesde, fechaHasta, limite, token),
+                service.listarPendientes(fechaDesde, fechaHasta, limite, sucursal, idSupervisor, token),
                 "Listado de supervisiones pendientes (agenda)."
         ));
     }
@@ -65,9 +69,10 @@ public class SupervisionController {
     @GetMapping("/{idSupervision}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerDetalle(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
-            @PathVariable("idSupervision") String idSupervision) {
+            @PathVariable("idSupervision") String idSupervision,
+            @RequestParam(value = "idSupervisor", required = false) Integer idSupervisor) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.obtenerDetalle(idSupervision, token),
+                service.obtenerDetalle(idSupervision, idSupervisor, token),
                 "Detalle de supervision."
         ));
     }

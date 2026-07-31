@@ -10,6 +10,8 @@ public class OtRegistrarVentaResponse {
     private final String origen;
     private final BigDecimal latitud;
     private final BigDecimal longitud;
+    private final BigDecimal latitudVenta;
+    private final BigDecimal longitudVenta;
     private final String rutaPdf;
 
     public OtRegistrarVentaResponse(
@@ -20,6 +22,8 @@ public class OtRegistrarVentaResponse {
             String origen,
             BigDecimal latitud,
             BigDecimal longitud,
+            BigDecimal latitudVenta,
+            BigDecimal longitudVenta,
             String rutaPdf) {
         this.idVenta = idVenta;
         this.ordenTrabajo = ordenTrabajo;
@@ -28,6 +32,8 @@ public class OtRegistrarVentaResponse {
         this.origen = origen;
         this.latitud = latitud;
         this.longitud = longitud;
+        this.latitudVenta = latitudVenta;
+        this.longitudVenta = longitudVenta;
         this.rutaPdf = rutaPdf;
     }
 
@@ -57,6 +63,14 @@ public class OtRegistrarVentaResponse {
 
     public BigDecimal getLongitud() {
         return longitud;
+    }
+
+    public BigDecimal getLatitudVenta() {
+        return latitudVenta;
+    }
+
+    public BigDecimal getLongitudVenta() {
+        return longitudVenta;
     }
 
     public String getRutaPdf() {

@@ -742,6 +742,8 @@ public class OtService {
                     request.getTieneObservacion(),
                     request.getLatitud(),
                     request.getLongitud(),
+                    request.getLatitudVenta(),
+                    request.getLongitudVenta(),
                     idSucursalResolucion
             );
             logRegistroOtWbTiming("sp-registrar-venta", stepStart, totalStart, request);
@@ -931,6 +933,8 @@ public class OtService {
                     asString(findValue(result, "Origen", "origen")),
                     toBigDecimal(findValue(result, "Latitud", "latitud")),
                     toBigDecimal(findValue(result, "Longitud", "longitud")),
+                    toBigDecimal(findValue(result, "LatitudVenta", "latitudVenta", "latitud_venta")),
+                    toBigDecimal(findValue(result, "LongitudVenta", "longitudVenta", "longitud_venta")),
                     rutaPdf
             );
         } catch (DataAccessException ex) {
@@ -1683,6 +1687,16 @@ public class OtService {
         }
 
         LocalDate fechaTrabajo = fechaEjecucion == null ? LocalDate.now() : fechaEjecucion;
+        LocalDate fechaSaldoMaterial = toLocalDate(findValue(
+                venta,
+                "FechaHoraDetalle",
+                "fechaHoraDetalle",
+                "fecha_hora_detalle",
+                "Fecha_Hora_Detalle"
+        ));
+        if (fechaSaldoMaterial == null) {
+            fechaSaldoMaterial = fechaTrabajo;
+        }
         OtRegistroAgendaValidacionResponse bloqueo = esOrdenPasadaPendienteMaterial ? null : validarRegistroAgenda(fechaTrabajo, idSucursal);
         if (bloqueo != null && bloqueo.isBloqueado()) {
             logger.warn(
@@ -1805,7 +1819,7 @@ public class OtService {
             }
         }
 
-        validarMaterialesDetalle(request.getMateriales(), idRuta, idSucursal);
+        validarMaterialesDetalle(request.getMateriales(), idRuta, fechaSaldoMaterial, idSucursal);
         final Long idVentaFinal = idVenta;
         final Integer idRutaFinal = idRuta;
         final Integer idUsuarioFinal = idUsuario;
@@ -2321,6 +2335,19 @@ public class OtService {
         if (request.getLatitud() == null || request.getLongitud() == null) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "latitud y longitud son requeridas.");
         }
+        if (request.getLatitudVenta() != null
+                && (request.getLatitudVenta().compareTo(new BigDecimal("-90")) < 0
+                || request.getLatitudVenta().compareTo(new BigDecimal("90")) > 0)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "latitudVenta fuera de rango (-90 a 90).");
+        }
+        if (request.getLongitudVenta() != null
+                && (request.getLongitudVenta().compareTo(new BigDecimal("-180")) < 0
+                || request.getLongitudVenta().compareTo(new BigDecimal("180")) > 0)) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "longitudVenta fuera de rango (-180 a 180).");
+        }
+        if (request.getLatitudVenta() == null || request.getLongitudVenta() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "latitudVenta y longitudVenta son requeridas.");
+        }
         String nodo = request.getNodo() == null ? "" : request.getNodo().trim().toUpperCase(Locale.ROOT);
         if (!nodo.matches("^[A-Z]{3}\\d{3,4}$")) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "nodo debe tener formato 3 letras y 3 o 4 numeros. Ej: SCZ123 o SCZ1234.");
@@ -2488,7 +2515,7 @@ public class OtService {
         return value == null ? "" : value.trim();
     }
 
-    private void validarMaterialesDetalle(List<OtDetalleMaterialRequest> materiales, Integer idRuta, Integer idSucursal) {
+    private void validarMaterialesDetalle(List<OtDetalleMaterialRequest> materiales, Integer idRuta, LocalDate fechaTrabajo, Integer idSucursal) {
         List<String> repetidos = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         logger.info(
@@ -2597,6 +2624,67 @@ public class OtService {
         if (!repetidos.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "SERIE_REPETIDA", String.join(" | ", repetidos));
         }
+        validarSaldoDisponibleMateriales(materiales, idRuta, fechaTrabajo, idSucursal);
+    }
+
+    private void validarSaldoDisponibleMateriales(List<OtDetalleMaterialRequest> materiales, Integer idRuta, LocalDate fechaTrabajo, Integer idSucursal) {
+        if (materiales == null || materiales.isEmpty()) {
+            return;
+        }
+        validarMayorCero(idRuta, "idRuta");
+
+        Map<Integer, BigDecimal> requeridoPorProducto = new HashMap<>();
+        for (OtDetalleMaterialRequest material : materiales) {
+            if (material == null || esMaterialRetirado(material)) {
+                continue;
+            }
+            Integer idProducto = material.getIdProducto();
+            if (idProducto == null || idProducto <= 0 || material.getCantidad() == null) {
+                continue;
+            }
+            requeridoPorProducto.merge(idProducto, material.getCantidad(), BigDecimal::add);
+        }
+        if (requeridoPorProducto.isEmpty()) {
+            return;
+        }
+
+        List<Map<String, Object>> saldoRows = obtenerSaldoRuta(idRuta, fechaTrabajo, idSucursal);
+        Map<Integer, BigDecimal> disponiblePorProducto = new HashMap<>();
+        for (Map<String, Object> row : saldoRows) {
+            Integer idProducto = toInteger(findValue(row,
+                    "Id_Producto", "idProducto", "id_producto", "productoId", "ProductoId", "id", "Id"));
+            BigDecimal disponible = toBigDecimal(findValue(row,
+                    "SaldoDia", "SaldoDiaHoy", "Sobrante", "Cantidad", "Saldo", "Existencia", "Disponible", "saldo", "cantidad"));
+            if (idProducto == null || idProducto <= 0 || disponible == null) {
+                continue;
+            }
+            disponiblePorProducto.merge(idProducto, disponible, BigDecimal::add);
+        }
+
+        List<String> faltantes = new ArrayList<>();
+        for (Map.Entry<Integer, BigDecimal> entry : requeridoPorProducto.entrySet()) {
+            BigDecimal disponible = disponiblePorProducto.getOrDefault(entry.getKey(), BigDecimal.ZERO);
+            BigDecimal requerido = entry.getValue();
+            if (disponible.compareTo(requerido) < 0) {
+                faltantes.add("Producto " + entry.getKey()
+                        + ": disponible " + formatDecimal(disponible)
+                        + ", requerido " + formatDecimal(requerido));
+            }
+        }
+        if (!faltantes.isEmpty()) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "SALDO_MATERIAL_INSUFICIENTE",
+                    "No hay material disponible. " + String.join(" | ", faltantes)
+            );
+        }
+    }
+
+    private String formatDecimal(BigDecimal value) {
+        if (value == null) {
+            return "0";
+        }
+        return value.stripTrailingZeros().toPlainString();
     }
 
     private Map<Integer, ProductoDigitos> cargarDigitosPorProducto(List<OtDetalleMaterialRequest> materiales, Integer idSucursal) {

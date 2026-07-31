@@ -60,6 +60,16 @@ public class CentralGruposController {
         ));
     }
 
+    @GetMapping("/manana")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarGruposManana(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "sucursal", required = false) String sucursal) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarGruposManana(token, sucursal),
+                "Proyeccion de grupos para manana."
+        ));
+    }
+
     @PostMapping
     public ResponseEntity<ApiResponse<Map<String, Object>>> crearGrupo(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

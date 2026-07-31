@@ -1,10 +1,14 @@
 package com.example.TigoStarSystem.supervisor.controller;
 
 import com.example.TigoStarSystem.common.ApiResponse;
+import com.example.TigoStarSystem.supervisor.dto.CruceVerificaBackRequest;
 import com.example.TigoStarSystem.supervisor.service.EstadoDiaBoCitaService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -43,6 +47,17 @@ public class EstadoDiaBoCitaController {
         return ResponseEntity.ok(ApiResponse.of(
                 service.consultarCruceOrdenesAgendaMakiro(fecha, token),
                 "Cruce Agenda vs Makiro ejecutado en BDControlOrdenes."
+        ));
+    }
+
+    @PostMapping("/cruce-ordenes-agenda-makiro/{idHistorial}/verifica-back")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> marcarVerificaBack(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @PathVariable("idHistorial") Integer idHistorial,
+            @RequestBody(required = false) CruceVerificaBackRequest request) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.marcarVerificaBack(idHistorial, request, token),
+                "Cruce marcado como revisado por BackOffice."
         ));
     }
 }

@@ -215,6 +215,7 @@ public class OtRepository {
                             "v.Id_TipoServicio AS Id_TipoServicio, " +
                             "v.Fecha_Ejecucion AS Fecha_Ejecucion, " +
                             "v.Fecha_Registro AS Fecha_Registro, " +
+                            "v.FechaHoraDetalle AS FechaHoraDetalle, " +
                             "v.OrdenTrabajo AS OrdenTrabajo, " +
                             "v.CodigoCliente AS CodigoCliente, " +
                             "v.Observacion AS Observacion, " +
@@ -1250,6 +1251,8 @@ public class OtRepository {
             Boolean tieneObservacion,
             java.math.BigDecimal latitud,
             java.math.BigDecimal longitud,
+            java.math.BigDecimal latitudVenta,
+            java.math.BigDecimal longitudVenta,
             Integer idSucursalSesion
     ) {
         return template(idSucursalSesion).queryForMap(
@@ -1260,7 +1263,7 @@ public class OtRepository {
                         "SET CONCAT_NULL_YIELDS_NULL ON; " +
                         "SET ARITHABORT ON; " +
                         "SET NUMERIC_ROUNDABORT OFF; " +
-                        "EXEC dbo.spx_RegistrarVentaParaRegistroOTwb ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
+                        "EXEC dbo.spx_RegistrarVentaParaRegistroOTwb ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                 idUsuario,
                 idVendedor,
                 idGrupo,
@@ -1277,7 +1280,9 @@ public class OtRepository {
                 codigoCliente,
                 tieneObservacion,
                 latitud,
-                longitud
+                longitud,
+                latitudVenta,
+                longitudVenta
         );
     }
 
