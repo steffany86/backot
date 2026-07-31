@@ -67,6 +67,10 @@ final class TecnicoSearchUtil {
         return result;
     }
 
+    static List<Map<String, Object>> filterAll(List<Map<String, Object>> source, String query) {
+        return filterAndLimit(source, query, Integer.MAX_VALUE);
+    }
+
     /**
      * Resuelve limite efectivo usando defaults y tope maximo.
      */
@@ -74,7 +78,7 @@ final class TecnicoSearchUtil {
         if (limit == null || limit <= 0) {
             return DEFAULT_LIMIT;
         }
-        return Math.min(limit, MAX_LIMIT);
+        return limit == Integer.MAX_VALUE ? Integer.MAX_VALUE : Math.min(limit, MAX_LIMIT);
     }
 
     /**

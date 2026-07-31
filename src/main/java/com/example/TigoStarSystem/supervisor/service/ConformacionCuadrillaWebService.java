@@ -247,6 +247,10 @@ public class ConformacionCuadrillaWebService {
      */
     public List<Map<String, Object>> listarTecnicos(String q, Integer limit, String sucursal, String token) {
         String sucursalResuelta = resolveSucursalNombre(sucursal, token);
+        // El combo de conformacion necesita el catalogo completo de la sucursal.
+        if (limit == null) {
+            return TecnicoSearchUtil.filterAll(repository.listarTecnicos(sucursalResuelta), q);
+        }
         return TecnicoSearchUtil.filterAndLimit(repository.listarTecnicos(sucursalResuelta), q, limit);
     }
 
