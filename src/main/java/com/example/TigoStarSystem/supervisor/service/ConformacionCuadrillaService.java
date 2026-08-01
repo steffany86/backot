@@ -1,6 +1,8 @@
 package com.example.TigoStarSystem.supervisor.service;
 
 import com.example.TigoStarSystem.common.ApiException;
+import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
+import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaCreateRequest;
 import com.example.TigoStarSystem.supervisor.dto.ConformacionCuadrillaRelacionRequest;
@@ -24,6 +26,7 @@ import java.util.HashSet;
 public class ConformacionCuadrillaService {
     private final ConformacionCuadrillaRepository repository;
     private final ConformacionCuadrillaMailService mailService;
+    private final AuthService authService;
     private final ConformacionCuadrillaRequestValidator validator;
     private final ConformacionCuadrillaRowMapper rowMapper;
 
@@ -32,9 +35,11 @@ public class ConformacionCuadrillaService {
      */
     public ConformacionCuadrillaService(
             ConformacionCuadrillaRepository repository,
-            ConformacionCuadrillaMailService mailService) {
+            ConformacionCuadrillaMailService mailService,
+            AuthService authService) {
         this.repository = repository;
         this.mailService = mailService;
+        this.authService = authService;
         this.validator = new ConformacionCuadrillaRequestValidator();
         this.rowMapper = new ConformacionCuadrillaRowMapper();
     }
@@ -329,7 +334,19 @@ public class ConformacionCuadrillaService {
      * Guarda una o varias filas de conformacion y dispara notificacion.
      */
     public int guardar(ConformacionCuadrillaCreateRequest request) {
+        return guardar(null, request);
+    }
+
+    public int guardar(String token, ConformacionCuadrillaCreateRequest request) {
         validarRequestCreacion(request);
+        String supervisorConfirmo = resolverSupervisorConfirmo(token);
+        for (ConformacionCuadrillaRowRequest fila : request.getFilas()) {
+            if (isBlankValue(fila.getSupervisorConfirmo())) {
+                fila.setSupervisorConfirmo(supervisorConfirmo);
+            }
+            aplicarTecnicoDesdeSalesforce(fila);
+            aplicarAlmacenPorSucursal(fila);
+        }
 
         Map<String, Set<Integer>> tecnicosEnSolicitudPorContexto = new HashMap<>();
         Map<String, Map<String, Integer>> salesforceEnSolicitudPorContexto = new HashMap<>();
@@ -393,8 +410,17 @@ public class ConformacionCuadrillaService {
      * Actualiza una fila existente y notifica por correo si hubo cambios.
      */
     public int actualizar(Long id, ConformacionCuadrillaRowRequest request) {
+        return actualizar(null, id, request);
+    }
+
+    public int actualizar(String token, Long id, ConformacionCuadrillaRowRequest request) {
         validarId(id);
+        aplicarTecnicoDesdeSalesforce(request);
+        aplicarAlmacenPorSucursal(request);
         validator.validarBackoffice(request);
+        if (isBlankValue(request.getSupervisorConfirmo())) {
+            request.setSupervisorConfirmo(resolverSupervisorConfirmo(token));
+        }
         LocalDate fechaFila = resolverFecha(request.getFecha());
         String sucursalFila = SucursalCanonicalizer.canonicalize(toTrimmedString(request.getSucursal()));
         validarTecnicoNoDuplicadoEnBd(
@@ -420,6 +446,70 @@ public class ConformacionCuadrillaService {
             enviarCorreoCuadrillasNoConfirmadas(filas);
         }
         return affected;
+    }
+
+    public int eliminarConfirmada(Long id) {
+        validarId(id);
+        int affected = repository.eliminarFilaConfirmada(id);
+        if (affected <= 0) {
+            throw new ApiException(
+                    HttpStatus.NOT_FOUND,
+                    "NOT_FOUND",
+                    "No se encontro la cuadrilla confirmada para eliminar."
+            );
+        }
+        return affected;
+    }
+
+    private String resolverSupervisorConfirmo(String token) {
+        if (!isBlankValue(token)) {
+            try {
+                AuthLoginResponse usuario = authService.me(token).getUsuario();
+                if (usuario != null && !isBlankValue(usuario.getLoggin())) {
+                    return usuario.getLoggin().trim();
+                }
+                if (usuario != null && !isBlankValue(usuario.getNombre())) {
+                    return usuario.getNombre().trim();
+                }
+            } catch (RuntimeException ignored) {
+                // Si el token no esta disponible, se conserva el valor enviado o SISTEMA.
+            }
+        }
+        return "SISTEMA";
+    }
+
+    private void aplicarAlmacenPorSucursal(ConformacionCuadrillaRowRequest fila) {
+        if (fila == null) {
+            return;
+        }
+        String almacen = resolverAlmacenPorSucursal(fila.getSucursal());
+        if (!isBlankValue(almacen)) {
+            fila.setAlmacen(almacen);
+        }
+    }
+
+    private void aplicarTecnicoDesdeSalesforce(ConformacionCuadrillaRowRequest fila) {
+        if (fila == null || !isBlankValue(fila.getTecnico())) {
+            return;
+        }
+        String salesforce = toTrimmedString(fila.getSalesforce());
+        if (!isBlankValue(salesforce)) {
+            fila.setTecnico(salesforce);
+        }
+    }
+
+    private String resolverAlmacenPorSucursal(String sucursal) {
+        String normalized = normalizeKey(SucursalCanonicalizer.canonicalize(toTrimmedString(sucursal)));
+        if (normalized.contains("montero")) {
+            return "MAKIRO MONTERO";
+        }
+        if (normalized.contains("tarija")) {
+            return "MAKIRO TARIJA";
+        }
+        if (normalized.contains("santacruz")) {
+            return "MAKIRO SANTA CRUZ";
+        }
+        return null;
     }
 
     /**
@@ -464,6 +554,9 @@ public class ConformacionCuadrillaService {
         }
 
         for (Map<String, Object> row : confirmadas) {
+            if (rowMapper.isEliminado(row)) {
+                continue;
+            }
             String key = rowMapper.claveCuadrillaDesdeConfirmada(row);
             if (key != null) {
                 claves.add(key);

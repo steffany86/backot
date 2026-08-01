@@ -174,11 +174,61 @@ public class CentralGruposService {
             Integer idUsuarioTecnico) {
         AuthLoginResponse usuario = requireCentralOrBackOffice(token);
         JdbcTemplate template = resolveTemplate(sucursal, usuario);
+        String sucursalResuelta = SucursalCanonicalizer.canonicalize(isBlank(sucursal) ? resolveSucursalDesdeUsuario(usuario) : sucursal);
         List<Map<String, Object>> rows = repository.asignarTecnico(template, usuario.getIdUsuario(), idGrupo, idUsuarioTecnico);
         if (rows == null || rows.isEmpty()) {
             throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "NO_DATA", "No se pudo asignar tecnico al grupo.");
         }
-        return rows.get(0);
+
+        JdbcTemplate centralTemplate = dbConnectionManager.connDb("bdcontrolordenes");
+        List<Map<String, Object>> gruposRows = repository.listarGruposDesdeConformacionCentral(
+                centralTemplate,
+                sucursalResuelta
+        );
+        Map<String, Object> grupoDestino = findGrupoRow(gruposRows, idGrupo);
+        if (grupoDestino.isEmpty()) {
+            grupoDestino = findGrupoRow(repository.listarGruposMananaDesdeRelacionBase(template), idGrupo);
+        }
+        String nombreGrupo = toText(firstNonNull(grupoDestino, "nombre", "grupo"));
+        Integer idSupervisorDestino = toInteger(firstNonNull(
+                grupoDestino,
+                "id_usuario_supervisor",
+                "idUsuarioSupervisor",
+                "idSupervisor",
+                "id_usuario"
+        ));
+        String nombreSupervisorDestino = toText(firstNonNull(
+                grupoDestino,
+                "supervisor",
+                "supervisorACargo",
+                "supervisor_a_cargo"
+        ));
+
+        List<Integer> idsTecnico = new ArrayList<>();
+        if (idUsuarioTecnico != null && idUsuarioTecnico > 0) {
+            idsTecnico.add(idUsuarioTecnico);
+        }
+        Integer idVendedor = repository.resolverIdVendedorPorUsuarioTecnico(template, idUsuarioTecnico);
+        if (idVendedor != null && idVendedor > 0) {
+            idsTecnico.add(idVendedor);
+        }
+
+        int actualizadosConformacion = repository.actualizarTecnicoEnConformacionCentral(
+                centralTemplate,
+                sucursalResuelta,
+                nombreGrupo,
+                idSupervisorDestino,
+                nombreSupervisorDestino,
+                idsTecnico
+        );
+
+        Map<String, Object> out = new HashMap<>(rows.get(0));
+        out.put("actualizadosConformacion", actualizadosConformacion);
+        out.put("idGrupo", idGrupo);
+        out.put("idUsuarioTecnico", idUsuarioTecnico);
+        out.put("idVendedor", idVendedor);
+        out.put("idSupervisor", idSupervisorDestino);
+        return out;
     }
 
     public Map<String, Object> quitarTecnico(
@@ -406,6 +456,19 @@ public class CentralGruposService {
             }
         }
         return "";
+    }
+
+    private Map<String, Object> findGrupoRow(List<Map<String, Object>> grupos, Integer idGrupo) {
+        if (idGrupo == null || grupos == null) {
+            return new HashMap<>();
+        }
+        for (Map<String, Object> row : grupos) {
+            Integer id = toInteger(firstNonNull(row, "id_grupo", "idGrupo"));
+            if (id != null && id.equals(idGrupo)) {
+                return row;
+            }
+        }
+        return new HashMap<>();
     }
 
     private AuthLoginResponse requireCentralOrBackOffice(String token) {

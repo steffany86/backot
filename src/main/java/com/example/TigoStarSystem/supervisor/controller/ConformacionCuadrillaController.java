@@ -211,8 +211,9 @@ public class ConformacionCuadrillaController {
 
     @PostMapping({"", "/", "/guardar"})
     public ResponseEntity<ApiResponse<ConformacionCuadrillaCreateResponse>> guardar(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
             @Valid @RequestBody ConformacionCuadrillaCreateRequest request) {
-        int filas = service.guardar(request);
+        int filas = service.guardar(token, request);
         return ResponseEntity.ok(ApiResponse.of(
                 new ConformacionCuadrillaCreateResponse(filas),
                 "Cuadrilla confirmada guardada."
@@ -222,11 +223,32 @@ public class ConformacionCuadrillaController {
     @PutMapping("/{id}")
     public ResponseEntity<ApiResponse<Integer>> actualizar(
             @PathVariable("id") Long id,
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
             @Valid @RequestBody ConformacionCuadrillaRowRequest request) {
-        int filas = service.actualizar(id, request);
+        int filas = service.actualizar(token, id, request);
         return ResponseEntity.ok(ApiResponse.of(
                 filas,
                 "Conformacion de cuadrilla actualizada."
+        ));
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<ApiResponse<Integer>> eliminarConfirmada(
+            @PathVariable("id") Long id) {
+        int filas = service.eliminarConfirmada(id);
+        return ResponseEntity.ok(ApiResponse.of(
+                filas,
+                "Conformacion de cuadrilla eliminada."
+        ));
+    }
+
+    @PostMapping({"/{id}/eliminar", "/{id}/eliminado"})
+    public ResponseEntity<ApiResponse<Integer>> eliminarConfirmadaPost(
+            @PathVariable("id") Long id) {
+        int filas = service.eliminarConfirmada(id);
+        return ResponseEntity.ok(ApiResponse.of(
+                filas,
+                "Conformacion de cuadrilla eliminada."
         ));
     }
 

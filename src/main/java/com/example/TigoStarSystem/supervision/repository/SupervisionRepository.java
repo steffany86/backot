@@ -618,17 +618,71 @@ public class SupervisionRepository {
     }
 
     public List<Map<String, Object>> listarIniciosJornadaPendientesTodos() {
-        List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.SP_Inicio_ListarPendientesHoyTodos"
-        );
+        List<Map<String, Object>> rows;
+        try {
+            rows = tigohogarJdbcTemplate.queryForList(
+                    "EXEC dbo.SP_Inicio_ListarPendientesHoyTodos"
+            );
+        } catch (Exception ex) {
+            rows = listarIniciosJornadaPendientesTodosDesdeTabla();
+        }
         return enriquecerNombresTecnicos(rows, null);
     }
 
     public List<Map<String, Object>> listarIniciosJornadaConfirmadosHoyTodos() {
-        List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.SP_Inicio_ListarConfirmadosHoyTodos"
-        );
+        List<Map<String, Object>> rows;
+        try {
+            rows = tigohogarJdbcTemplate.queryForList(
+                    "EXEC dbo.SP_Inicio_ListarConfirmadosHoyTodos"
+            );
+        } catch (Exception ex) {
+            rows = listarIniciosJornadaConfirmadosHoyTodosDesdeTabla();
+        }
         return enriquecerNombresTecnicos(rows, null);
+    }
+
+    private List<Map<String, Object>> listarIniciosJornadaPendientesTodosDesdeTabla() {
+        String trabajoSoloSelect = buildTrabajoSoloSelect("ij");
+        String auditoriaSelect = buildInicioJornadaAuditoriaSelect("ij");
+        String sql =
+                "SELECT TOP 500 " +
+                        "ij.id_inicio AS idInicio, ij.id_tecnico AS idTecnico, ij.id_auxiliar AS idAuxiliar, " +
+                        "ij.id_encargado AS idSupervisor, ij.fecha_registro AS fechaRegistro, ij.fecha_cierre AS fechaCierre, " +
+                        "ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, ij.id_usuario_supervisor_grupo, " +
+                        "ij.id_sucursal, ij.sucursal, ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre, " +
+                        auditoriaSelect +
+                        trabajoSoloSelect +
+                        "CASE WHEN ij.imagen IS NULL OR DATALENGTH(ij.imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
+                        "CASE WHEN ij.imagen_auxiliar IS NULL OR DATALENGTH(ij.imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar, " +
+                        "'PENDIENTE' AS estado " +
+                        "FROM dbo.tbl_InicioJornadaAlturas ij " +
+                        "WHERE ISNULL(ij.pendiente, 0) = 1 " +
+                        "  AND ISNULL(ij.e_eliminado, 0) = 0 " +
+                        "  AND CAST(ij.fecha_registro AS DATE) = CAST(GETDATE() AS DATE) " +
+                        "ORDER BY ij.id_inicio DESC";
+        return tigohogarJdbcTemplate.queryForList(sql);
+    }
+
+    private List<Map<String, Object>> listarIniciosJornadaConfirmadosHoyTodosDesdeTabla() {
+        String trabajoSoloSelect = buildTrabajoSoloSelect("ij");
+        String auditoriaSelect = buildInicioJornadaAuditoriaSelect("ij");
+        String sql =
+                "SELECT TOP 500 " +
+                        "ij.id_inicio AS idInicio, ij.id_tecnico AS idTecnico, ij.id_auxiliar AS idAuxiliar, " +
+                        "ij.id_encargado AS idSupervisor, ij.fecha_registro AS fechaRegistro, ij.fecha_cierre AS fechaCierre, " +
+                        "ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, ij.id_usuario_supervisor_grupo, " +
+                        "ij.id_sucursal, ij.sucursal, ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre, " +
+                        auditoriaSelect +
+                        trabajoSoloSelect +
+                        "CASE WHEN ij.imagen IS NULL OR DATALENGTH(ij.imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
+                        "CASE WHEN ij.imagen_auxiliar IS NULL OR DATALENGTH(ij.imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar, " +
+                        "CASE WHEN ij.fecha_cierre IS NOT NULL THEN 'JORNADA FINALIZADA' ELSE 'JORNADA APROBADA' END AS estado " +
+                        "FROM dbo.tbl_InicioJornadaAlturas ij " +
+                        "WHERE ISNULL(ij.pendiente, 0) = 0 " +
+                        "  AND ISNULL(ij.e_eliminado, 0) = 0 " +
+                        "  AND CAST(ij.fecha_registro AS DATE) = CAST(GETDATE() AS DATE) " +
+                        "ORDER BY ij.id_inicio DESC";
+        return tigohogarJdbcTemplate.queryForList(sql);
     }
 
     public List<Map<String, Object>> listarIniciosJornadaConfirmadosHoySupervisor(Integer idSupervisor, String sucursal) {
@@ -797,11 +851,13 @@ public class SupervisionRepository {
 
     private List<Map<String, Object>> queryHistoricoJornadasChunk(java.time.LocalDate fecha, String sucursal, Map<Integer, Integer> idsUsuarioTecnico) {
         String trabajoSoloSelect = buildTrabajoSoloSelect("ij");
+        String auditoriaSelect = buildInicioJornadaAuditoriaSelect("ij");
         StringBuilder sql = new StringBuilder(
                 "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
                         "ij.fecha_registro, ij.fecha_cierre, ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, " +
                         "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
                         "ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre, " +
+                        auditoriaSelect +
                         trabajoSoloSelect +
                         "CASE WHEN ij.imagen IS NULL OR DATALENGTH(ij.imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
                         "CASE WHEN ij.imagen_auxiliar IS NULL OR DATALENGTH(ij.imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar " +
@@ -1066,6 +1122,12 @@ public class SupervisionRepository {
         Object tieneImagenInicio = findValue(row, "tieneImagenInicio", "tiene_imagen_inicio");
         Object tieneImagenAuxiliar = findValue(row, "tieneImagenAuxiliar", "tiene_imagen_auxiliar");
         Object estoyTrabajandoSolo = findValue(row, "estoyTrabajandoSolo", "estoy_trabajando_solo", "EstoyTrabajandoSolo", "trabajo_solo", "trabajando_solo", "trabajandoSolo");
+        Object idUsuarioAproboInicio = findValue(row, "idUsuarioAproboInicio", "id_usuario_aprobo_inicio");
+        Object supervisorAproboInicio = findValue(row, "supervisorAproboInicio", "supervisor_aprobo_inicio");
+        Object fechaAprobacionInicio = findValue(row, "fechaAprobacionInicio", "fecha_aprobacion_inicio");
+        Object idUsuarioRechazoInicio = findValue(row, "idUsuarioRechazoInicio", "id_usuario_rechazo_inicio");
+        Object supervisorRechazoInicio = findValue(row, "supervisorRechazoInicio", "supervisor_rechazo_inicio");
+        Object fechaRechazoInicio = findValue(row, "fechaRechazoInicio", "fecha_rechazo_inicio");
 
         out.put("idInicio", idInicio);
         out.put("idTecnico", idTecnico);
@@ -1096,6 +1158,18 @@ public class SupervisionRepository {
         out.put("tiene_imagen_auxiliar", tieneImagenAuxiliar);
         out.put("estoyTrabajandoSolo", estoyTrabajandoSolo);
         out.put("estoy_trabajando_solo", estoyTrabajandoSolo);
+        out.put("idUsuarioAproboInicio", idUsuarioAproboInicio);
+        out.put("id_usuario_aprobo_inicio", idUsuarioAproboInicio);
+        out.put("supervisorAproboInicio", supervisorAproboInicio);
+        out.put("supervisor_aprobo_inicio", supervisorAproboInicio);
+        out.put("fechaAprobacionInicio", fechaAprobacionInicio);
+        out.put("fecha_aprobacion_inicio", fechaAprobacionInicio);
+        out.put("idUsuarioRechazoInicio", idUsuarioRechazoInicio);
+        out.put("id_usuario_rechazo_inicio", idUsuarioRechazoInicio);
+        out.put("supervisorRechazoInicio", supervisorRechazoInicio);
+        out.put("supervisor_rechazo_inicio", supervisorRechazoInicio);
+        out.put("fechaRechazoInicio", fechaRechazoInicio);
+        out.put("fecha_rechazo_inicio", fechaRechazoInicio);
         boolean sinCierre = (noMarcoCierre != null && noMarcoCierre == 1) || fechaCierre == null;
         out.put("sinInicio", false);
         out.put("sinCierre", sinCierre);
@@ -1141,6 +1215,7 @@ public class SupervisionRepository {
         }
         try {
             String trabajoSoloSelect = buildTrabajoSoloSelect(null);
+            String auditoriaSelect = buildInicioJornadaAuditoriaSelect(null);
             List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                     "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
                             "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
@@ -1148,6 +1223,7 @@ public class SupervisionRepository {
                             "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                             "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
                             "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, imagen_auxiliar, firma_inicio, firma_cierre, " +
+                            auditoriaSelect +
                             trabajoSoloSelect +
                             "CASE WHEN imagen IS NULL OR DATALENGTH(imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
                             "CASE WHEN imagen_auxiliar IS NULL OR DATALENGTH(imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar " +
@@ -1253,6 +1329,31 @@ public class SupervisionRepository {
     }
 
     public int aprobarInicioJornadaPorId(Integer idInicio) {
+        return aprobarInicioJornadaPorId(idInicio, null, null);
+    }
+
+    public int aprobarInicioJornadaPorId(Integer idInicio, Integer idUsuarioAprobador, String supervisorAprobador) {
+        asegurarColumnasAuditoriaInicioJornada();
+        if (idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        String nombre = trimToNull(supervisorAprobador);
+        return tigohogarJdbcTemplate.update(
+                "UPDATE dbo.tbl_InicioJornadaAlturas " +
+                        "SET pendiente = 0, " +
+                        "    id_usuario_aprobo_inicio = ?, " +
+                        "    supervisor_aprobo_inicio = ?, " +
+                        "    fecha_aprobacion_inicio = GETDATE() " +
+                        "WHERE id_inicio = ? " +
+                        "  AND ISNULL(e_eliminado,0)=0 " +
+                        "  AND CAST(fecha_registro AS DATE)=CAST(GETDATE() AS DATE)",
+                idUsuarioAprobador,
+                nombre,
+                idInicio
+        );
+    }
+
+    public int aprobarInicioJornadaPorIdLegacy(Integer idInicio) {
         Integer updated = tigohogarJdbcTemplate.queryForObject(
                 "EXEC dbo.SP_Inicio_AprobarPorIdHoy ?",
                 Integer.class,
@@ -1262,6 +1363,31 @@ public class SupervisionRepository {
     }
 
     public int rechazarInicioJornadaPorId(Integer idInicio) {
+        return rechazarInicioJornadaPorId(idInicio, null, null);
+    }
+
+    public int rechazarInicioJornadaPorId(Integer idInicio, Integer idUsuarioRechazador, String supervisorRechazador) {
+        asegurarColumnasAuditoriaInicioJornada();
+        if (idInicio == null || idInicio <= 0) {
+            return 0;
+        }
+        String nombre = trimToNull(supervisorRechazador);
+        return tigohogarJdbcTemplate.update(
+                "UPDATE dbo.tbl_InicioJornadaAlturas " +
+                        "SET e_eliminado = 1, " +
+                        "    id_usuario_rechazo_inicio = ?, " +
+                        "    supervisor_rechazo_inicio = ?, " +
+                        "    fecha_rechazo_inicio = GETDATE() " +
+                        "WHERE id_inicio = ? " +
+                        "  AND ISNULL(e_eliminado,0)=0 " +
+                        "  AND CAST(fecha_registro AS DATE)=CAST(GETDATE() AS DATE)",
+                idUsuarioRechazador,
+                nombre,
+                idInicio
+        );
+    }
+
+    public int rechazarInicioJornadaPorIdLegacy(Integer idInicio) {
         Integer updated = tigohogarJdbcTemplate.queryForObject(
                 "EXEC dbo.SP_Inicio_RechazarPorIdHoy ?",
                 Integer.class,
@@ -1291,6 +1417,41 @@ public class SupervisionRepository {
         }
         String prefix = alias == null || alias.trim().isEmpty() ? "" : alias.trim() + ".";
         return prefix + "[" + column + "] AS estoy_trabajando_solo, ";
+    }
+
+    private String buildInicioJornadaAuditoriaSelect(String alias) {
+        return buildOptionalInicioJornadaSelect(alias, "id_usuario_aprobo_inicio", "id_usuario_aprobo_inicio")
+                + buildOptionalInicioJornadaSelect(alias, "supervisor_aprobo_inicio", "supervisor_aprobo_inicio")
+                + buildOptionalInicioJornadaSelect(alias, "fecha_aprobacion_inicio", "fecha_aprobacion_inicio")
+                + buildOptionalInicioJornadaSelect(alias, "id_usuario_rechazo_inicio", "id_usuario_rechazo_inicio")
+                + buildOptionalInicioJornadaSelect(alias, "supervisor_rechazo_inicio", "supervisor_rechazo_inicio")
+                + buildOptionalInicioJornadaSelect(alias, "fecha_rechazo_inicio", "fecha_rechazo_inicio");
+    }
+
+    private String buildOptionalInicioJornadaSelect(String alias, String outputAlias, String... candidates) {
+        String column = resolveInicioJornadaColumn(candidates);
+        if (column == null) {
+            return "CAST(NULL AS NVARCHAR(200)) AS " + outputAlias + ", ";
+        }
+        String prefix = alias == null || alias.trim().isEmpty() ? "" : alias.trim() + ".";
+        return prefix + "[" + column + "] AS " + outputAlias + ", ";
+    }
+
+    private void asegurarColumnasAuditoriaInicioJornada() {
+        tigohogarJdbcTemplate.execute(
+                "IF COL_LENGTH('dbo.tbl_InicioJornadaAlturas', 'id_usuario_aprobo_inicio') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_InicioJornadaAlturas ADD id_usuario_aprobo_inicio INT NULL; END; " +
+                        "IF COL_LENGTH('dbo.tbl_InicioJornadaAlturas', 'supervisor_aprobo_inicio') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_InicioJornadaAlturas ADD supervisor_aprobo_inicio NVARCHAR(200) NULL; END; " +
+                        "IF COL_LENGTH('dbo.tbl_InicioJornadaAlturas', 'fecha_aprobacion_inicio') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_InicioJornadaAlturas ADD fecha_aprobacion_inicio DATETIME NULL; END; " +
+                        "IF COL_LENGTH('dbo.tbl_InicioJornadaAlturas', 'id_usuario_rechazo_inicio') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_InicioJornadaAlturas ADD id_usuario_rechazo_inicio INT NULL; END; " +
+                        "IF COL_LENGTH('dbo.tbl_InicioJornadaAlturas', 'supervisor_rechazo_inicio') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_InicioJornadaAlturas ADD supervisor_rechazo_inicio NVARCHAR(200) NULL; END; " +
+                        "IF COL_LENGTH('dbo.tbl_InicioJornadaAlturas', 'fecha_rechazo_inicio') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_InicioJornadaAlturas ADD fecha_rechazo_inicio DATETIME NULL; END;"
+        );
     }
 
     private String resolveInicioJornadaColumn(String... candidates) {
@@ -1434,15 +1595,19 @@ public class SupervisionRepository {
                 row.put("tecnicoNombre", tecnicoNombreInicio.trim());
             }
             if (idAuxiliar != null) {
-                String nombre = usuarios.get(idAuxiliar);
-                if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
-                    nombre = obtenerNombreUsuarioSucursal(sucursalTemplate, idAuxiliar);
-                }
+                String nombre = null;
                 if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
                     nombre = obtenerNombreTecnicoSucursal(sucursalTemplate, idAuxiliar);
                 }
+                if ((nombre == null || nombre.trim().isEmpty()) && sucursalTemplate != null) {
+                    nombre = obtenerNombreUsuarioSucursal(sucursalTemplate, idAuxiliar);
+                }
+                if ((nombre == null || nombre.trim().isEmpty())) {
+                    nombre = usuarios.get(idAuxiliar);
+                }
                 if (nombre != null && !nombre.trim().isEmpty()) {
                     row.put("auxiliarNombre", nombre.trim());
+                    row.put("auxiliar", nombre.trim());
                 }
             }
             if ((toText(findValue(row, "supervisorNombre", "supervisor", "nombreSupervisor")) == null) && idSupervisor != null) {
@@ -1498,6 +1663,7 @@ public class SupervisionRepository {
             return out;
         }
         String trabajoSoloSelect = buildTrabajoSoloSelect(null);
+        String auditoriaSelect = buildInicioJornadaAuditoriaSelect(null);
         StringBuilder sql = new StringBuilder(
                 "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
                         "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
@@ -1505,6 +1671,7 @@ public class SupervisionRepository {
                         "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                         "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
                         "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre, " +
+                        auditoriaSelect +
                         trabajoSoloSelect +
                         "CASE WHEN imagen IS NULL OR DATALENGTH(imagen) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_inicio, " +
                         "CASE WHEN imagen_auxiliar IS NULL OR DATALENGTH(imagen_auxiliar) = 0 THEN CAST(0 AS BIT) ELSE CAST(1 AS BIT) END AS tiene_imagen_auxiliar " +

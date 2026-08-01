@@ -283,22 +283,18 @@ public class SupervisionService {
     }
 
     public List<Map<String, Object>> listarIniciosPendientes(String token) {
-        AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
-        String sucursal = resolveSucursalNombre(me);
+        authService.me(token);
         try {
-            return repository.listarIniciosJornadaPendientesSupervisor(idSupervisor, sucursal);
+            return repository.listarIniciosJornadaPendientesTodos();
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
     }
 
     public List<Map<String, Object>> listarIniciosConfirmadosHoy(String token) {
-        AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
-        String sucursal = resolveSucursalNombre(me);
+        authService.me(token);
         try {
-            return repository.listarIniciosJornadaConfirmadosHoySupervisor(idSupervisor, sucursal);
+            return repository.listarIniciosJornadaConfirmadosHoyTodos();
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
@@ -425,15 +421,15 @@ public class SupervisionService {
     public Map<String, Object> aprobarInicioPendiente(Integer idInicio, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
-        int updated = repository.aprobarInicioJornada(idSupervisor, idInicio);
-        if (updated <= 0) {
-            updated = repository.aprobarInicioJornadaPorId(idInicio);
-        }
+        String supervisorNombre = me.getUsuario() == null ? null : me.getUsuario().getNombre();
+        int updated = repository.aprobarInicioJornadaPorId(idInicio, idSupervisor, supervisorNombre);
         if (updated <= 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro inicio pendiente para aprobar.");
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("idInicio", idInicio);
+        out.put("idSupervisorAprobador", idSupervisor);
+        out.put("supervisorAprobador", supervisorNombre);
         out.put("aprobado", true);
         return out;
     }
@@ -441,15 +437,15 @@ public class SupervisionService {
     public Map<String, Object> rechazarInicioPendiente(Integer idInicio, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
-        int updated = repository.rechazarInicioJornada(idSupervisor, idInicio);
-        if (updated <= 0) {
-            updated = repository.rechazarInicioJornadaPorId(idInicio);
-        }
+        String supervisorNombre = me.getUsuario() == null ? null : me.getUsuario().getNombre();
+        int updated = repository.rechazarInicioJornadaPorId(idInicio, idSupervisor, supervisorNombre);
         if (updated <= 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro inicio pendiente para rechazar.");
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("idInicio", idInicio);
+        out.put("idSupervisorRechazador", idSupervisor);
+        out.put("supervisorRechazador", supervisorNombre);
         out.put("rechazado", true);
         return out;
     }

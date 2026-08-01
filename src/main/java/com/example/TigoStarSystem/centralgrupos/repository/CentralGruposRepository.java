@@ -218,6 +218,7 @@ public class CentralGruposRepository {
                 "WITH base AS ( " +
                         "  SELECT " +
                         "    LTRIM(RTRIM(ISNULL(grupo, ''))) AS grupo, " +
+                        "    CAST(idUsuarioSupervisor AS INT) AS id_usuario_supervisor, " +
                         "    LTRIM(RTRIM(ISNULL(supervisorACargo, ''))) AS supervisor, " +
                         "    CAST(NULL AS INT) AS id_usuario_tecnico, " +
                         "    CAST(id_tecnico AS INT) AS id_tecnico, " +
@@ -236,6 +237,7 @@ public class CentralGruposRepository {
                         "SELECT " +
                         "  CAST(DENSE_RANK() OVER (ORDER BY grupo) AS INT) AS id_grupo, " +
                         "  grupo AS nombre, " +
+                        "  id_usuario_supervisor, " +
                         "  supervisor AS supervisor, " +
                         "  id_usuario_tecnico, " +
                         "  id_tecnico, " +
@@ -425,6 +427,96 @@ public class CentralGruposRepository {
                 );
             }
         }
+    }
+
+    public int actualizarTecnicoEnConformacionCentral(
+            JdbcTemplate centralTemplate,
+            String sucursal,
+            String nombreGrupo,
+            Integer idUsuarioSupervisor,
+            String nombreSupervisor,
+            List<Integer> idsTecnico) {
+        if (centralTemplate == null
+                || nombreGrupo == null
+                || nombreGrupo.trim().isEmpty()
+                || idUsuarioSupervisor == null
+                || idUsuarioSupervisor <= 0
+                || idsTecnico == null
+                || idsTecnico.isEmpty()) {
+            return 0;
+        }
+
+        List<Integer> ids = new ArrayList<>(new LinkedHashSet<>(idsTecnico));
+        String placeholders = buildPlaceholders(ids.size());
+        String supervisor = nombreSupervisor == null ? "" : nombreSupervisor.trim();
+        String grupo = nombreGrupo.trim();
+
+        List<Object> params = new ArrayList<>();
+        params.add(grupo);
+        params.add(idUsuarioSupervisor);
+        params.add(supervisor);
+        params.add(sucursal);
+        params.add(sucursal);
+        params.addAll(ids);
+        params.addAll(ids);
+
+        String where = "WHERE ISNULL(e_eliminado, 0) = 0 " +
+                "  AND CAST(fecha AS DATE) = CAST(GETDATE() AS DATE) " +
+                "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
+                "                  LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(?)), '_', ''), '-', ''), ' ', ''))) " +
+                "  AND (id_tecnico IN (" + placeholders + ") OR %s IN (" + placeholders + "))";
+
+        try {
+            return centralTemplate.update(
+                    "UPDATE dbo.tbl_ConformacionCuadrillaDiario " +
+                            "SET grupo = ?, idUsuarioSupervisor = ?, supervisorACargo = ? " +
+                            String.format(where, "id_tecnicoAuxiliar"),
+                    params.toArray()
+            );
+        } catch (DataAccessException ex) {
+            try {
+                return centralTemplate.update(
+                        "UPDATE dbo.tbl_ConformacionCuadrillaDiario " +
+                                "SET grupo = ?, idUsuarioSupervisor = ?, supervisorACargo = ? " +
+                                String.format(where, "id_tecnico_auxiliar"),
+                        params.toArray()
+                );
+            } catch (DataAccessException ignored) {
+                return centralTemplate.update(
+                        "UPDATE dbo.tbl_ConformacionCuadrillaDiario " +
+                                "SET grupo = ?, id_usuario_supervisor = ?, supervisor_a_cargo = ? " +
+                                String.format(where, "id_tecnico_auxiliar"),
+                        params.toArray()
+                );
+            }
+        }
+    }
+
+    public Integer resolverIdVendedorPorUsuarioTecnico(JdbcTemplate template, Integer idUsuarioTecnico) {
+        if (template == null || idUsuarioTecnico == null || idUsuarioTecnico <= 0) {
+            return null;
+        }
+        String[] queries = new String[]{
+                "SELECT TOP 1 CAST(ut.id_vendedor AS INT) AS id_vendedor FROM dbo.tbl_UsuarioTecnico ut WHERE ut.id = ? AND ISNULL(ut.e_eliminado, 0) = 0 AND ut.id_vendedor IS NOT NULL",
+                "SELECT TOP 1 CAST(ut.Id_Vendedor AS INT) AS id_vendedor FROM dbo.tbl_UsuarioTecnico ut WHERE ut.Id = ? AND ISNULL(ut.E_Eliminado, 0) = 0 AND ut.Id_Vendedor IS NOT NULL",
+                "SELECT TOP 1 CAST(ut.idvendedor AS INT) AS id_vendedor FROM dbo.tbl_usuariotecnico ut WHERE ut.id = ? AND ISNULL(ut.e_eliminado, 0) = 0 AND ut.idvendedor IS NOT NULL",
+                "SELECT TOP 1 CAST(ut.id_vendedor AS INT) AS id_vendedor FROM dbo.tbl_usuariotecnico ut WHERE ut.id = ? AND ISNULL(ut.e_eliminado, 0) = 0 AND ut.id_vendedor IS NOT NULL"
+        };
+        for (String sql : queries) {
+            try {
+                List<Map<String, Object>> rows = template.queryForList(sql, idUsuarioTecnico);
+                if (rows != null && !rows.isEmpty()) {
+                    Object value = firstValue(rows.get(0), "id_vendedor", "idVendedor");
+                    if (value instanceof Number) {
+                        return ((Number) value).intValue();
+                    }
+                    return Integer.parseInt(String.valueOf(value).trim());
+                }
+            } catch (Exception ignored) {
+                // Intenta la siguiente variante de esquema.
+            }
+        }
+        return null;
     }
 
     public int actualizarSupervisorIniciosPendientesPorGrupo(

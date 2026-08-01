@@ -48,6 +48,76 @@ public class ConformacionCuadrillaWebRepository {
             "EXEC dbo.spx_ObtenerVehiculosConformacionCuadrillaWeb";
     private static final String SP_SUCURSALES =
             "EXEC dbo.spx_ObtenerSucursalesConformacionCuadrillaWeb";
+    private static final String SQL_USUARIOS_TECNICOS_ACTIVOS =
+            "SELECT " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS idTecnico, " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS id_tecnico, " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS id_vendedor, " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS Id_Vendedor, " +
+                    "u.Id_Usuario AS idUsuario, " +
+                    "u.Nombre AS tecnico, " +
+                    "u.Nombre AS nombrevendedor, " +
+                    "u.Nombre AS nombre, " +
+                    "u.Nombre AS Nombre, " +
+                    "u.Loggin AS loggin, " +
+                    "v.salesForce AS salesforce, " +
+                    "v.cuentaSF AS cuentaSf, " +
+                    "v.cuentaSF AS cuenta_sf, " +
+                    "v.habilidad AS habilidad, " +
+                    "v.vehiculo AS vehiculo, " +
+                    "v.grupoDigitacion AS grupoDigitacion, " +
+                    "r.Nombre AS grupo, " +
+                    "r.Nombre AS ruta, " +
+                    "r.Id_Ruta AS idRuta, " +
+                    "u.E_Eliminado AS e_eliminado, " +
+                    "u.E_Eliminado AS E_Eliminado, " +
+                    "u.Id_Rol AS idRol " +
+                    "FROM dbo.tbl_Usuario u " +
+                    "OUTER APPLY ( " +
+                    "  SELECT TOP 1 v.* FROM dbo.tbl_Vendedor v " +
+                    "  WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                    "    AND LOWER(REPLACE(LTRIM(RTRIM(v.Nombre)), ' ', '')) = LOWER(REPLACE(LTRIM(RTRIM(u.Nombre)), ' ', '')) " +
+                    "  ORDER BY v.Id_Vendedor DESC " +
+                    ") v " +
+                    "OUTER APPLY ( " +
+                    "  SELECT TOP 1 r.* FROM dbo.tbl_Ruta r " +
+                    "  WHERE ISNULL(r.E_Eliminado, 0) = 0 " +
+                    "    AND r.Id_Vendedor = v.Id_Vendedor " +
+                    "  ORDER BY ISNULL(r.visible, 0) DESC, r.Id_Ruta DESC " +
+                    ") r " +
+                    "WHERE ISNULL(u.E_Eliminado, 0) = 0 " +
+                    "AND u.Id_Rol = 8 " +
+                    "ORDER BY u.Nombre";
+    private static final String SQL_DETALLE_TECNICO_CON_RUTA =
+            "SELECT TOP 1 " +
+                    "v.Id_Vendedor AS idTecnico, " +
+                    "v.Id_Vendedor AS id_tecnico, " +
+                    "v.Id_Vendedor AS id_vendedor, " +
+                    "v.Id_Vendedor AS Id_Vendedor, " +
+                    "v.Nombre AS tecnico, " +
+                    "v.Nombre AS nombrevendedor, " +
+                    "v.Nombre AS nombre, " +
+                    "v.Nombre AS Nombre, " +
+                    "v.salesForce AS salesforce, " +
+                    "v.cuentaSF AS cuentaSf, " +
+                    "v.cuentaSF AS cuenta_sf, " +
+                    "v.habilidad AS habilidad, " +
+                    "v.vehiculo AS vehiculo, " +
+                    "v.grupoDigitacion AS grupoDigitacion, " +
+                    "r.Nombre AS grupo, " +
+                    "r.Nombre AS ruta, " +
+                    "r.Id_Ruta AS idRuta, " +
+                    "r.BodegaTigo AS almacen, " +
+                    "r.almacentigo AS almacenTigo " +
+                    "FROM dbo.tbl_Vendedor v " +
+                    "OUTER APPLY ( " +
+                    "  SELECT TOP 1 r.* FROM dbo.tbl_Ruta r " +
+                    "  WHERE ISNULL(r.E_Eliminado, 0) = 0 " +
+                    "    AND r.Id_Vendedor = v.Id_Vendedor " +
+                    "  ORDER BY ISNULL(r.visible, 0) DESC, r.Id_Ruta DESC " +
+                    ") r " +
+                    "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                    "AND v.Id_Vendedor = ?";
 
     private final JdbcTemplate centralJdbcTemplate;
     private final JdbcTemplate jdbcTemplate;
@@ -105,11 +175,15 @@ public class ConformacionCuadrillaWebRepository {
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = dbSupport.resolverSucursalDbInfo(sucursalParam);
 
         Map<String, Object> row = queryForSingleInSucursal(dbInfo, SP_OBTENER_POR_ID, id);
+        if (row != null) {
+            completarSupervisorDetalle(dbInfo, row);
+        }
         return row == null ? null : mapRow(row);
     }
 
     public ConformacionCuadrillaWebResponse obtenerPorIdPersistido(Long id) {
         Map<String, Object> row = queryForSingle(centralJdbcTemplate, SP_OBTENER_POR_ID, id);
+        completarSupervisorDetalle(centralJdbcTemplate, row);
         return row == null ? null : mapRow(row);
     }
 
@@ -234,9 +308,9 @@ public class ConformacionCuadrillaWebRepository {
     }
 
     public List<Map<String, Object>> listarTecnicos(String sucursal) {
-        List<Map<String, Object>> vendedores = listarVendedoresPorTipoSolicitante(sucursal, null);
-        if (vendedores != null && !vendedores.isEmpty()) {
-            return normalizarDatosTecnicos(vendedores);
+        List<Map<String, Object>> usuariosActivos = listarUsuariosTecnicosActivos(sucursal);
+        if (usuariosActivos != null && !usuariosActivos.isEmpty()) {
+            return normalizarDatosTecnicos(usuariosActivos);
         }
         List<Map<String, Object>> rows = queryForListInSucursal(
                 dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
@@ -245,7 +319,31 @@ public class ConformacionCuadrillaWebRepository {
         return normalizarDatosTecnicos(rows);
     }
 
+    private List<Map<String, Object>> listarUsuariosTecnicosActivos(String sucursal) {
+        ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = dbSupport.resolverSucursalDbInfo(trimToNull(sucursal));
+        List<Map<String, Object>> rowsSucursal = queryForListInSucursal(dbInfo, SQL_USUARIOS_TECNICOS_ACTIVOS);
+        if (rowsSucursal != null && !rowsSucursal.isEmpty()) {
+            return rowsSucursal;
+        }
+        try {
+            List<Map<String, Object>> rowsMain = queryForList(jdbcTemplate, SQL_USUARIOS_TECNICOS_ACTIVOS);
+            return rowsMain == null ? new ArrayList<>() : rowsMain;
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
     public List<Map<String, Object>> obtenerTecnicoDetalle(Integer idTecnico, String sucursal) {
+        List<Map<String, Object>> detalleDirecto = normalizarDatosTecnicos(
+                queryForListInSucursal(
+                        dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
+                        SQL_DETALLE_TECNICO_CON_RUTA,
+                        idTecnico
+                )
+        );
+        if (detalleDirecto != null && !detalleDirecto.isEmpty()) {
+            return detalleDirecto;
+        }
         List<Map<String, Object>> rows = queryForListInSucursal(
                 dbSupport.resolverSucursalDbInfo(trimToNull(sucursal)),
                 SP_TECNICO_DETALLE,
@@ -469,7 +567,8 @@ public class ConformacionCuadrillaWebRepository {
                 "Id_UsuarioDigitador"
         )));
         out.setDigitador(toString(findValue(row, "digitador", "usuarioDigitador", "NombreDigitador")));
-        out.setTecnico(toString(findValue(row, "tecnico", "nombre", "Nombre")));
+        String tecnico = toString(findValue(row, "tecnico", "nombrevendedor", "vendedor", "nombre", "Nombre"));
+        out.setTecnico(tecnico == null || tecnico.trim().isEmpty() ? out.getSalesforce() : tecnico);
         out.setIdTecnicoAuxiliar(toInteger(findValue(
                 row,
                 "id_tecnicoAuxiliar",
@@ -506,7 +605,71 @@ public class ConformacionCuadrillaWebRepository {
         return out;
     }
 
+    private void completarSupervisorDetalle(
+            ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo,
+            Map<String, Object> row) {
+        if (dbInfo == null || row == null || row.isEmpty()) {
+            return;
+        }
+        try {
+            completarSupervisorDetalle(dbSupport.crearJdbcTemplateSucursal(dbInfo), row);
+        } catch (RuntimeException ignored) {
+            // sin enriquecimiento si la sucursal no esta disponible
+        }
+    }
+
+    private void completarSupervisorDetalle(JdbcTemplate template, Map<String, Object> row) {
+        if (template == null || row == null || row.isEmpty()) {
+            return;
+        }
+        String supervisor = trimToNull(toString(findValue(
+                row,
+                "supervisorACargo",
+                "supervisor_a_cargo",
+                "supervisor",
+                "nombresupervisor",
+                "NombreSupervisor"
+        )));
+        if (supervisor != null) {
+            row.put("supervisorACargo", supervisor);
+            row.put("supervisor", supervisor);
+            return;
+        }
+
+        Integer idSupervisor = toInteger(findValue(
+                row,
+                "idUsuarioSupervisor",
+                "id_usuario_supervisor",
+                "idusuariosupervisor",
+                "idsupervisor",
+                "Id_UsuarioSupervisor"
+        ));
+        if (idSupervisor == null || idSupervisor <= 0) {
+            return;
+        }
+
+        try {
+            Map<String, Object> usuario = queryForSingle(
+                    template,
+                    "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ?",
+                    idSupervisor
+            );
+            String nombre = trimToNull(toString(findValue(usuario, "Nombre", "nombre")));
+            if (nombre == null) {
+                return;
+            }
+            row.put("supervisorACargo", nombre);
+            row.put("supervisor", nombre);
+            row.put("NombreSupervisor", nombre);
+        } catch (DataAccessException ex) {
+            // conserva el detalle original si no se puede resolver el nombre
+        }
+    }
+
     private Object findValue(Map<String, Object> row, String... candidates) {
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
         Map<String, Object> normalized = new HashMap<>();
         for (Map.Entry<String, Object> entry : row.entrySet()) {
             normalized.put(normalize(entry.getKey()), entry.getValue());
@@ -638,6 +801,46 @@ public class ConformacionCuadrillaWebRepository {
             } else {
                 out.add(normalizada);
                 continue;
+            }
+
+            Object idTecnico = findValue(
+                    row,
+                    "idTecnico",
+                    "id_tecnico",
+                    "idtecnico",
+                    "IdTecnico",
+                    "Id_Tecnico",
+                    "id_vendedor",
+                    "idvendedor",
+                    "idVendedor",
+                    "IdVendedor",
+                    "Id_Vendedor",
+                    "Id_Usuario",
+                    "id_usuario"
+            );
+            if (idTecnico != null) {
+                normalizada.put("idTecnico", idTecnico);
+                normalizada.put("id_tecnico", idTecnico);
+                normalizada.put("id_vendedor", idTecnico);
+                normalizada.put("Id_Vendedor", idTecnico);
+            }
+
+            Object tecnico = findValue(
+                    row,
+                    "tecnico",
+                    "Tecnico",
+                    "nombrevendedor",
+                    "NombreVendedor",
+                    "vendedor",
+                    "Vendedor",
+                    "nombre",
+                    "Nombre"
+            );
+            if (tecnico != null) {
+                normalizada.put("tecnico", tecnico);
+                normalizada.put("nombrevendedor", tecnico);
+                normalizada.put("nombre", tecnico);
+                normalizada.put("Nombre", tecnico);
             }
 
             Object cuenta = findValue(row, "cuentaSf", "cuenta_sf", "cuentasf", "CuentaSF");

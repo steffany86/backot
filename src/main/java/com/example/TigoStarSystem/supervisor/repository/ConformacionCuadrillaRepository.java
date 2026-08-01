@@ -49,6 +49,76 @@ public class ConformacionCuadrillaRepository {
                     "BEGIN " +
                     "CREATE UNIQUE INDEX UX_relacion_cuadrillas_id_ruta ON dbo.relacion_cuadrillas(id_ruta);" +
                     "END;";
+    private static final String SQL_USUARIOS_TECNICOS_ACTIVOS =
+            "SELECT " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS idTecnico, " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS id_tecnico, " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS id_vendedor, " +
+                    "COALESCE(v.Id_Vendedor, u.Id_Usuario) AS Id_Vendedor, " +
+                    "u.Id_Usuario AS idUsuario, " +
+                    "u.Nombre AS tecnico, " +
+                    "u.Nombre AS nombrevendedor, " +
+                    "u.Nombre AS nombre, " +
+                    "u.Nombre AS Nombre, " +
+                    "u.Loggin AS loggin, " +
+                    "v.salesForce AS salesforce, " +
+                    "v.cuentaSF AS cuentaSf, " +
+                    "v.cuentaSF AS cuenta_sf, " +
+                    "v.habilidad AS habilidad, " +
+                    "v.vehiculo AS vehiculo, " +
+                    "v.grupoDigitacion AS grupoDigitacion, " +
+                    "r.Nombre AS grupo, " +
+                    "r.Nombre AS ruta, " +
+                    "r.Id_Ruta AS idRuta, " +
+                    "u.E_Eliminado AS e_eliminado, " +
+                    "u.E_Eliminado AS E_Eliminado, " +
+                    "u.Id_Rol AS idRol " +
+                    "FROM dbo.tbl_Usuario u " +
+                    "OUTER APPLY ( " +
+                    "  SELECT TOP 1 v.* FROM dbo.tbl_Vendedor v " +
+                    "  WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                    "    AND LOWER(REPLACE(LTRIM(RTRIM(v.Nombre)), ' ', '')) = LOWER(REPLACE(LTRIM(RTRIM(u.Nombre)), ' ', '')) " +
+                    "  ORDER BY v.Id_Vendedor DESC " +
+                    ") v " +
+                    "OUTER APPLY ( " +
+                    "  SELECT TOP 1 r.* FROM dbo.tbl_Ruta r " +
+                    "  WHERE ISNULL(r.E_Eliminado, 0) = 0 " +
+                    "    AND r.Id_Vendedor = v.Id_Vendedor " +
+                    "  ORDER BY ISNULL(r.visible, 0) DESC, r.Id_Ruta DESC " +
+                    ") r " +
+                    "WHERE ISNULL(u.E_Eliminado, 0) = 0 " +
+                    "AND u.Id_Rol = 8 " +
+                    "ORDER BY u.Nombre";
+    private static final String SQL_DETALLE_TECNICO_CON_RUTA =
+            "SELECT TOP 1 " +
+                    "v.Id_Vendedor AS idTecnico, " +
+                    "v.Id_Vendedor AS id_tecnico, " +
+                    "v.Id_Vendedor AS id_vendedor, " +
+                    "v.Id_Vendedor AS Id_Vendedor, " +
+                    "v.Nombre AS tecnico, " +
+                    "v.Nombre AS nombrevendedor, " +
+                    "v.Nombre AS nombre, " +
+                    "v.Nombre AS Nombre, " +
+                    "v.salesForce AS salesforce, " +
+                    "v.cuentaSF AS cuentaSf, " +
+                    "v.cuentaSF AS cuenta_sf, " +
+                    "v.habilidad AS habilidad, " +
+                    "v.vehiculo AS vehiculo, " +
+                    "v.grupoDigitacion AS grupoDigitacion, " +
+                    "r.Nombre AS grupo, " +
+                    "r.Nombre AS ruta, " +
+                    "r.Id_Ruta AS idRuta, " +
+                    "r.BodegaTigo AS almacen, " +
+                    "r.almacentigo AS almacenTigo " +
+                    "FROM dbo.tbl_Vendedor v " +
+                    "OUTER APPLY ( " +
+                    "  SELECT TOP 1 r.* FROM dbo.tbl_Ruta r " +
+                    "  WHERE ISNULL(r.E_Eliminado, 0) = 0 " +
+                    "    AND r.Id_Vendedor = v.Id_Vendedor " +
+                    "  ORDER BY ISNULL(r.visible, 0) DESC, r.Id_Ruta DESC " +
+                    ") r " +
+                    "WHERE ISNULL(v.E_Eliminado, 0) = 0 " +
+                    "AND v.Id_Vendedor = ?";
 
     private final JdbcTemplate centralJdbcTemplate;
     private final JdbcTemplate jdbcTemplate;
@@ -250,7 +320,9 @@ public class ConformacionCuadrillaRepository {
             if (rows == null || rows.isEmpty()) {
                 return null;
             }
-            return rows.get(0);
+            Map<String, Object> row = new LinkedHashMap<>(rows.get(0));
+            completarSupervisorDetalle(template, row);
+            return row;
         } catch (DataAccessException ex) {
             return null;
         }
@@ -353,6 +425,21 @@ public class ConformacionCuadrillaRepository {
         return ejecutarActualizar(centralJdbcTemplate, id, fila);
     }
 
+    public int eliminarFilaConfirmada(Long id) {
+        if (centralJdbcTemplate == null) {
+            throw new IllegalStateException("No hay datasource central configurado para eliminar confirmaciones.");
+        }
+        if (id == null || id <= 0) {
+            return 0;
+        }
+        return centralJdbcTemplate.update(
+                "UPDATE dbo.tbl_ConformacionCuadrillaDiario " +
+                        "SET e_eliminado = 1 " +
+                        "WHERE id = ? AND ISNULL(e_eliminado, 0) = 0",
+                id
+        );
+    }
+
     // -------------------------------------------------------------------------
     // Catalogos y datos auxiliares
     // -------------------------------------------------------------------------
@@ -365,6 +452,11 @@ public class ConformacionCuadrillaRepository {
     }
 
     public List<Map<String, Object>> listarTecnicos(String sucursal) {
+        List<Map<String, Object>> usuariosActivos = listarUsuariosTecnicosActivos(sucursal);
+        if (usuariosActivos != null && !usuariosActivos.isEmpty()) {
+            return normalizarCatalogoTecnicos(usuariosActivos);
+        }
+
         String sql = "EXEC dbo.spx_TraerVendedores_x_FormTecnico";
         String sucursalParam = normalizarSucursal(sucursal);
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
@@ -391,6 +483,11 @@ public class ConformacionCuadrillaRepository {
     }
 
     public List<Map<String, Object>> listarTecnicosFiltroEdicion(String sucursal) {
+        List<Map<String, Object>> usuariosActivos = listarUsuariosTecnicosActivos(sucursal);
+        if (usuariosActivos != null && !usuariosActivos.isEmpty()) {
+            return normalizarCatalogoTecnicos(usuariosActivos);
+        }
+
         String sucursalParam = normalizarSucursal(sucursal);
         ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
         String sqlPreferido = "EXEC dbo.spr_TraerVendedores_x_FormTecnico";
@@ -408,6 +505,22 @@ public class ConformacionCuadrillaRepository {
         return normalizarCatalogoTecnicos(
                 queryForListFallbackConSpAlternativos(sqlPreferido, sqlFallback)
         );
+    }
+
+    private List<Map<String, Object>> listarUsuariosTecnicosActivos(String sucursal) {
+        String sucursalParam = normalizarSucursal(sucursal);
+        ConformacionCuadrillaDbSupport.SucursalDbInfo dbInfo = resolverSucursalDbInfo(sucursalParam);
+        if (dbInfo != null) {
+            List<Map<String, Object>> rowsSucursal = queryForListSafe(
+                    crearJdbcTemplateSucursal(dbInfo),
+                    SQL_USUARIOS_TECNICOS_ACTIVOS
+            );
+            if (rowsSucursal != null && !rowsSucursal.isEmpty()) {
+                return rowsSucursal;
+            }
+        }
+
+        return queryForListSafe(jdbcTemplate, SQL_USUARIOS_TECNICOS_ACTIVOS);
     }
 
     /**
@@ -438,6 +551,12 @@ public class ConformacionCuadrillaRepository {
      * Obtiene detalle de un tecnico especifico.
      */
     public List<Map<String, Object>> obtenerTecnicoDetalle(Integer idTecnico) {
+        List<Map<String, Object>> detalleDirecto = normalizarCatalogoTecnicos(
+                queryForListSafe(jdbcTemplate, SQL_DETALLE_TECNICO_CON_RUTA, idTecnico)
+        );
+        if (detalleDirecto != null && !detalleDirecto.isEmpty()) {
+            return detalleDirecto;
+        }
         return normalizarCatalogoTecnicos(
                 queryForListFallback("EXEC dbo.spx_ObtenerDatosTecnicoCuadrilla ?", idTecnico)
         );
@@ -700,24 +819,17 @@ public class ConformacionCuadrillaRepository {
         }
 
         String sucursalParam = normalizarSucursal(sucursal);
-        List<JdbcTemplate> templates = construirTemplatesEscritura(sucursalParam, idExcluir);
-        if (templates == null || templates.isEmpty()) {
+        if (centralJdbcTemplate == null) {
             return null;
         }
 
-        for (JdbcTemplate template : templates) {
-            Map<String, Object> existente = buscarRegistroActivoPorSalesforceEnTemplate(
-                    template,
-                    fecha,
-                    sucursalParam,
-                    salesforceParam,
-                    idExcluir
-            );
-            if (existente != null && !existente.isEmpty()) {
-                return existente;
-            }
-        }
-        return null;
+        return buscarRegistroActivoPorSalesforceEnTemplate(
+                centralJdbcTemplate,
+                fecha,
+                sucursalParam,
+                salesforceParam,
+                idExcluir
+        );
     }
 
     /**
@@ -735,24 +847,17 @@ public class ConformacionCuadrillaRepository {
         }
 
         String sucursalParam = normalizarSucursal(sucursal);
-        List<JdbcTemplate> templates = construirTemplatesEscritura(sucursalParam, idExcluir);
-        if (templates == null || templates.isEmpty()) {
+        if (centralJdbcTemplate == null) {
             return null;
         }
 
-        for (JdbcTemplate template : templates) {
-            Map<String, Object> existente = buscarRegistroActivoPorTecnicoEnTemplate(
-                    template,
-                    fecha,
-                    sucursalParam,
-                    tecnicoParam,
-                    idExcluir
-            );
-            if (existente != null && !existente.isEmpty()) {
-                return existente;
-            }
-        }
-        return null;
+        return buscarRegistroActivoPorTecnicoEnTemplate(
+                centralJdbcTemplate,
+                fecha,
+                sucursalParam,
+                tecnicoParam,
+                idExcluir
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -823,6 +928,7 @@ public class ConformacionCuadrillaRepository {
             if (rows != null && !rows.isEmpty()) {
                 return rows.get(0);
             }
+            return null;
         } catch (DataAccessException ex) {
             // fallback sin e_eliminado para esquemas antiguos
         }
@@ -854,40 +960,7 @@ public class ConformacionCuadrillaRepository {
 
         Date fechaSql = fecha == null ? null : Date.valueOf(fecha);
 
-        // Intento 1: SP con firma de 4 parametros.
-        try {
-            List<Map<String, Object>> rows = queryForList(
-                    template,
-                    "EXEC dbo.spx_ExisteRegistroConformacionCuadrillaDiario ?, ?, ?, ?",
-                    fechaSql,
-                    sucursal,
-                    tecnico,
-                    idExcluir
-            );
-            if (rows != null && !rows.isEmpty()) {
-                return rows.get(0);
-            }
-        } catch (DataAccessException ignored) {
-            // fallback a otras firmas
-        }
-
-        // Intento 2: SP con firma de 3 parametros.
-        try {
-            List<Map<String, Object>> rows = queryForList(
-                    template,
-                    "EXEC dbo.spx_ExisteRegistroConformacionCuadrillaDiario ?, ?, ?",
-                    fechaSql,
-                    sucursal,
-                    tecnico
-            );
-            if (rows != null && !rows.isEmpty()) {
-                return rows.get(0);
-            }
-        } catch (DataAccessException ignored) {
-            // fallback a consulta directa
-        }
-
-        // Fallback robusto por tabla.
+        // Regla principal: solo debe bloquear registros no eliminados.
         List<Object> args = new ArrayList<>();
         StringBuilder sql = new StringBuilder(
                 "SELECT TOP 1 id, fecha, sucursal, tecnico, salesforce " +
@@ -913,11 +986,47 @@ public class ConformacionCuadrillaRepository {
 
         try {
             List<Map<String, Object>> rows = queryForList(template, sql.toString(), args.toArray());
-            if (rows == null || rows.isEmpty()) return null;
+            if (rows == null || rows.isEmpty()) {
+                return null;
+            }
             return rows.get(0);
         } catch (DataAccessException ex) {
-            return null;
+            // fallback a SPs para esquemas antiguos sin e_eliminado
         }
+
+        // Intento 2: SP con firma de 4 parametros.
+        try {
+            List<Map<String, Object>> rows = queryForList(
+                    template,
+                    "EXEC dbo.spx_ExisteRegistroConformacionCuadrillaDiario ?, ?, ?, ?",
+                    fechaSql,
+                    sucursal,
+                    tecnico,
+                    idExcluir
+            );
+            if (rows != null && !rows.isEmpty()) {
+                return rows.get(0);
+            }
+        } catch (DataAccessException ignored) {
+            // fallback a otras firmas
+        }
+
+        // Intento 3: SP con firma de 3 parametros.
+        try {
+            List<Map<String, Object>> rows = queryForList(
+                    template,
+                    "EXEC dbo.spx_ExisteRegistroConformacionCuadrillaDiario ?, ?, ?",
+                    fechaSql,
+                    sucursal,
+                    tecnico
+            );
+            if (rows != null && !rows.isEmpty()) {
+                return rows.get(0);
+            }
+        } catch (DataAccessException ignored) {
+            // fallback a consulta directa
+        }
+        return null;
     }
 
     /**
@@ -973,6 +1082,46 @@ public class ConformacionCuadrillaRepository {
             } else {
                 out.add(normalizada);
                 continue;
+            }
+
+            Object idTecnico = findValueCaseInsensitive(
+                    row,
+                    "idTecnico",
+                    "id_tecnico",
+                    "idtecnico",
+                    "IdTecnico",
+                    "Id_Tecnico",
+                    "id_vendedor",
+                    "idvendedor",
+                    "idVendedor",
+                    "IdVendedor",
+                    "Id_Vendedor",
+                    "Id_Usuario",
+                    "id_usuario"
+            );
+            if (idTecnico != null) {
+                normalizada.put("idTecnico", idTecnico);
+                normalizada.put("id_tecnico", idTecnico);
+                normalizada.put("id_vendedor", idTecnico);
+                normalizada.put("Id_Vendedor", idTecnico);
+            }
+
+            Object tecnico = findValueCaseInsensitive(
+                    row,
+                    "tecnico",
+                    "Tecnico",
+                    "nombrevendedor",
+                    "NombreVendedor",
+                    "vendedor",
+                    "Vendedor",
+                    "nombre",
+                    "Nombre"
+            );
+            if (tecnico != null) {
+                normalizada.put("tecnico", tecnico);
+                normalizada.put("nombrevendedor", tecnico);
+                normalizada.put("nombre", tecnico);
+                normalizada.put("Nombre", tecnico);
             }
 
             Object cuenta = findValueCaseInsensitive(row, "cuentaSf", "cuenta_sf", "cuentasf", "CuentaSF");
@@ -1068,6 +1217,53 @@ public class ConformacionCuadrillaRepository {
         }
     }
 
+    private void completarSupervisorDetalle(JdbcTemplate template, Map<String, Object> row) {
+        if (template == null || row == null || row.isEmpty()) {
+            return;
+        }
+        String supervisor = asTrimmedText(findValueCaseInsensitive(
+                row,
+                "supervisorACargo",
+                "supervisor_a_cargo",
+                "supervisor",
+                "nombresupervisor",
+                "NombreSupervisor"
+        ));
+        if (!isBlank(supervisor)) {
+            row.put("supervisorACargo", supervisor);
+            row.put("supervisor", supervisor);
+            return;
+        }
+
+        Integer idSupervisor = toInteger(findValueCaseInsensitive(
+                row,
+                "idUsuarioSupervisor",
+                "id_usuario_supervisor",
+                "idusuariosupervisor",
+                "idsupervisor",
+                "Id_UsuarioSupervisor"
+        ));
+        if (idSupervisor == null || idSupervisor <= 0) {
+            return;
+        }
+
+        List<Map<String, Object>> rows = queryForListSafe(
+                template,
+                "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ?",
+                idSupervisor
+        );
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        String nombre = asTrimmedText(findValueCaseInsensitive(rows.get(0), "Nombre", "nombre"));
+        if (isBlank(nombre)) {
+            return;
+        }
+        row.put("supervisorACargo", nombre);
+        row.put("supervisor", nombre);
+        row.put("NombreSupervisor", nombre);
+    }
+
     /**
      * Mezcla filas de Salesforce sin perder datos y deduplicando por salesforce/cuenta.
      */
@@ -1124,6 +1320,20 @@ public class ConformacionCuadrillaRepository {
             return "";
         }
         return String.valueOf(value).trim();
+    }
+
+    private Integer toInteger(Object value) {
+        if (value == null) {
+            return null;
+        }
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        try {
+            return Integer.parseInt(value.toString().trim());
+        } catch (NumberFormatException ex) {
+            return null;
+        }
     }
 
     private Object findValueCaseInsensitive(Map<String, Object> row, String... candidates) {
@@ -1298,7 +1508,9 @@ public class ConformacionCuadrillaRepository {
                     args
             );
             // Con SQL Server + SET NOCOUNT ON el driver puede devolver -1 aunque el UPDATE se ejecute.
-            return normalizeAffectedRows(affected);
+            int normalized = normalizeAffectedRows(affected);
+            actualizarSupervisorConfirmo(template, id, fila == null ? null : fila.getSupervisorConfirmo());
+            return normalized;
         } catch (DataAccessException backofficeEx) {
             try {
                 int affected = ejecutarSpEscritura(
@@ -1307,7 +1519,9 @@ public class ConformacionCuadrillaRepository {
                                 "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?",
                         args
                 );
-                return normalizeAffectedRows(affected);
+                int normalized = normalizeAffectedRows(affected);
+                actualizarSupervisorConfirmo(template, id, fila == null ? null : fila.getSupervisorConfirmo());
+                return normalized;
             } catch (DataAccessException webEx) {
                 webEx.addSuppressed(backofficeEx);
                 throw webEx;
@@ -1352,9 +1566,72 @@ public class ConformacionCuadrillaRepository {
     private int normalizeInsertOutcome(JdbcTemplate template, ConformacionCuadrillaRowRequest fila, int affected) {
         int normalized = normalizeAffectedRows(affected);
         if (normalized > 0) {
+            actualizarSupervisorConfirmoRegistroReciente(template, fila);
             return normalized;
         }
-        return existeRegistroInsertadoReciente(template, fila) ? 1 : 0;
+        boolean existe = existeRegistroInsertadoReciente(template, fila);
+        if (existe) {
+            actualizarSupervisorConfirmoRegistroReciente(template, fila);
+        }
+        return existe ? 1 : 0;
+    }
+
+    private void asegurarColumnaSupervisorConfirmo(JdbcTemplate template) {
+        if (template == null) {
+            return;
+        }
+        template.execute(
+                "IF COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiario', 'supervisorConfirmo') IS NULL " +
+                        "BEGIN ALTER TABLE dbo.tbl_ConformacionCuadrillaDiario ADD supervisorConfirmo NVARCHAR(150) NULL; END"
+        );
+    }
+
+    private void actualizarSupervisorConfirmo(JdbcTemplate template, Long id, String supervisorConfirmo) {
+        if (template == null || id == null || id <= 0 || isBlank(supervisorConfirmo)) {
+            return;
+        }
+        try {
+            asegurarColumnaSupervisorConfirmo(template);
+            template.update(
+                    "UPDATE dbo.tbl_ConformacionCuadrillaDiario SET supervisorConfirmo = ? WHERE id = ?",
+                    supervisorConfirmo.trim(),
+                    id
+            );
+        } catch (RuntimeException ignored) {
+            // No bloquea la confirmacion si una base replica aun no tiene permisos de ALTER/UPDATE.
+        }
+    }
+
+    private void actualizarSupervisorConfirmoRegistroReciente(JdbcTemplate template, ConformacionCuadrillaRowRequest fila) {
+        if (template == null || fila == null || fila.getFecha() == null || fila.getIdTecnico() == null
+                || isBlank(fila.getSupervisorConfirmo())) {
+            return;
+        }
+        try {
+            asegurarColumnaSupervisorConfirmo(template);
+            template.update(
+                    "UPDATE dbo.tbl_ConformacionCuadrillaDiario " +
+                            "SET supervisorConfirmo = ? " +
+                            "WHERE id = ( " +
+                            "  SELECT TOP 1 id " +
+                            "  FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                            "  WHERE fecha = ? " +
+                            "    AND id_tecnico = ? " +
+                            "    AND ISNULL(vehiculo, '') = ISNULL(?, '') " +
+                            "    AND ISNULL(grupo, '') = ISNULL(?, '') " +
+                            "    AND ISNULL(sucursal, '') = ISNULL(?, '') " +
+                            "  ORDER BY fechaRegistro DESC, id DESC " +
+                            ")",
+                    fila.getSupervisorConfirmo().trim(),
+                    Date.valueOf(fila.getFecha()),
+                    fila.getIdTecnico(),
+                    fila.getVehiculo(),
+                    fila.getGrupo(),
+                    fila.getSucursal()
+            );
+        } catch (RuntimeException ignored) {
+            // No bloquea la confirmacion si una base replica aun no tiene permisos de ALTER/UPDATE.
+        }
     }
 
     private boolean existeRegistroInsertadoReciente(JdbcTemplate template, ConformacionCuadrillaRowRequest fila) {

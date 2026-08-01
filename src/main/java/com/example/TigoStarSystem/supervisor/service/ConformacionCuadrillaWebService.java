@@ -406,7 +406,9 @@ public class ConformacionCuadrillaWebService {
         out.setFecha(fecha);
         out.setActividad(resolverActividadDesdeRuta(row));
         out.setIdTecnico(toInteger(readValue(row, "id_tecnico", "idtecnico", "id_vendedor", "Id_Vendedor")));
-        out.setTecnico(toString(readValue(row, "tecnico", "nombrevendedor", "vendedor", "nombre")));
+        out.setSalesforce(toString(readValue(row, "salesforce", "SalesForce", "nombreSalesforce", "nombre_salesforce")));
+        String tecnico = toString(readValue(row, "tecnico", "nombrevendedor", "vendedor", "nombre"));
+        out.setTecnico(isBlank(tecnico) ? out.getSalesforce() : tecnico);
         out.setGrupo(toString(readValue(row, "grupo", "cuadrilla", "ruta", "nombre", "Nombre")));
         out.setVehiculo(toString(readValue(row, "vehiculo", "Vehiculo", "placa", "placaVehiculo")));
         out.setAlmacen(toString(readValue(row, "almacen", "almacen_tigo", "almacenTigo", "BodegaTigo")));
@@ -456,9 +458,6 @@ public class ConformacionCuadrillaWebService {
             return;
         }
 
-        if (isBlank(out.getTecnico())) {
-            out.setTecnico(toString(readValue(detalle, "tecnico", "nombrevendedor", "vendedor", "nombre")));
-        }
         if (isBlank(out.getSalesforce())) {
             out.setSalesforce(toString(readValue(
                     detalle,
@@ -467,6 +466,10 @@ public class ConformacionCuadrillaWebService {
                     "nombreSalesforce",
                     "nombre_salesforce"
             )));
+        }
+        if (isBlank(out.getTecnico())) {
+            String tecnico = toString(readValue(detalle, "tecnico", "nombrevendedor", "vendedor", "nombre"));
+            out.setTecnico(isBlank(tecnico) ? out.getSalesforce() : tecnico);
         }
         if (isBlank(out.getCuentaSf())) {
             out.setCuentaSf(toString(readValue(detalle, "cuentaSf", "cuenta_sf", "cuentasf", "CuentaSF")));

@@ -24,6 +24,7 @@ public class ConformacionCuadrillaRowRequest {
     private String sucursal;
     private String observacion;
     private Integer idUsuarioRegistra;
+    private String supervisorConfirmo;
 
     public LocalDate getFecha() {
         return fecha;
@@ -191,5 +192,13 @@ public class ConformacionCuadrillaRowRequest {
 
     public void setIdUsuarioRegistra(Integer idUsuarioRegistra) {
         this.idUsuarioRegistra = idUsuarioRegistra;
+    }
+
+    public String getSupervisorConfirmo() {
+        return supervisorConfirmo;
+    }
+
+    public void setSupervisorConfirmo(String supervisorConfirmo) {
+        this.supervisorConfirmo = supervisorConfirmo;
     }
 }

@@ -151,6 +151,10 @@ final class ConformacionCuadrillaRowMapper {
         Integer idTecnico = toInteger(idTecnicoValue);
         Map<String, Object> tecnicoRow = idTecnico == null || tecnicosById == null ? null : tecnicosById.get(idTecnico);
 
+        String salesforce = firstNonBlank(
+                trimToNull(toString(getCaseInsensitive(row, "salesforce"))),
+                trimToNull(toString(getCaseInsensitive(tecnicoRow, "salesforce")))
+        );
         String tecnicoNombre = trimToNull(toString(getCaseInsensitive(row, "tecnico", "nombrevendedor", "vendedor")));
         if (tecnicoNombre == null && tecnicoRow != null) {
             tecnicoNombre = trimToNull(toString(getCaseInsensitive(
@@ -161,6 +165,7 @@ final class ConformacionCuadrillaRowMapper {
                     "vendedor"
             )));
         }
+        tecnicoNombre = firstNonBlank(tecnicoNombre, salesforce);
         if (vehiculo == null && tecnicoRow != null) {
             vehiculo = getCaseInsensitive(tecnicoRow, "vehiculo", "placa", "placavehiculo", "placaVehiculo");
         }
@@ -182,10 +187,7 @@ final class ConformacionCuadrillaRowMapper {
                 trimToNull(toString(getCaseInsensitive(row, "cuenta_sf", "cuentasf", "cuentaSf"))),
                 trimToNull(toString(getCaseInsensitive(tecnicoRow, "cuenta_sf", "cuentasf", "cuentaSf")))
         ));
-        out.put("salesforce", firstNonBlank(
-                trimToNull(toString(getCaseInsensitive(row, "salesforce"))),
-                trimToNull(toString(getCaseInsensitive(tecnicoRow, "salesforce")))
-        ));
+        out.put("salesforce", salesforce);
         out.put("habilidad", firstNonBlank(
                 trimToNull(toString(getCaseInsensitive(row, "habilidad"))),
                 trimToNull(toString(getCaseInsensitive(tecnicoRow, "habilidad")))
@@ -281,9 +283,13 @@ final class ConformacionCuadrillaRowMapper {
         out.put("grupo", getCaseInsensitive(row, "grupo", "ruta", "cuadrilla"));
         out.put("ruta", getCaseInsensitive(row, "ruta", "grupo", "cuadrilla"));
         out.put("idTecnico", getCaseInsensitive(row, "id_tecnico", "idtecnico", "id_vendedor", "idvendedor"));
-        out.put("tecnico", getCaseInsensitive(row, "tecnico", "nombrevendedor", "vendedor"));
+        String salesforce = trimToNull(toString(getCaseInsensitive(row, "salesforce")));
+        out.put("tecnico", firstNonBlank(
+                trimToNull(toString(getCaseInsensitive(row, "tecnico", "nombrevendedor", "vendedor"))),
+                salesforce
+        ));
         out.put("cuentaSf", getCaseInsensitive(row, "cuenta_sf", "cuentasf", "cuentaSf"));
-        out.put("salesforce", getCaseInsensitive(row, "salesforce"));
+        out.put("salesforce", salesforce);
         out.put("habilidad", getCaseInsensitive(row, "habilidad"));
         out.put("idTecnicoAuxiliar", getCaseInsensitive(
                 row,
@@ -339,6 +345,13 @@ final class ConformacionCuadrillaRowMapper {
         }
         out.put("idUsuarioRegistra", idUsuarioRegistra);
         out.put("fechaRegistro", getCaseInsensitive(row, "fechaRegistro", "fecha_registro"));
+        out.put("supervisorConfirmo", getCaseInsensitive(
+                row,
+                "supervisorConfirmo",
+                "supervisor_confirmo",
+                "usuarioSupervisorConfirmo",
+                "usuario_supervisor_confirmo"
+        ));
 
         boolean eliminado = isEliminado(row);
         out.put("eEliminado", eliminado);
@@ -395,6 +408,7 @@ final class ConformacionCuadrillaRowMapper {
         putAlias(out, "supervisorACargo", "supervisor_a_cargo", "supervisor");
         putAlias(out, "idUsuarioRegistra", "id_usuario_registra", "idusuarioregistra");
         putAlias(out, "fechaRegistro", "fecha_registro");
+        putAlias(out, "supervisorConfirmo", "supervisor_confirmo", "usuarioSupervisorConfirmo", "usuario_supervisor_confirmo");
         putAlias(out, "eEliminado", "e_eliminado");
     }
 
