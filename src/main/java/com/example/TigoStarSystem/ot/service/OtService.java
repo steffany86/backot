@@ -1709,6 +1709,7 @@ public class OtService {
         }
 
         validarMaterialesDetalle(request.getMateriales(), idRuta, idSucursal);
+        validarSaldoDisponibleMateriales(request.getMateriales(), idRuta, fechaTrabajo, idSucursal);
         final Long idVentaFinal = idVenta;
         final Integer idRutaFinal = idRuta;
         final Integer idUsuarioFinal = idUsuario;
@@ -2451,6 +2452,102 @@ public class OtService {
         if (!repetidos.isEmpty()) {
             throw new ApiException(HttpStatus.CONFLICT, "SERIE_REPETIDA", String.join(" | ", repetidos));
         }
+    }
+
+    private void validarSaldoDisponibleMateriales(
+            List<OtDetalleMaterialRequest> materiales,
+            Integer idRuta,
+            LocalDate fechaTrabajo,
+            Integer idSucursal
+    ) {
+        if (materiales == null || materiales.isEmpty()) {
+            return;
+        }
+        Map<Integer, BigDecimal> requeridoPorProducto = new HashMap<>();
+        for (OtDetalleMaterialRequest material : materiales) {
+            if (material == null || material.getIdProducto() == null || esMaterialRetirado(material)) {
+                continue;
+            }
+            BigDecimal cantidad = material.getCantidad() == null ? BigDecimal.ZERO : material.getCantidad();
+            requeridoPorProducto.merge(material.getIdProducto(), cantidad, BigDecimal::add);
+        }
+        if (requeridoPorProducto.isEmpty()) {
+            return;
+        }
+
+        List<Map<String, Object>> saldoRows = otRepository.obtenerSaldoRuta(idRuta, fechaTrabajo, idSucursal);
+        Map<Integer, BigDecimal> disponiblePorProducto = new HashMap<>();
+        Map<Integer, BigDecimal> usadoHoyPorProducto = new HashMap<>();
+        for (Map<String, Object> row : saldoRows) {
+            Integer idProducto = toInteger(findValue(row, "Id_Producto", "idProducto", "id_producto", "ProductoId", "productoId"));
+            if (idProducto == null) {
+                continue;
+            }
+            BigDecimal disponible = leerSaldoDisponible(row);
+            disponiblePorProducto.merge(idProducto, disponible, BigDecimal::add);
+            usadoHoyPorProducto.merge(idProducto, leerSaldoUsadoHoy(row), BigDecimal::add);
+        }
+
+        List<String> deficits = new ArrayList<>();
+        for (Map.Entry<Integer, BigDecimal> entry : requeridoPorProducto.entrySet()) {
+            Integer idProducto = entry.getKey();
+            BigDecimal requerido = entry.getValue();
+            BigDecimal disponible = disponiblePorProducto.getOrDefault(idProducto, BigDecimal.ZERO);
+            BigDecimal usadoHoy = usadoHoyPorProducto.getOrDefault(idProducto, BigDecimal.ZERO);
+            BigDecimal saldoFinal = disponible.subtract(requerido);
+            if (saldoFinal.compareTo(BigDecimal.ZERO) < 0) {
+                deficits.add(
+                        "Producto " + idProducto +
+                                ": saldo disponible " + formatCantidad(disponible) +
+                                ", saldo usado hoy " + formatCantidad(usadoHoy) +
+                                ", intentando registrar " + formatCantidad(requerido)
+                );
+            }
+        }
+        if (!deficits.isEmpty()) {
+            throw new ApiException(
+                    HttpStatus.CONFLICT,
+                    "SALDO_INSUFICIENTE",
+                    "No se puede guardar porque el saldo quedaria negativo. " + String.join(" | ", deficits)
+            );
+        }
+    }
+
+    private BigDecimal leerSaldoDisponible(Map<String, Object> row) {
+        BigDecimal saldoRestante = firstBigDecimal(row, "Sobrante", "SaldoRestante", "saldoRestante", "Disponible", "disponible");
+        if (saldoRestante != null) {
+            return maxZero(saldoRestante);
+        }
+        BigDecimal saldoBase = firstBigDecimal(row, "SaldoDia", "SaldoDiaHoy", "Saldo", "Cantidad", "Existencia", "saldo", "cantidad");
+        if (saldoBase == null) {
+            return BigDecimal.ZERO;
+        }
+        BigDecimal usadoHoy = firstBigDecimal(row, "UsadoHoy", "usadoHoy", "Venta", "venta");
+        if (usadoHoy == null) {
+            usadoHoy = BigDecimal.ZERO;
+        }
+        return maxZero(saldoBase.subtract(usadoHoy));
+    }
+
+    private BigDecimal leerSaldoUsadoHoy(Map<String, Object> row) {
+        BigDecimal usadoHoy = firstBigDecimal(row, "UsadoHoy", "usadoHoy", "Venta", "venta");
+        return maxZero(usadoHoy);
+    }
+
+    private BigDecimal firstBigDecimal(Map<String, Object> row, String... keys) {
+        Object value = findValue(row, keys);
+        return toBigDecimal(value);
+    }
+
+    private BigDecimal maxZero(BigDecimal value) {
+        if (value == null || value.compareTo(BigDecimal.ZERO) < 0) {
+            return BigDecimal.ZERO;
+        }
+        return value;
+    }
+
+    private String formatCantidad(BigDecimal value) {
+        return maxZero(value).stripTrailingZeros().toPlainString();
     }
 
     private Map<Integer, ProductoDigitos> cargarDigitosPorProducto(List<OtDetalleMaterialRequest> materiales, Integer idSucursal) {

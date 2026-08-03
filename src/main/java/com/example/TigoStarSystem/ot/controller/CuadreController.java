@@ -56,6 +56,32 @@ public class CuadreController {
         ));
     }
 
+    @GetMapping("/sistemas/automatico/preview")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> previewCuadreAutomaticoSistemas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreService.previewCuadreAutomaticoSistemas(token, fechaFinal, idSucursal),
+                "Preview de cuadre automatico."
+        ));
+    }
+
+    @PostMapping("/sistemas/automatico/ejecutar")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> ejecutarCuadreAutomaticoSistemas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreService.ejecutarCuadreAutomaticoSistemas(token, fechaFinal, idSucursal),
+                "Cuadre automatico ejecutado."
+        ));
+    }
+
     @GetMapping({"/spx_ValidarCuadreRuta", "/validar-hoy"})
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> validarCuadreHoy(
             @RequestParam(value = "ruta", required = false) Integer ruta,

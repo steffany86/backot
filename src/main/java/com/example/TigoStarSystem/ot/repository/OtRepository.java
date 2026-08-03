@@ -612,9 +612,31 @@ public class OtRepository {
 
     public List<Map<String, Object>> obtenerSaldoRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
         return template(idSucursal).queryForList(
-                "EXEC dbo.spx_ObtenerSaldoRuta ?, ?",
-                idRuta,
-                sqlDate(fecha)
+                "SELECT " +
+                        "s.id_producto AS Id_Producto, " +
+                        "s.id_producto AS idProducto, " +
+                        "s.id_ruta AS Id_Ruta, " +
+                        "s.id_ruta AS idRuta, " +
+                        "CAST(SUM(ISNULL(s.cantidad, 0)) AS DECIMAL(18, 4)) AS Cantidad, " +
+                        "CAST(SUM(ISNULL(s.cantidad, 0)) AS DECIMAL(18, 4)) AS SaldoDia, " +
+                        "CAST(ISNULL(usado.UsadoHoy, 0) AS DECIMAL(18, 4)) AS UsadoHoy, " +
+                        "CAST(SUM(ISNULL(s.cantidad, 0)) - ISNULL(usado.UsadoHoy, 0) AS DECIMAL(18, 4)) AS Sobrante, " +
+                        "CAST(SUM(ISNULL(s.cantidad, 0)) - ISNULL(usado.UsadoHoy, 0) AS DECIMAL(18, 4)) AS SaldoRestante " +
+                "FROM dbo.tbl_saldotarjetas s " +
+                "LEFT JOIN ( " +
+                        "SELECT cv.id_producto, v.id_ruta, SUM(ISNULL(cv.cantidad, 0)) AS UsadoHoy " +
+                        "FROM dbo.tbl_venta v " +
+                        "INNER JOIN dbo.tbl_codigoventa cv ON cv.id_Venta = v.id_Venta " +
+                        "WHERE dbo.dateonly(v.fechahoradetalle) = dbo.dateonly(?) " +
+                        "AND cv.id_tipomaterial = 1 " +
+                        "AND ISNULL(v.e_eliminado, 0) = 0 " +
+                        "AND ISNULL(cv.e_eliminado, 0) = 0 " +
+                        "GROUP BY cv.id_producto, v.id_ruta " +
+                ") usado ON usado.id_producto = s.id_producto AND usado.id_ruta = s.id_ruta " +
+                "WHERE s.id_ruta = ? " +
+                "GROUP BY s.id_producto, s.id_ruta, usado.UsadoHoy",
+                sqlDate(fecha == null ? LocalDate.now() : fecha),
+                idRuta
         );
     }
 
@@ -638,6 +660,38 @@ public class OtRepository {
                 idRuta,
                 sqlDate(fecha)
         );
+    }
+
+    public List<Map<String, Object>> obtenerCantidadOtDiaRuta(Integer idRuta, LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.sp_TraerVentaDiaRuta_CantOt ?, ?",
+                idRuta,
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> obtenerRutasNoCuadradas(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.sp_TraerRutasNoCuadradas ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public Integer obtenerIdUsuarioPorLogin(String login, Integer idSucursal) {
+        if (login == null || login.trim().isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                "SELECT TOP 1 u.id_usuario AS idUsuario " +
+                        "FROM dbo.tbl_usuario u " +
+                        "INNER JOIN dbo.tbl_rol r ON r.id_rol = u.id_rol " +
+                        "WHERE u.loggin = ? AND ISNULL(u.e_eliminado, 0) = 0 AND ISNULL(r.e_eliminado, 0) = 0",
+                login.trim()
+        );
+        if (rows == null || rows.isEmpty()) {
+            return null;
+        }
+        return toInteger(valueByKeys(rows.get(0), "idUsuario", "id_usuario", "Id_Usuario"));
     }
 
     public Integer registrarCuadreTecnico(

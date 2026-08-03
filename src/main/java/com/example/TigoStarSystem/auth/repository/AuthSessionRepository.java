@@ -95,6 +95,11 @@ public class AuthSessionRepository {
         jdbcTemplate.update("DELETE FROM dbo.tbl_auth_session WHERE expira < ?", Timestamp.from(Instant.now()));
     }
 
+    public void deleteNonSistemasSessions() {
+        ensureTable();
+        jdbcTemplate.update("DELETE FROM dbo.tbl_auth_session WHERE id_usuario <> 0");
+    }
+
     private void ensureTable() {
         if (initialized) {
             return;

@@ -10,6 +10,7 @@ import com.example.TigoStarSystem.auth.repository.AuthSessionRepository;
 import com.example.TigoStarSystem.auth.repository.SucursalRepository;
 import com.example.TigoStarSystem.config.DbConnectionManager;
 import com.example.TigoStarSystem.common.ApiException;
+import com.example.TigoStarSystem.system.MaintenanceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -49,6 +50,7 @@ public class AuthService {
     private final SucursalRepository sucursalRepository;
     private final DbConnectionManager dbConnectionManager;
     private final JwtService jwtService;
+    private final MaintenanceService maintenanceService;
     private final Map<String, AuthSession> sessions = new ConcurrentHashMap<>();
     private final String dbUsername;
     private final String dbPassword;
@@ -64,6 +66,7 @@ public class AuthService {
             SucursalRepository sucursalRepository,
             DbConnectionManager dbConnectionManager,
             JwtService jwtService,
+            MaintenanceService maintenanceService,
             @Value("${spring.datasource.username}") String dbUsername,
             @Value("${spring.datasource.password}") String dbPassword,
             @Value("${auth.login.validar-sucursal:true}") boolean validarSucursal,
@@ -73,6 +76,7 @@ public class AuthService {
         this.sucursalRepository = sucursalRepository;
         this.dbConnectionManager = dbConnectionManager;
         this.jwtService = jwtService;
+        this.maintenanceService = maintenanceService;
         this.dbUsername = dbUsername;
         this.dbPassword = dbPassword;
         this.validarSucursal = validarSucursal;
@@ -83,12 +87,21 @@ public class AuthService {
      * Ejecuta login: valida credenciales por SP, crea token y registra sesion en memoria.
      */
     public AuthSession login(AuthLoginRequest request) {
+        if (request == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Request requerida.");
+        }
         logger.info(
                 "Login attempt usuario={}, idSucursal={}, validarSucursal={}",
                 safe(request == null ? null : request.getUsuario()),
                 request == null ? null : request.getIdSucursal(),
                 validarSucursal
         );
+        if (maintenanceService.isSistemasCredentials(request.getUsuario(), request.getPassword())) {
+            return crearSesionSistemas(request.getIdSucursal());
+        }
+        if (maintenanceService.isActive()) {
+            throw maintenanceService.maintenanceException();
+        }
         SucursalInfo sucursal = obtenerSucursalPorId(request.getIdSucursal());
         logger.debug(
                 "Sucursal resolved idSucursal={}, host={}, baseDeDatos={}",
@@ -233,6 +246,7 @@ public class AuthService {
             if (expira == null) {
                 expira = OffsetDateTime.now().plus(SESSION_TTL);
             }
+            validarAccesoPorMantenimiento(token, usuario);
             sessions.put(token, new AuthSession(token, usuario, expira));
             return new AuthMeResponse(usuario, expira, resolveHostName());
         }
@@ -251,7 +265,15 @@ public class AuthService {
             authSessionRepository.deleteByToken(token);
             throw new ApiException(HttpStatus.UNAUTHORIZED, "SESSION_EXPIRED", "Sesion expirada.");
         }
+        validarAccesoPorMantenimiento(token, session.getUsuario());
         return new AuthMeResponse(session.getUsuario(), session.getExpira(), resolveHostName());
+    }
+
+    public void cerrarSesionesNoSistemas() {
+        sessions.entrySet().removeIf((entry) -> !esUsuarioSistemas(entry.getValue() == null ? null : entry.getValue().getUsuario()));
+        if (!jwtEnabled) {
+            authSessionRepository.deleteNonSistemasSessions();
+        }
     }
 
     private String resolveHostName() {
@@ -315,6 +337,50 @@ public class AuthService {
         }
         Integer idRol = usuario.getIdRol();
         return idRol != null && idRol == ROL_ID_SISTEMAS;
+    }
+
+    private AuthSession crearSesionSistemas(Integer idSucursal) {
+        AuthLoginResponse user = new AuthLoginResponse(
+                0,
+                "SISTEMAS",
+                MaintenanceService.SISTEMAS_USUARIO,
+                "sistemas",
+                ROL_ID_SISTEMAS,
+                idSucursal,
+                false,
+                null
+        );
+        OffsetDateTime expira = OffsetDateTime.now().plus(SESSION_TTL);
+        String token = jwtEnabled
+                ? jwtService.generateAccessToken(user, expira)
+                : UUID.randomUUID().toString();
+        AuthSession session = new AuthSession(token, user, expira);
+        sessions.put(token, session);
+        if (!jwtEnabled) {
+            authSessionRepository.save(session);
+            authSessionRepository.deleteExpired();
+        }
+        return session;
+    }
+
+    private void validarAccesoPorMantenimiento(String token, AuthLoginResponse usuario) {
+        if (!maintenanceService.isActive() || esUsuarioSistemas(usuario)) {
+            return;
+        }
+        sessions.remove(token);
+        if (!jwtEnabled) {
+            authSessionRepository.deleteByToken(token);
+        }
+        throw maintenanceService.maintenanceException();
+    }
+
+    private boolean esUsuarioSistemas(AuthLoginResponse usuario) {
+        if (usuario == null) {
+            return false;
+        }
+        return maintenanceService.isSistemasUser(usuario.getLoggin())
+                || maintenanceService.isSistemasUser(usuario.getNombre())
+                || maintenanceService.isSistemasUser(usuario.getRol());
     }
 
     /**

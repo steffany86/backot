@@ -164,11 +164,204 @@ public class CuadreService {
         return out;
     }
 
+    public Map<String, Object> previewCuadreAutomaticoSistemas(String token, LocalDate fecha, Integer idSucursal) {
+        AuthLoginResponse usuario = requireSistemas(token);
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        Integer sucursalFinal = resolverSucursalSistemas(usuario, idSucursal);
+        List<Map<String, Object>> rutas = otRepository.obtenerRutasNoCuadradas(fechaFinal, sucursalFinal);
+        List<Map<String, Object>> resultados = new ArrayList<>();
+        if (rutas != null) {
+            for (Map<String, Object> ruta : rutas) {
+                resultados.add(crearPreviewRutaAutomatico(ruta, fechaFinal));
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fecha", fechaFinal.toString());
+        out.put("idSucursal", sucursalFinal);
+        out.put("usuario", usuario.getNombre());
+        out.put("rutas", resultados);
+        out.put("resumen", resumirResultadosAutomaticos(resultados));
+        return out;
+    }
+
+    public Map<String, Object> ejecutarCuadreAutomaticoSistemas(String token, LocalDate fecha, Integer idSucursal) {
+        AuthLoginResponse usuario = requireSistemas(token);
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        Integer sucursalFinal = resolverSucursalSistemas(usuario, idSucursal);
+        Integer idUsuarioRegistro = resolverUsuarioRegistroAutomatico(usuario, sucursalFinal);
+
+        List<Map<String, Object>> rutas = otRepository.obtenerRutasNoCuadradas(fechaFinal, sucursalFinal);
+        List<Map<String, Object>> resultados = new ArrayList<>();
+        if (rutas != null) {
+            for (Map<String, Object> ruta : rutas) {
+                Map<String, Object> resultado = crearResultadoRutaAutomatico(ruta, fechaFinal, sucursalFinal, true, idUsuarioRegistro);
+                resultados.add(resultado);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fecha", fechaFinal.toString());
+        out.put("idSucursal", sucursalFinal);
+        out.put("idUsuarioRegistro", idUsuarioRegistro);
+        out.put("rutas", resultados);
+        out.put("resumen", resumirResultadosAutomaticos(resultados));
+        return out;
+    }
+
     /**
      * Ejecuta la validacion de cuadre para una ruta y fecha.
      */
     public List<Map<String, Object>> validarCuadreRuta(Integer idRuta, LocalDate fecha) {
         return cuadreRepository.validarCuadreRuta(idRuta, fecha);
+    }
+
+    private Map<String, Object> crearResultadoRutaAutomatico(
+            Map<String, Object> ruta,
+            LocalDate fecha,
+            Integer idSucursal,
+            boolean registrar,
+            Integer idUsuarioRegistro
+    ) {
+        Integer idRuta = toPositiveInteger(findValue(ruta, "Id_Ruta", "idRuta", "id_ruta"));
+        Integer idVendedor = toPositiveInteger(findValue(ruta, "Id_Vendedor", "idVendedor", "id_vendedor"));
+        String nombreRuta = firstNonBlank(valueAsString(findValue(ruta, "NombreRuta", "ruta", "Ruta", "nombre")), valueAsString(idRuta));
+        String nombreVendedor = valueAsString(findValue(ruta, "NombreVendedor", "vendedor", "Vendedor"));
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idRuta", idRuta);
+        out.put("ruta", nombreRuta);
+        out.put("idVendedor", idVendedor);
+        out.put("vendedor", nombreVendedor);
+        out.put("fecha", fecha.toString());
+        out.put("estado", registrar ? "Pendiente" : "Preview");
+        out.put("mensaje", "");
+        out.put("idCuadre", null);
+
+        try {
+            if (idRuta == null || idRuta <= 0) {
+                throw new ApiException(HttpStatus.CONFLICT, "RUTA_INVALIDA", "Error: Ruta Almacen.");
+            }
+            if (idVendedor == null || idVendedor <= 0) {
+                throw new ApiException(HttpStatus.CONFLICT, "VENDEDOR_INVALIDO", "No se pudo resolver vendedor de la ruta.");
+            }
+            validarRegistroPermitido(idRuta, fecha, idSucursal);
+            List<Map<String, Object>> saldoRows = obtenerSaldoRutaConFallback(idRuta, fecha, idSucursal);
+            List<Map<String, Object>> retiros = obtenerRetirosConFallback(idRuta, idSucursal);
+            List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros);
+            int cantidadOt = coerceCount(otRepository.obtenerCantidadOtDiaRuta(idRuta, fecha, idSucursal));
+            validarDetalleCuadre(idRuta, fecha, detalle, idSucursal);
+            out.put("cantidadOt", cantidadOt);
+            out.put("resumen", resumir(detalle));
+            if (registrar) {
+                Integer idCuadre = otRepository.registrarCuadreTecnico(
+                        idRuta,
+                        idVendedor,
+                        idUsuarioRegistro,
+                        fecha,
+                        "Cuadre automatico",
+                        detalle,
+                        retiros,
+                        idSucursal
+                );
+                out.put("idCuadre", idCuadre);
+                out.put("estado", "Registrado");
+                out.put("mensaje", "Cuadre registrado correctamente.");
+            } else {
+                out.put("estado", "Listo");
+                out.put("mensaje", "Ruta lista para cuadre automatico.");
+            }
+        } catch (ApiException ex) {
+            out.put("estado", "Omitido");
+            out.put("mensaje", ex.getMessage());
+            out.put("codigo", ex.getCode());
+        } catch (Exception ex) {
+            out.put("estado", "Error");
+            out.put("mensaje", ex.getMessage());
+        }
+        return out;
+    }
+
+    private Map<String, Object> crearPreviewRutaAutomatico(Map<String, Object> ruta, LocalDate fecha) {
+        Integer idRuta = toPositiveInteger(findValue(ruta, "Id_Ruta", "idRuta", "id_ruta"));
+        Integer idVendedor = toPositiveInteger(findValue(ruta, "Id_Vendedor", "idVendedor", "id_vendedor"));
+        String nombreRuta = firstNonBlank(valueAsString(findValue(ruta, "NombreRuta", "ruta", "Ruta", "nombre")), valueAsString(idRuta));
+        String nombreVendedor = valueAsString(findValue(ruta, "NombreVendedor", "vendedor", "Vendedor"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idRuta", idRuta);
+        out.put("ruta", nombreRuta);
+        out.put("idVendedor", idVendedor);
+        out.put("vendedor", nombreVendedor);
+        out.put("fecha", fecha.toString());
+        out.put("estado", "Pendiente");
+        out.put("mensaje", "Pendiente de ejecutar validaciones.");
+        out.put("idCuadre", null);
+        out.put("cantidadOt", null);
+        return out;
+    }
+
+    private Map<String, Object> resumirResultadosAutomaticos(List<Map<String, Object>> resultados) {
+        int registrados = 0;
+        int listos = 0;
+        int omitidos = 0;
+        int errores = 0;
+        for (Map<String, Object> row : resultados) {
+            String estado = normalize(valueAsString(row.get("estado")));
+            if ("registrado".equals(estado)) {
+                registrados++;
+            } else if ("listo".equals(estado)) {
+                listos++;
+            } else if ("omitido".equals(estado)) {
+                omitidos++;
+            } else if ("error".equals(estado)) {
+                errores++;
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", resultados.size());
+        out.put("registrados", registrados);
+        out.put("listos", listos);
+        out.put("omitidos", omitidos);
+        out.put("errores", errores);
+        return out;
+    }
+
+    private AuthLoginResponse requireSistemas(String token) {
+        AuthMeResponse me = authService.me(token);
+        AuthLoginResponse usuario = me == null ? null : me.getUsuario();
+        String rol = normalize(usuario == null ? null : usuario.getRol());
+        String login = normalize(usuario == null ? null : usuario.getLoggin());
+        if (!"sistemas".equals(rol) && !"sistemas".equals(login)) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "FORBIDDEN_SISTEMAS_ONLY", "Solo sistemas puede ejecutar cuadre automatico.");
+        }
+        return usuario;
+    }
+
+    private Integer resolverSucursalSistemas(AuthLoginResponse usuario, Integer idSucursal) {
+        if (idSucursal != null && idSucursal > 0) {
+            return idSucursal;
+        }
+        if (usuario != null && usuario.getIdSucursal() != null && usuario.getIdSucursal() > 0) {
+            return usuario.getIdSucursal();
+        }
+        throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idSucursal es requerido.");
+    }
+
+    private Integer resolverUsuarioRegistroAutomatico(AuthLoginResponse usuario, Integer idSucursal) {
+        if (usuario != null && usuario.getIdUsuario() != null && usuario.getIdUsuario() > 0) {
+            return usuario.getIdUsuario();
+        }
+        Integer sistemas = otRepository.obtenerIdUsuarioPorLogin("sistemas", idSucursal);
+        if (sistemas != null && sistemas > 0) {
+            return sistemas;
+        }
+        Integer stefany = otRepository.obtenerIdUsuarioPorLogin("stefany", idSucursal);
+        if (stefany != null && stefany > 0) {
+            return stefany;
+        }
+        throw new ApiException(
+                HttpStatus.CONFLICT,
+                "USUARIO_REGISTRO_NO_ENCONTRADO",
+                "No se encontro usuario de BD para registrar el cuadre automatico."
+        );
     }
 
     private List<Map<String, Object>> obtenerSaldoRutaConFallback(Integer idRuta, LocalDate fecha, Integer idSucursal) {
