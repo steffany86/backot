@@ -262,6 +262,27 @@ public class OtController {
         ));
     }
 
+    @GetMapping("/ordenes-pasadas-material")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarOtOrdenesPasadasMaterial(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "usuario", required = false) Integer idUsuario) {
+        AuthMeResponse me = resolveSession(token);
+        Integer idSucursal = extractIdSucursal(me);
+        Integer idUsuarioFiltro = idUsuario;
+        String rol = null;
+        String nombre = null;
+        if (me != null && me.getUsuario() != null) {
+            idUsuarioFiltro = me.getUsuario().getIdUsuario();
+            rol = me.getUsuario().getRol();
+            nombre = me.getUsuario().getNombre();
+        }
+
+        return ResponseEntity.ok(ApiResponse.of(
+                otService.listarOrdenesPasadasMaterial(idUsuarioFiltro, idSucursal, rol, nombre),
+                "Listado de OT pendientes de registro de material."
+        ));
+    }
+
     @GetMapping("/{id:\\d+}")
     public ResponseEntity<ApiResponse<Map<String, Object>>> obtenerPorId(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

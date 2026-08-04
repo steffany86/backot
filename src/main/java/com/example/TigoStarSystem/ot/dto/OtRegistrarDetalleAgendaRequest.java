@@ -9,6 +9,7 @@ public class OtRegistrarDetalleAgendaRequest {
     private Long idVenta;
     private Integer codigoCliente;
     private String fechaEjecucion;
+    private String origenPendienteMaterial;
     @JsonAlias({"inicioAgendado", "inicio_agendado", "Fecha_Agenda", "fecha_agenda"})
     private String fechaAgenda;
     private Integer idEstado;
@@ -45,6 +46,14 @@ public class OtRegistrarDetalleAgendaRequest {
 
     public void setFechaEjecucion(String fechaEjecucion) {
         this.fechaEjecucion = fechaEjecucion;
+    }
+
+    public String getOrigenPendienteMaterial() {
+        return origenPendienteMaterial;
+    }
+
+    public void setOrigenPendienteMaterial(String origenPendienteMaterial) {
+        this.origenPendienteMaterial = origenPendienteMaterial;
     }
 
     public String getFechaAgenda() {

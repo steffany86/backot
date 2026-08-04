@@ -142,6 +142,30 @@ public class OtService {
         return pendientes;
     }
 
+    public List<Map<String, Object>> listarOrdenesPasadasMaterial(
+            Integer idUsuario,
+            Integer idSucursal,
+            String rol,
+            String tecnicoNombre) {
+        List<Map<String, Object>> rows = otRepository.obtenerOrdenesPendientesDRegMaterial(idSucursal);
+        List<Map<String, Object>> filtradas = filtrarListado(
+                rows,
+                idUsuario,
+                rol,
+                true,
+                tecnicoNombre,
+                idSucursal
+        );
+        logger.info(
+                "Ordenes pasadas pendientes de material: idUsuario={}, idSucursal={}, filas={}, filtradas={}",
+                idUsuario,
+                idSucursal,
+                rows == null ? 0 : rows.size(),
+                filtradas == null ? 0 : filtradas.size()
+        );
+        return filtradas == null ? Collections.emptyList() : filtradas;
+    }
+
     private List<Integer> obtenerIdsVendedorFiltro(Integer idUsuario, Integer idSucursal, String contexto, LocalDate fechaFiltro) {
         if (idUsuario == null || idUsuario <= 0) {
             logger.warn("{}: idUsuario no valido para filtrar tecnico. fecha={}", contexto, fechaFiltro);
@@ -1487,22 +1511,27 @@ public class OtService {
         // tomar una venta historica cuando existen registros duplicados por OT/cliente.
         LocalDate fechaRequest = parseFechaFlexible(fechaEjecucionRequest);
         LocalDate fechaHoy = LocalDate.now(ZoneId.of("America/La_Paz"));
-        LocalDate fechaBusqueda = fechaHoy;
-        if (!fechaHoy.equals(fechaRequest)) {
+        boolean esOrdenPasadaMaterial = "ORDEN_PASADA".equalsIgnoreCase(
+                request.getOrigenPendienteMaterial() == null ? "" : request.getOrigenPendienteMaterial().trim()
+        );
+        LocalDate fechaBusqueda = esOrdenPasadaMaterial ? fechaRequest : fechaHoy;
+        if (!esOrdenPasadaMaterial && !fechaHoy.equals(fechaRequest)) {
             logger.warn(
-                    "registrarDetalleAgenda: fecha payload {} distinta a fecha actual {}; se usara fecha actual para resolver id_venta. OT={}, cliente={}",
+                "registrarDetalleAgenda: fecha payload {} distinta a fecha actual {}; se usara fecha actual para resolver id_venta. OT={}, cliente={}",
                     fechaRequest,
                     fechaHoy,
                     ordenTrabajoRequest,
                     codigoClienteRequest
             );
         }
-        Map<String, Object> ventaExacta = otRepository.obtenerVentaPorFechaOrdenYCliente(
-                fechaBusqueda,
-                ordenTrabajoRequest,
-                codigoClienteRequest,
-                idSucursal
-        );
+        Map<String, Object> ventaExacta = esOrdenPasadaMaterial && request.getIdVenta() != null
+                ? obtenerPorId(request.getIdVenta(), idSucursal)
+                : otRepository.obtenerVentaPorFechaOrdenYCliente(
+                        fechaBusqueda,
+                        ordenTrabajoRequest,
+                        codigoClienteRequest,
+                        idSucursal
+                );
         Long idVentaExacta = toLong(findValue(ventaExacta, "idVenta", "Id_Venta", "id_venta", "idventa"));
         if (idVentaExacta == null || idVentaExacta <= 0) {
             logger.warn(
@@ -1549,26 +1578,30 @@ public class OtService {
             );
             throw new ApiException(HttpStatus.CONFLICT, "VENTA_INVALIDA", "La venta encontrada no tiene datos suficientes para registrar detalle.");
         }
-        Integer idRutaActivaConSaldo = otRepository.resolverRutaActivaConSaldo(idRuta, idSucursal);
-        if (idRutaActivaConSaldo != null && !idRutaActivaConSaldo.equals(idRuta)) {
-            logger.warn(
-                    "registrarDetalleAgenda: ruta de venta sin saldo/obsoleta. idSucursal={}, idVenta={}, rutaVenta={}, rutaActivaConSaldo={}",
-                    idSucursal,
-                    idVenta,
-                    idRuta,
-                    idRutaActivaConSaldo
-            );
-            idRuta = idRutaActivaConSaldo;
+        if (!esOrdenPasadaMaterial) {
+            Integer idRutaActivaConSaldo = otRepository.resolverRutaActivaConSaldo(idRuta, idSucursal);
+            if (idRutaActivaConSaldo != null && !idRutaActivaConSaldo.equals(idRuta)) {
+                logger.warn(
+                        "registrarDetalleAgenda: ruta de venta sin saldo/obsoleta. idSucursal={}, idVenta={}, rutaVenta={}, rutaActivaConSaldo={}",
+                        idSucursal,
+                        idVenta,
+                        idRuta,
+                        idRutaActivaConSaldo
+                );
+                idRuta = idRutaActivaConSaldo;
+            }
         }
 
-        // Capa extra de seguridad: resolver nuevamente el id_venta por OT+cliente+fecha del dia
-        // justo antes de persistir detalle para evitar guardar en una venta historica.
-        Map<String, Object> ventaParaPersistencia = otRepository.obtenerVentaPorFechaOrdenYCliente(
-                fechaBusqueda,
-                ordenTrabajoRequest,
-                codigoClienteRequest,
-                idSucursal
-        );
+        // En OT pasadas la venta se recibe desde el listado del procedimiento y se valida
+        // por id_venta; no se debe reemplazar por una venta del día actual.
+        Map<String, Object> ventaParaPersistencia = esOrdenPasadaMaterial && request.getIdVenta() != null
+                ? obtenerPorId(request.getIdVenta(), idSucursal)
+                : otRepository.obtenerVentaPorFechaOrdenYCliente(
+                        fechaBusqueda,
+                        ordenTrabajoRequest,
+                        codigoClienteRequest,
+                        idSucursal
+                );
         Long idVentaPersistencia = toLong(findValue(ventaParaPersistencia, "idVenta", "Id_Venta", "id_venta", "idventa"));
         if (idVentaPersistencia == null || idVentaPersistencia <= 0) {
             logger.warn(
@@ -1606,23 +1639,25 @@ public class OtService {
                 if (fechaEjecucionPersistencia != null) {
                     fechaEjecucion = fechaEjecucionPersistencia;
                 }
-                Integer rutaPersistenciaActiva = otRepository.resolverRutaActivaConSaldo(idRuta, idSucursal);
-                if (rutaPersistenciaActiva != null && !rutaPersistenciaActiva.equals(idRuta)) {
-                    logger.warn(
-                            "registrarDetalleAgenda: ruta ajustada tras recargar venta. idSucursal={}, idVenta={}, rutaVenta={}, rutaActivaConSaldo={}",
-                            idSucursal,
-                            idVenta,
-                            idRuta,
-                            rutaPersistenciaActiva
-                    );
-                    idRuta = rutaPersistenciaActiva;
+                if (!esOrdenPasadaMaterial) {
+                    Integer rutaPersistenciaActiva = otRepository.resolverRutaActivaConSaldo(idRuta, idSucursal);
+                    if (rutaPersistenciaActiva != null && !rutaPersistenciaActiva.equals(idRuta)) {
+                        logger.warn(
+                                "registrarDetalleAgenda: ruta ajustada tras recargar venta. idSucursal={}, idVenta={}, rutaVenta={}, rutaActivaConSaldo={}",
+                                idSucursal,
+                                idVenta,
+                                idRuta,
+                                rutaPersistenciaActiva
+                        );
+                        idRuta = rutaPersistenciaActiva;
+                    }
                 }
             } catch (Exception ex) {
                 logger.warn("registrarDetalleAgenda: no se pudo recargar cabecera para id_venta ajustado={}", idVentaPersistencia, ex);
             }
         }
 
-        LocalDate fechaTrabajo = fechaEjecucion == null ? LocalDate.now() : fechaEjecucion;
+        LocalDate fechaTrabajo = esOrdenPasadaMaterial ? fechaHoy : (fechaEjecucion == null ? fechaHoy : fechaEjecucion);
         OtRegistroAgendaValidacionResponse bloqueo = validarRegistroAgenda(fechaTrabajo, idSucursal);
         if (bloqueo.isBloqueado()) {
             logger.warn(
@@ -1651,8 +1686,9 @@ public class OtService {
         }
 
         if (codigoCliente != null && ordenTrabajo != null) {
+            LocalDate fechaValidacionVenta = fechaEjecucion == null ? fechaTrabajo : fechaEjecucion;
             OtValidarVentaDetalleResponse ventaDetalle = validarVentaYDetalleWb(
-                    fechaTrabajo.format(DateTimeFormatter.ISO_LOCAL_DATE),
+                    fechaValidacionVenta.format(DateTimeFormatter.ISO_LOCAL_DATE),
                     ordenTrabajo,
                     codigoCliente,
                     idSucursal,
@@ -1664,7 +1700,25 @@ public class OtService {
             if (cantidadDetalles <= 0 && Boolean.TRUE.equals(ventaDetalle.getTieneDetalleEnCodigoVenta())) {
                 cantidadDetalles = 1;
             }
-            if (!Boolean.TRUE.equals(ventaDetalle.getHabilitarCargarMaterial())) {
+            if (esOrdenPasadaMaterial) {
+                // Las OT pasadas provienen del listado de ventas incompletas.
+                // Para este flujo no se bloquea por el estado de la venta;
+                // solo se impide duplicar un detalle ya registrado.
+                int detallesPersistidos = otRepository.contarDetallesPorIdVenta(idVenta, idSucursal);
+                if (detallesPersistidos > 0) {
+                    logger.warn(
+                            "registrarDetalleAgenda: OT pasada ya tiene detalle. idSucursal={}, idVenta={}, detalles={}",
+                            idSucursal,
+                            idVenta,
+                            detallesPersistidos
+                    );
+                    throw new ApiException(
+                            HttpStatus.CONFLICT,
+                            "DETALLE_YA_REGISTRADO",
+                            "La OT ya tiene detalle registrado en codigo venta."
+                    );
+                }
+            } else if (!Boolean.TRUE.equals(ventaDetalle.getHabilitarCargarMaterial())) {
                 if (cantidadDetalles > 0) {
                     logger.warn(
                             "registrarDetalleAgenda:detalle ya registrado (ventaDetalle). idSucursal={}, numeroOrden={}, codigoCliente={}, fechaTrabajo={}, cantidadDetalles={}",
@@ -2497,7 +2551,7 @@ public class OtService {
             BigDecimal saldoFinal = disponible.subtract(requerido);
             if (saldoFinal.compareTo(BigDecimal.ZERO) < 0) {
                 deficits.add(
-                        "Producto " + idProducto +
+                        "Ruta " + idRuta + ", producto " + idProducto +
                                 ": saldo disponible " + formatCantidad(disponible) +
                                 ", saldo usado hoy " + formatCantidad(usadoHoy) +
                                 ", intentando registrar " + formatCantidad(requerido)

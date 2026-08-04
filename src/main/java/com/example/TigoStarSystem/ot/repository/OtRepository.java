@@ -84,6 +84,12 @@ public class OtRepository {
         );
     }
 
+    public List<Map<String, Object>> obtenerOrdenesPendientesDRegMaterial(Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.spx_ListadoOrdenesPendientesDRegMaterial"
+        );
+    }
+
     public List<Map<String, Object>> obtenerVentasFinalizadasPorFechaYVendedores(
             LocalDate fecha,
             List<Integer> idsVendedor,
