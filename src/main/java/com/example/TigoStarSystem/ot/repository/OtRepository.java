@@ -621,14 +621,18 @@ public class OtRepository {
                 "SELECT " +
                         "s.id_producto AS Id_Producto, " +
                         "s.id_producto AS idProducto, " +
+                        "p.Nombre AS Nombre, " +
+                        "p.Nombre AS producto, " +
                         "s.id_ruta AS Id_Ruta, " +
                         "s.id_ruta AS idRuta, " +
                         "CAST(SUM(ISNULL(s.cantidad, 0)) AS DECIMAL(18, 4)) AS Cantidad, " +
                         "CAST(SUM(ISNULL(s.cantidad, 0)) AS DECIMAL(18, 4)) AS SaldoDia, " +
                         "CAST(ISNULL(usado.UsadoHoy, 0) AS DECIMAL(18, 4)) AS UsadoHoy, " +
                         "CAST(SUM(ISNULL(s.cantidad, 0)) - ISNULL(usado.UsadoHoy, 0) AS DECIMAL(18, 4)) AS Sobrante, " +
-                        "CAST(SUM(ISNULL(s.cantidad, 0)) - ISNULL(usado.UsadoHoy, 0) AS DECIMAL(18, 4)) AS SaldoRestante " +
+                        "CAST(SUM(ISNULL(s.cantidad, 0)) - ISNULL(usado.UsadoHoy, 0) AS DECIMAL(18, 4)) AS SaldoRestante, " +
+                        "CAST(ISNULL(p.PrecioVenta, 0) AS DECIMAL(18, 4)) AS Precio " +
                 "FROM dbo.tbl_saldotarjetas s " +
+                "LEFT JOIN dbo.tbl_producto p ON p.id_producto = s.id_producto " +
                 "LEFT JOIN ( " +
                         "SELECT cv.id_producto, v.id_ruta, SUM(ISNULL(cv.cantidad, 0)) AS UsadoHoy " +
                         "FROM dbo.tbl_venta v " +
@@ -640,7 +644,8 @@ public class OtRepository {
                         "GROUP BY cv.id_producto, v.id_ruta " +
                 ") usado ON usado.id_producto = s.id_producto AND usado.id_ruta = s.id_ruta " +
                 "WHERE s.id_ruta = ? " +
-                "GROUP BY s.id_producto, s.id_ruta, usado.UsadoHoy",
+                "AND ISNULL(s.e_eliminado, 0) = 0 " +
+                "GROUP BY s.id_producto, p.Nombre, p.PrecioVenta, s.id_ruta, usado.UsadoHoy",
                 sqlDate(fecha == null ? LocalDate.now() : fecha),
                 idRuta
         );
@@ -651,6 +656,93 @@ public class OtRepository {
                 "EXEC dbo.spb_SaldoRutasCantidad_X_Ruta ?",
                 idRuta
         );
+    }
+
+    public List<Map<String, Object>> obtenerSaldoTarjetasRutaLegacy(Integer idRuta, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC dbo.sp_TraerSaldoTarjetasRuta ?",
+                idRuta
+        );
+    }
+
+    public Map<Integer, String> obtenerNombresProducto(List<Integer> idsProducto, Integer idSucursal) {
+        if (idsProducto == null || idsProducto.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        LinkedHashSet<Integer> ids = new LinkedHashSet<>();
+        for (Integer idProducto : idsProducto) {
+            if (idProducto != null && idProducto > 0) {
+                ids.add(idProducto);
+            }
+        }
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        Object[] params = ids.toArray();
+        List<Map<String, Object>> rows;
+        try {
+            rows = template(idSucursal).queryForList(
+                    "SELECT CAST(p.Id_Producto AS INT) AS idProducto, LTRIM(RTRIM(p.Nombre)) AS producto " +
+                            "FROM dbo.tbl_Producto p " +
+                            "WHERE p.Id_Producto IN (" + placeholders + ") " +
+                            "AND ISNULL(p.E_Eliminado, 0) = 0",
+                    params
+            );
+        } catch (DataAccessException ex) {
+            rows = template(idSucursal).queryForList(
+                    "SELECT CAST(p.Id_Producto AS INT) AS idProducto, LTRIM(RTRIM(p.Nombre)) AS producto " +
+                            "FROM dbo.tbl_Producto p " +
+                            "WHERE p.Id_Producto IN (" + placeholders + ")",
+                    params
+            );
+        }
+
+        Map<Integer, String> out = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            Integer idProducto = toInteger(valueByKeys(row, "idProducto", "Id_Producto", "id_producto"));
+            String producto = valueAsString(valueByKeys(row, "producto", "Producto", "Nombre", "nombre"));
+            if (idProducto != null && idProducto > 0 && producto != null && !producto.trim().isEmpty()) {
+                out.put(idProducto, producto.trim());
+            }
+        }
+        return out;
+    }
+
+    public Map<Integer, Map<String, Object>> obtenerProductosCuadre(List<Integer> idsProducto, Integer idSucursal) {
+        if (idsProducto == null || idsProducto.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        LinkedHashSet<Integer> ids = new LinkedHashSet<>();
+        for (Integer idProducto : idsProducto) {
+            if (idProducto != null && idProducto > 0) {
+                ids.add(idProducto);
+            }
+        }
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        Object[] params = ids.toArray();
+        List<Map<String, Object>> rows = template(idSucursal).queryForList(
+                "SELECT CAST(p.Id_Producto AS INT) AS idProducto, " +
+                        "LTRIM(RTRIM(p.Nombre)) AS producto, " +
+                        "CAST(ISNULL(p.PrecioVenta, 0) AS DECIMAL(18, 4)) AS precio " +
+                        "FROM dbo.tbl_Producto p " +
+                        "WHERE p.Id_Producto IN (" + placeholders + ")",
+                params
+        );
+
+        Map<Integer, Map<String, Object>> out = new LinkedHashMap<>();
+        for (Map<String, Object> row : rows) {
+            Integer idProducto = toInteger(valueByKeys(row, "idProducto", "Id_Producto", "id_producto"));
+            if (idProducto != null && idProducto > 0) {
+                out.put(idProducto, row);
+            }
+        }
+        return out;
     }
 
     public List<Map<String, Object>> obtenerProductosNoEntregadosRuta(Integer idRuta, Integer idSucursal) {
@@ -829,6 +921,102 @@ public class OtRepository {
                     fechaSql
             );
         }
+    }
+
+    public List<Map<String, Object>> validaMovimientosSCierre(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_ValidaMovimientosSCierre ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> sePuedeHacerCierreAlmacen(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_SePuedeHacerCierreAlmacen ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> sePuedeHacerCierreAlmacenPrPd(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_SePuedeHacerCierreAlmacenPR_PD ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> rutasPendientesCuadreCierre(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC spx_rutasCuadre ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> obtenerDetalleCierreAlmacen(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC sp_ObtenerCierreAlmacen ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public List<Map<String, Object>> obtenerDetalleCierreAlmacenPrPd(LocalDate fecha, Integer idSucursal) {
+        return template(idSucursal).queryForList(
+                "EXEC sp_ObtenerCierreAlmacenPR_PD ?",
+                sqlDate(fecha)
+        );
+    }
+
+    public Integer registrarCierreAlmacen(
+            LocalDate fecha,
+            Integer idUsuario,
+            List<Map<String, Object>> detalle,
+            Integer idSucursal) {
+        return template(idSucursal).execute((ConnectionCallback<Integer>) connection -> {
+            boolean previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                Integer idCierre = insertarCierreAlmacen(connection, fecha, idUsuario);
+                for (Map<String, Object> row : detalle) {
+                    insertarCodigoCierreAlmacen(connection, idCierre, row);
+                }
+                connection.commit();
+                return idCierre;
+            } catch (Exception ex) {
+                connection.rollback();
+                if (ex instanceof SQLException) {
+                    throw (SQLException) ex;
+                }
+                throw new SQLException(ex);
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+            }
+        });
+    }
+
+    public Integer registrarCierreAlmacenPrPd(
+            LocalDate fecha,
+            Integer idUsuario,
+            List<Map<String, Object>> detalle,
+            Integer idSucursal) {
+        return template(idSucursal).execute((ConnectionCallback<Integer>) connection -> {
+            boolean previousAutoCommit = connection.getAutoCommit();
+            connection.setAutoCommit(false);
+            try {
+                Integer idCierre = insertarCierreAlmacenPrPd(connection, fecha, idUsuario);
+                for (Map<String, Object> row : detalle) {
+                    insertarCodigoCierreAlmacenPrPd(connection, idCierre, row);
+                }
+                connection.commit();
+                return idCierre;
+            } catch (Exception ex) {
+                connection.rollback();
+                if (ex instanceof SQLException) {
+                    throw (SQLException) ex;
+                }
+                throw new SQLException(ex);
+            } finally {
+                connection.setAutoCommit(previousAutoCommit);
+            }
+        });
     }
 
     public boolean existeConformacionCuadrillaTecnico(LocalDate fecha, Integer idUsuario, Integer idSucursal) {
@@ -1464,6 +1652,84 @@ public class OtRepository {
         throw new SQLException("No se pudo obtener Id_Cuadre generado.");
     }
 
+    private Integer insertarCierreAlmacen(Connection connection, LocalDate fecha, Integer idUsuario) throws SQLException {
+        String sql = "INSERT INTO dbo.tbl_CierreAlmacen " +
+                "(Id_Usuario, Fecha, Observacion, E_Eliminado, Fecha_Registro, CierreAlmacenPR_PD) " +
+                "OUTPUT INSERTED.Id_CierreAlmacen VALUES (?, ?, ?, 0, GETDATE(), 0)";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, idUsuario);
+            ps.setDate(2, sqlDate(fecha));
+            ps.setString(3, "Cierre automatico");
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+            }
+        }
+        throw new SQLException("No se pudo obtener Id_CierreAlmacen generado.");
+    }
+
+    private Integer insertarCierreAlmacenPrPd(Connection connection, LocalDate fecha, Integer idUsuario) throws SQLException {
+        String sql = "INSERT INTO dbo.tbl_CierreAlmacenPR_PD " +
+                "(Id_Usuario, Fecha, Observacion, E_Eliminado, Fecha_Registro) " +
+                "OUTPUT INSERTED.Id_CierreAlmacenPR_PD VALUES (?, ?, ?, 0, GETDATE())";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, idUsuario);
+            ps.setDate(2, sqlDate(fecha));
+            ps.setString(3, "Cierre automatico PR_PD");
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getInt(1);
+                }
+            }
+        }
+        throw new SQLException("No se pudo obtener Id_CierreAlmacenPR_PD generado.");
+    }
+
+    private void insertarCodigoCierreAlmacen(Connection connection, Integer idCierre, Map<String, Object> row) throws SQLException {
+        String sql = "INSERT INTO dbo.tbl_CodigoCierreAlmacen (" +
+                "Id_CierreAlmacen, Id_Producto, SaldoDiaAnterior, SaldoDiaAnteriorDevolucion, IngresoDia, " +
+                "DevolucionIngreso, DevolucionSalida, SalidaDia, SalidaBaja, SaldoDiaHoy, SaldoDiaHoyDevolucion, E_Eliminado" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, idCierre);
+            ps.setInt(2, toInteger(valueAt(row, 0)));
+            ps.setBigDecimal(3, toBigDecimal(valueAt(row, 2)));
+            ps.setBigDecimal(4, toBigDecimal(valueAt(row, 3)));
+            ps.setBigDecimal(5, toBigDecimal(valueAt(row, 4)));
+            ps.setBigDecimal(6, toBigDecimal(valueAt(row, 5)));
+            ps.setBigDecimal(7, toBigDecimal(valueAt(row, 6)));
+            ps.setBigDecimal(8, toBigDecimal(valueAt(row, 7)));
+            ps.setBigDecimal(9, toBigDecimal(valueAt(row, 8)));
+            ps.setBigDecimal(10, toBigDecimal(valueAt(row, 9)));
+            ps.setBigDecimal(11, toBigDecimal(valueAt(row, 10)));
+            ps.executeUpdate();
+        }
+    }
+
+    private void insertarCodigoCierreAlmacenPrPd(Connection connection, Integer idCierre, Map<String, Object> row) throws SQLException {
+        String sql = "INSERT INTO dbo.tbl_CodigoCierreAlmacenPR_PD (" +
+                "Id_CierreAlmacenPR_PD, Id_Producto, SaldoDiaAnteriorPR, IngresoDevolucionPR, SalidaBajaPR, " +
+                "SalidaDevolucionTPR, SaldoDiaHoyPR, SaldoDiaAnteriorPD, IngresoDevolucionPD, SalidaBajaPD, " +
+                "SalidaDevolucionTPD, SaldoDiaHoyPD, E_Eliminado" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)";
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setInt(1, idCierre);
+            ps.setInt(2, toInteger(valueAt(row, 0)));
+            ps.setBigDecimal(3, toBigDecimal(valueAt(row, 2)));
+            ps.setBigDecimal(4, toBigDecimal(valueAt(row, 3)));
+            ps.setBigDecimal(5, toBigDecimal(valueAt(row, 4)));
+            ps.setBigDecimal(6, toBigDecimal(valueAt(row, 5)));
+            ps.setBigDecimal(7, toBigDecimal(valueAt(row, 6)));
+            ps.setBigDecimal(8, toBigDecimal(valueAt(row, 7)));
+            ps.setBigDecimal(9, toBigDecimal(valueAt(row, 8)));
+            ps.setBigDecimal(10, toBigDecimal(valueAt(row, 9)));
+            ps.setBigDecimal(11, toBigDecimal(valueAt(row, 10)));
+            ps.setBigDecimal(12, toBigDecimal(valueAt(row, 11)));
+            ps.executeUpdate();
+        }
+    }
+
     private void insertarCodigoCuadre(
             Connection connection,
             Integer idCuadre,
@@ -1564,6 +1830,20 @@ public class OtRepository {
                     return entry.getValue();
                 }
             }
+        }
+        return null;
+    }
+
+    private Object valueAt(Map<String, Object> row, int index) {
+        if (row == null || index < 0 || index >= row.size()) {
+            return null;
+        }
+        int current = 0;
+        for (Object value : row.values()) {
+            if (current == index) {
+                return value;
+            }
+            current++;
         }
         return null;
     }

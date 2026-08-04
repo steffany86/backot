@@ -85,7 +85,7 @@ final class OtDbSupport {
         dataSource.setUsername(username);
         dataSource.setPassword(password);
         JdbcTemplate template = new JdbcTemplate(dataSource);
-        template.setQueryTimeout(300);
+        template.setQueryTimeout(0);
         return template;
     }
 

@@ -20,7 +20,7 @@ import java.util.Locale;
 @Service
 public class OtVentaPdfStorageService {
     private static final Logger logger = LoggerFactory.getLogger(OtVentaPdfStorageService.class);
-    private static final long MAX_BYTES = 10L * 1024L * 1024L;
+    private static final long MAX_BYTES = 20L * 1024L * 1024L;
     private static final DateTimeFormatter DATE_PARTITION = DateTimeFormatter.ofPattern("yyyy/MM/dd");
     private final Path baseDir;
 
@@ -88,7 +88,7 @@ public class OtVentaPdfStorageService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El archivo adjunto esta vacio.");
         }
         if (size > MAX_BYTES) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El archivo supera el limite de 10MB.");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El archivo supera el limite de 20MB.");
         }
         if (isPdf && !tieneFirmaPdf(archivo)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "El archivo no corresponde a un PDF valido.");

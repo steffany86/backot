@@ -14,9 +14,12 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.function.Consumer;
 
 @Service
 public class CuadreService {
@@ -64,7 +67,7 @@ public class CuadreService {
             }
             List<Map<String, Object>> saldoRows = obtenerSaldoRutaConFallback(idRuta, fechaFinal, sucursalFinal);
             List<Map<String, Object>> retiros = obtenerRetirosConFallback(idRuta, sucursalFinal);
-            List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros);
+            List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros, sucursalFinal);
             Map<String, Object> resumen = resumir(detalle);
             boolean cuadreRegistrado = coerceCount(otRepository.validarCuadreRuta(idRuta, fechaFinal, sucursalFinal)) > 0;
             boolean registroDisponible = !cuadreRegistrado && !cierreAlmacenRegistrado && !cierrePrPdRegistrado;
@@ -135,7 +138,7 @@ public class CuadreService {
 
         List<Map<String, Object>> saldoRows = obtenerSaldoRutaConFallback(idRuta, fechaFinal, sucursalFinal);
         List<Map<String, Object>> retiros = obtenerRetirosConFallback(idRuta, sucursalFinal);
-        List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros);
+        List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros, sucursalFinal);
         validarDetalleCuadre(idRuta, fechaFinal, detalle, sucursalFinal);
 
         Integer idCuadre = otRepository.registrarCuadreTecnico(
@@ -185,25 +188,56 @@ public class CuadreService {
     }
 
     public Map<String, Object> ejecutarCuadreAutomaticoSistemas(String token, LocalDate fecha, Integer idSucursal) {
+        return ejecutarCuadreAutomaticoSistemas(token, fecha, idSucursal, null);
+    }
+
+    public Map<String, Object> ejecutarCuadreAutomaticoSistemas(
+            String token,
+            LocalDate fecha,
+            Integer idSucursal,
+            Consumer<Map<String, Object>> progress
+    ) {
+        publishProgress(progress, "progress", "running", "Validando usuario", "Validando usuario sistemas y parametros de sucursal.", null);
         AuthLoginResponse usuario = requireSistemas(token);
         LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
         Integer sucursalFinal = resolverSucursalSistemas(usuario, idSucursal);
+        publishProgress(progress, "progress", "running", "Resolviendo usuario", "Resolviendo usuario que quedara registrado en el cuadre.", null);
         Integer idUsuarioRegistro = resolverUsuarioRegistroAutomatico(usuario, sucursalFinal);
 
+        publishProgress(progress, "progress", "running", "Consultando rutas", "Consultando rutas pendientes de cuadre automatico.", null);
         List<Map<String, Object>> rutas = otRepository.obtenerRutasNoCuadradas(fechaFinal, sucursalFinal);
         List<Map<String, Object>> resultados = new ArrayList<>();
+        int totalRutas = rutas == null ? 0 : rutas.size();
+        Map<String, Object> rutasExtra = new LinkedHashMap<>();
+        rutasExtra.put("totalRutas", totalRutas);
+        publishProgress(progress, "progress", "running", "Rutas encontradas", "Se encontraron " + totalRutas + " rutas pendientes.", rutasExtra);
         if (rutas != null) {
+            int index = 0;
             for (Map<String, Object> ruta : rutas) {
-                Map<String, Object> resultado = crearResultadoRutaAutomatico(ruta, fechaFinal, sucursalFinal, true, idUsuarioRegistro);
+                index++;
+                Map<String, Object> resultado = crearResultadoRutaAutomatico(
+                        ruta,
+                        fechaFinal,
+                        sucursalFinal,
+                        true,
+                        idUsuarioRegistro,
+                        progress,
+                        index,
+                        totalRutas
+                );
                 resultados.add(resultado);
             }
         }
+        publishProgress(progress, "progress", "running", "Validando cierre", "Verificando si quedaron rutas pendientes antes del cierre automatico.", null);
+        List<Map<String, Object>> cierres = ejecutarCierresAutomaticosSiCorresponde(fechaFinal, sucursalFinal, idUsuarioRegistro, progress);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("fecha", fechaFinal.toString());
         out.put("idSucursal", sucursalFinal);
         out.put("idUsuarioRegistro", idUsuarioRegistro);
         out.put("rutas", resultados);
+        out.put("cierres", cierres);
         out.put("resumen", resumirResultadosAutomaticos(resultados));
+        publishProgress(progress, "progress", "success", "Resumen final", "Resumen de cuadre automatico preparado.", out);
         return out;
     }
 
@@ -221,6 +255,19 @@ public class CuadreService {
             boolean registrar,
             Integer idUsuarioRegistro
     ) {
+        return crearResultadoRutaAutomatico(ruta, fecha, idSucursal, registrar, idUsuarioRegistro, null, null, null);
+    }
+
+    private Map<String, Object> crearResultadoRutaAutomatico(
+            Map<String, Object> ruta,
+            LocalDate fecha,
+            Integer idSucursal,
+            boolean registrar,
+            Integer idUsuarioRegistro,
+            Consumer<Map<String, Object>> progress,
+            Integer rutaIndex,
+            Integer totalRutas
+    ) {
         Integer idRuta = toPositiveInteger(findValue(ruta, "Id_Ruta", "idRuta", "id_ruta"));
         Integer idVendedor = toPositiveInteger(findValue(ruta, "Id_Vendedor", "idVendedor", "id_vendedor"));
         String nombreRuta = firstNonBlank(valueAsString(findValue(ruta, "NombreRuta", "ruta", "Ruta", "nombre")), valueAsString(idRuta));
@@ -237,34 +284,43 @@ public class CuadreService {
         out.put("idCuadre", null);
 
         try {
+            publishRutaProgress(progress, rutaIndex, totalRutas, idRuta, nombreRuta, "Validando ruta", "Validando datos base de la ruta.");
             if (idRuta == null || idRuta <= 0) {
                 throw new ApiException(HttpStatus.CONFLICT, "RUTA_INVALIDA", "Error: Ruta Almacen.");
             }
             if (idVendedor == null || idVendedor <= 0) {
                 throw new ApiException(HttpStatus.CONFLICT, "VENDEDOR_INVALIDO", "No se pudo resolver vendedor de la ruta.");
             }
+            publishRutaProgress(progress, rutaIndex, totalRutas, idRuta, nombreRuta, "Revisando bloqueos", "Validando cuadre previo, cierres y movimientos pendientes.");
             validarRegistroPermitido(idRuta, fecha, idSucursal);
-            List<Map<String, Object>> saldoRows = obtenerSaldoRutaConFallback(idRuta, fecha, idSucursal);
+            publishRutaProgress(progress, rutaIndex, totalRutas, idRuta, nombreRuta, "Calculando saldo", "Consultando saldo de ruta y ventas usadas durante el dia.");
+            publishRutaProgress(progress, rutaIndex, totalRutas, idRuta, nombreRuta, "Consultando retiros", "Consultando productos retirados o no entregados de la ruta.");
             List<Map<String, Object>> retiros = obtenerRetirosConFallback(idRuta, idSucursal);
-            List<Map<String, Object>> detalle = normalizarDetalle(saldoRows, retiros);
+            List<Map<String, Object>> detalle = prepararDetalleCuadreAutomaticoLegacy(idRuta, fecha, retiros, idSucursal);
             int cantidadOt = coerceCount(otRepository.obtenerCantidadOtDiaRuta(idRuta, fecha, idSucursal));
+            publishRutaProgress(progress, rutaIndex, totalRutas, idRuta, nombreRuta, "Validando detalle", "Validando sobrantes, saldos y ventas registradas.");
             validarDetalleCuadre(idRuta, fecha, detalle, idSucursal);
             out.put("cantidadOt", cantidadOt);
             out.put("resumen", resumir(detalle));
             if (registrar) {
+                publishRutaProgress(progress, rutaIndex, totalRutas, idRuta, nombreRuta, "Registrando cuadre", "Registrando cabecera, detalle, retiros y actualizacion de saldo.");
+                List<Map<String, Object>> detalleRegistro = detalleRegistroAutomaticoLegacy(detalle);
                 Integer idCuadre = otRepository.registrarCuadreTecnico(
                         idRuta,
                         idVendedor,
                         idUsuarioRegistro,
                         fecha,
                         "Cuadre automatico",
-                        detalle,
+                        detalleRegistro,
                         retiros,
                         idSucursal
                 );
                 out.put("idCuadre", idCuadre);
                 out.put("estado", "Registrado");
                 out.put("mensaje", "Cuadre registrado correctamente.");
+                Map<String, Object> extra = rutaProgressExtra(rutaIndex, totalRutas, idRuta, nombreRuta);
+                extra.put("resultadoRuta", out);
+                publishProgress(progress, "route", "success", "Ruta registrada", "Ruta " + nombreRuta + " registrada correctamente.", extra);
             } else {
                 out.put("estado", "Listo");
                 out.put("mensaje", "Ruta lista para cuadre automatico.");
@@ -273,9 +329,16 @@ public class CuadreService {
             out.put("estado", "Omitido");
             out.put("mensaje", ex.getMessage());
             out.put("codigo", ex.getCode());
+            Map<String, Object> extra = rutaProgressExtra(rutaIndex, totalRutas, idRuta, nombreRuta);
+            extra.put("codigo", ex.getCode());
+            extra.put("resultadoRuta", out);
+            publishProgress(progress, "route", "warning", "Ruta omitida", "Ruta " + nombreRuta + " omitida: " + ex.getMessage(), extra);
         } catch (Exception ex) {
             out.put("estado", "Error");
             out.put("mensaje", ex.getMessage());
+            Map<String, Object> extra = rutaProgressExtra(rutaIndex, totalRutas, idRuta, nombreRuta);
+            extra.put("resultadoRuta", out);
+            publishProgress(progress, "route", "error", "Error en ruta", "Ruta " + nombreRuta + " con error: " + ex.getMessage(), extra);
         }
         return out;
     }
@@ -322,6 +385,42 @@ public class CuadreService {
         out.put("omitidos", omitidos);
         out.put("errores", errores);
         return out;
+    }
+
+    private void publishRutaProgress(
+            Consumer<Map<String, Object>> progress,
+            Integer rutaIndex,
+            Integer totalRutas,
+            Integer idRuta,
+            String ruta,
+            String step,
+            String message
+    ) {
+        Map<String, Object> extra = rutaProgressExtra(rutaIndex, totalRutas, idRuta, ruta);
+        publishProgress(progress, "route", "running", step, message, extra);
+    }
+
+    private Map<String, Object> rutaProgressExtra(Integer rutaIndex, Integer totalRutas, Integer idRuta, String ruta) {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("rutaIndex", rutaIndex);
+        extra.put("totalRutas", totalRutas);
+        extra.put("idRuta", idRuta);
+        extra.put("ruta", ruta);
+        return extra;
+    }
+
+    private void publishProgress(
+            Consumer<Map<String, Object>> progress,
+            String type,
+            String status,
+            String step,
+            String message,
+            Map<String, Object> extra
+    ) {
+        if (progress == null) {
+            return;
+        }
+        progress.accept(CuadreAutomaticoJobService.event(type, status, step, message, extra));
     }
 
     private AuthLoginResponse requireSistemas(String token) {
@@ -380,25 +479,387 @@ public class CuadreService {
         }
     }
 
-    private List<Map<String, Object>> normalizarDetalle(List<Map<String, Object>> rows, List<Map<String, Object>> retiros) {
+    private List<Map<String, Object>> prepararDetalleCuadreAutomaticoLegacy(
+            Integer idRuta,
+            LocalDate fecha,
+            List<Map<String, Object>> retiros,
+            Integer idSucursal
+    ) {
+        List<Map<String, Object>> saldos = otRepository.obtenerSaldoTarjetasRutaLegacy(idRuta, idSucursal);
+        if (saldos == null || saldos.isEmpty()) {
+            throw new ApiException(HttpStatus.CONFLICT, "CUADRE_SIN_PEDIDO", "Registre un Pedido.");
+        }
+
         Map<Integer, Double> retiradoPorProducto = agruparRetirosPorProducto(retiros);
+        Map<Integer, Map<String, Object>> productos = resolverProductosCuadre(saldos, idSucursal);
+        List<Map<String, Object>> detalle = new ArrayList<>();
+        for (Map<String, Object> saldoRow : saldos) {
+            Integer idProducto = toPositiveInteger(findValue(saldoRow, "Id_Producto", "idProducto", "id_producto"));
+            if (idProducto == null) {
+                continue;
+            }
+            Map<String, Object> producto = productos.get(idProducto);
+            if (producto == null) {
+                throw new ApiException(
+                        HttpStatus.CONFLICT,
+                        "PRODUCTO_NO_ENCONTRADO",
+                        "No se encontro el producto " + idProducto + "."
+                );
+            }
+            double saldo = toDouble(findValue(saldoRow, "Cantidad", "cantidad", "saldo", "Saldo"));
+            double precio = toDouble(findValue(producto, "precio", "Precio", "PrecioVenta", "precioVenta"));
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("idProducto", idProducto);
+            item.put("producto", firstNonBlank(valueAsString(findValue(producto, "producto", "Producto", "Nombre", "nombre")), "Producto " + idProducto));
+            item.put("saldo", saldo);
+            item.put("vendido", 0d);
+            item.put("retirado", retiradoPorProducto.getOrDefault(idProducto, 0d));
+            item.put("sobrante", saldo);
+            item.put("precio", precio);
+            item.put("totalVendido", 0d);
+            detalle.add(item);
+        }
+
+        aplicarVentasCuadreAutomaticoLegacy(detalle, idRuta, fecha, idSucursal);
+        return detalle;
+    }
+
+    private void aplicarVentasCuadreAutomaticoLegacy(
+            List<Map<String, Object>> detalle,
+            Integer idRuta,
+            LocalDate fecha,
+            Integer idSucursal
+    ) {
+        List<Map<String, Object>> ventas = otRepository.obtenerVentaDiaRuta(idRuta, fecha, idSucursal);
+        if (ventas == null || ventas.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> venta : ventas) {
+            Integer idProducto = toPositiveInteger(findValue(venta, "Id_Producto", "idProducto", "id_producto"));
+            if (idProducto == null) {
+                continue;
+            }
+            Map<String, Object> item = buscarDetalleProducto(detalle, idProducto);
+            if (item == null) {
+                String nombre = firstNonBlank(valueAsString(findValue(venta, "Nombre", "nombre", "Producto", "producto")), "Producto " + idProducto);
+                throw new ApiException(HttpStatus.CONFLICT, "CUADRE_SIN_SALDO_PRODUCTO", "No tiene saldo de : " + nombre);
+            }
+            double vendido = toDouble(findValue(venta, "Venta", "venta", "Vendido", "vendido"));
+            double sobrante = toDouble(item.get("sobrante")) - vendido;
+            double precio = toDouble(item.get("precio"));
+            item.put("vendido", vendido);
+            item.put("sobrante", sobrante);
+            item.put("totalVendido", vendido * precio);
+        }
+    }
+
+    private List<Map<String, Object>> detalleRegistroAutomaticoLegacy(List<Map<String, Object>> detalle) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (detalle == null) {
+            return out;
+        }
+        for (Map<String, Object> item : detalle) {
+            Map<String, Object> row = new LinkedHashMap<>(item);
+            row.put("precio", 0d);
+            row.put("totalVendido", 0d);
+            out.add(row);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> ejecutarCierresAutomaticosSiCorresponde(
+            LocalDate fecha,
+            Integer idSucursal,
+            Integer idUsuarioRegistro,
+            Consumer<Map<String, Object>> progress
+    ) {
+        List<Map<String, Object>> cierres = new ArrayList<>();
+        List<Map<String, Object>> pendientes = otRepository.obtenerRutasNoCuadradas(fecha, idSucursal);
+        if (pendientes != null && !pendientes.isEmpty()) {
+            Map<String, Object> omitido = crearResultadoCierre("Cierre Automatico", fecha);
+            omitido.put("estado", "Omitido");
+            omitido.put("mensaje", "No se registro cierre automatico porque aun existen " + pendientes.size() + " ruta(s) pendiente(s) de cuadre.");
+            cierres.add(omitido);
+            publishProgress(progress, "route", "warning", "Cierre omitido", String.valueOf(omitido.get("mensaje")), omitido);
+            return cierres;
+        }
+
+        cierres.add(ejecutarCierreAlmacenAutomatico(fecha, idSucursal, idUsuarioRegistro, progress));
+        cierres.add(ejecutarCierreAlmacenPrPdAutomatico(fecha, idSucursal, idUsuarioRegistro, progress));
+        return cierres;
+    }
+
+    private Map<String, Object> ejecutarCierreAlmacenAutomatico(
+            LocalDate fecha,
+            Integer idSucursal,
+            Integer idUsuarioRegistro,
+            Consumer<Map<String, Object>> progress
+    ) {
+        Map<String, Object> out = crearResultadoCierre("Cierre Almacen", fecha);
+        try {
+            publishProgress(progress, "route", "running", "Cierre Almacen", "Validando cierre de almacen.", out);
+            String mensaje = validarCierreAlmacen(fecha, idSucursal);
+            if (!mensaje.isEmpty()) {
+                out.put("estado", "Omitido");
+                out.put("mensaje", mensaje);
+                publishProgress(progress, "route", "warning", "Cierre Almacen omitido", mensaje, out);
+                return out;
+            }
+            List<Map<String, Object>> detalle = otRepository.obtenerDetalleCierreAlmacen(fecha, idSucursal);
+            mensaje = validarDetalleCierre(detalle);
+            if (!mensaje.isEmpty()) {
+                out.put("estado", "Omitido");
+                out.put("mensaje", mensaje);
+                publishProgress(progress, "route", "warning", "Cierre Almacen omitido", mensaje, out);
+                return out;
+            }
+            Integer idCierre = otRepository.registrarCierreAlmacen(fecha, idUsuarioRegistro, detalle, idSucursal);
+            out.put("idRegistro", idCierre);
+            out.put("estado", "Registrado");
+            out.put("mensaje", "Cierre de almacen registrado correctamente.");
+            publishProgress(progress, "route", "success", "Cierre Almacen registrado", String.valueOf(out.get("mensaje")), out);
+        } catch (Exception ex) {
+            out.put("estado", "Error");
+            out.put("mensaje", ex.getMessage());
+            publishProgress(progress, "route", "error", "Error Cierre Almacen", ex.getMessage(), out);
+        }
+        return out;
+    }
+
+    private Map<String, Object> ejecutarCierreAlmacenPrPdAutomatico(
+            LocalDate fecha,
+            Integer idSucursal,
+            Integer idUsuarioRegistro,
+            Consumer<Map<String, Object>> progress
+    ) {
+        Map<String, Object> out = crearResultadoCierre("Cierre Almacen PR_PD", fecha);
+        try {
+            publishProgress(progress, "route", "running", "Cierre Almacen PR_PD", "Validando cierre de almacen PR_PD.", out);
+            String mensaje = validarCierreAlmacenPrPd(fecha, idSucursal);
+            if (!mensaje.isEmpty()) {
+                out.put("estado", "Omitido");
+                out.put("mensaje", mensaje);
+                publishProgress(progress, "route", "warning", "Cierre PR_PD omitido", mensaje, out);
+                return out;
+            }
+            List<Map<String, Object>> detalle = otRepository.obtenerDetalleCierreAlmacenPrPd(fecha, idSucursal);
+            mensaje = validarDetalleCierre(detalle);
+            if (!mensaje.isEmpty()) {
+                out.put("estado", "Omitido");
+                out.put("mensaje", mensaje);
+                publishProgress(progress, "route", "warning", "Cierre PR_PD omitido", mensaje, out);
+                return out;
+            }
+            Integer idCierre = otRepository.registrarCierreAlmacenPrPd(fecha, idUsuarioRegistro, detalle, idSucursal);
+            out.put("idRegistro", idCierre);
+            out.put("estado", "Registrado");
+            out.put("mensaje", "Cierre de almacen PR_PD registrado correctamente.");
+            publishProgress(progress, "route", "success", "Cierre PR_PD registrado", String.valueOf(out.get("mensaje")), out);
+        } catch (Exception ex) {
+            out.put("estado", "Error");
+            out.put("mensaje", ex.getMessage());
+            publishProgress(progress, "route", "error", "Error Cierre PR_PD", ex.getMessage(), out);
+        }
+        return out;
+    }
+
+    private Map<String, Object> crearResultadoCierre(String tipo, LocalDate fecha) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tipo", tipo);
+        out.put("fecha", fecha.toString());
+        out.put("estado", "Pendiente");
+        out.put("idRegistro", 0);
+        out.put("mensaje", "");
+        return out;
+    }
+
+    private String validarCierreAlmacen(LocalDate fecha, Integer idSucursal) {
+        StringBuilder mensaje = new StringBuilder();
+        if (coerceCount(otRepository.existeCierreAlmacenHoy(fecha, idSucursal)) > 0) {
+            mensaje.append("No se puede registrar cierre de almacen. Ya existe cierre para la fecha.").append('\n');
+        }
+        appendSiNoSePuede(mensaje, "No se puede registrar cierre de almacen. ", otRepository.sePuedeHacerCierreAlmacen(fecha, idSucursal));
+        appendMovimientos(mensaje, "Transacciones pendientes. ", otRepository.validaMovimientos(fecha, idSucursal));
+        appendMovimientos(mensaje, "Transacciones pendientes. ", otRepository.validaMovimientosSCierre(fecha, idSucursal));
+        appendRutasPendientesCierre(mensaje, fecha, idSucursal);
+        return mensaje.toString().trim();
+    }
+
+    private String validarCierreAlmacenPrPd(LocalDate fecha, Integer idSucursal) {
+        StringBuilder mensaje = new StringBuilder();
+        appendSiNoSePuede(mensaje,
+                "No se puede registrar cierre de almacen PR_PD. Se tiene que registrar primero el cierre de Almacen Productos Nuevos. ",
+                otRepository.sePuedeHacerCierreAlmacenPrPd(fecha, idSucursal));
+        appendMovimientos(mensaje, "Transacciones pendientes. ", otRepository.validaMovimientosSCierre(fecha, idSucursal));
+        appendRutasPendientesCierre(mensaje, fecha, idSucursal);
+        if (coerceCount(otRepository.existeCierreAlmacenHoyPrPd(fecha, idSucursal)) > 0) {
+            mensaje.append("No se puede registrar el cierre PR_PD verificar.").append('\n');
+        }
+        return mensaje.toString().trim();
+    }
+
+    private void appendSiNoSePuede(StringBuilder mensaje, String prefijo, List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        boolean bloqueado = false;
+        StringBuilder detalle = new StringBuilder();
+        for (Map<String, Object> row : rows) {
+            if (row == null) {
+                continue;
+            }
+            for (Object value : row.values()) {
+                String text = valueAsString(value);
+                if (text == null) {
+                    continue;
+                }
+                if ("nosepuede".equals(normalize(text).replace(" ", ""))) {
+                    bloqueado = true;
+                } else {
+                    if (detalle.length() > 0) {
+                        detalle.append(" | ");
+                    }
+                    detalle.append(text);
+                }
+            }
+        }
+        if (bloqueado) {
+            mensaje.append(prefijo);
+            if (detalle.length() > 0) {
+                mensaje.append(detalle);
+            }
+            mensaje.append('\n');
+        }
+    }
+
+    private void appendMovimientos(StringBuilder mensaje, String prefijo, List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        if (rows.size() == 1 && coerceCount(rows) <= 0) {
+            return;
+        }
+        mensaje.append(prefijo);
+        for (Map<String, Object> row : rows) {
+            if (row == null) {
+                continue;
+            }
+            StringBuilder detalle = new StringBuilder();
+            for (Object value : row.values()) {
+                String text = valueAsString(value);
+                if (text == null) {
+                    continue;
+                }
+                if (detalle.length() > 0) {
+                    detalle.append(" | ");
+                }
+                detalle.append(text);
+            }
+            if (detalle.length() > 0) {
+                mensaje.append(detalle).append("; ");
+            }
+        }
+        mensaje.append('\n');
+    }
+
+    private void appendRutasPendientesCierre(StringBuilder mensaje, LocalDate fecha, Integer idSucursal) {
+        List<Map<String, Object>> pendientes = otRepository.rutasPendientesCuadreCierre(fecha, idSucursal);
+        if (pendientes != null && !pendientes.isEmpty()) {
+            mensaje.append("Falta que registren cuadre ").append(pendientes.size()).append(" ruta(s).").append('\n');
+        }
+    }
+
+    private String validarDetalleCierre(List<Map<String, Object>> detalle) {
+        if (detalle == null || detalle.isEmpty()) {
+            return "Detalle: No existe ningun dato.";
+        }
+        for (Map<String, Object> row : detalle) {
+            if (toPositiveInteger(valueAt(row, 0)) == null) {
+                return "Detalle: Existe producto invalido para cierre.";
+            }
+            int size = row == null ? 0 : row.size();
+            if (size >= 2 && (toDouble(valueAt(row, size - 1)) < 0 || toDouble(valueAt(row, size - 2)) < 0)) {
+                return "Detalle: No puede existir saldo Negativo.";
+            }
+        }
+        return "";
+    }
+
+    private Object valueAt(Map<String, Object> row, int index) {
+        if (row == null || index < 0 || index >= row.size()) {
+            return null;
+        }
+        int i = 0;
+        for (Object value : row.values()) {
+            if (i == index) {
+                return value;
+            }
+            i++;
+        }
+        return null;
+    }
+
+    private Map<String, Object> buscarDetalleProducto(List<Map<String, Object>> detalle, Integer idProducto) {
+        if (detalle == null || idProducto == null) {
+            return null;
+        }
+        for (Map<String, Object> item : detalle) {
+            Integer current = toPositiveInteger(item.get("idProducto"));
+            if (idProducto.equals(current)) {
+                return item;
+            }
+        }
+        return null;
+    }
+
+    private Map<Integer, Map<String, Object>> resolverProductosCuadre(List<Map<String, Object>> rows, Integer idSucursal) {
+        Set<Integer> idsProducto = new LinkedHashSet<>();
+        if (rows != null) {
+            for (Map<String, Object> row : rows) {
+                Integer idProducto = toPositiveInteger(findValue(row, "idProducto", "Id_Producto", "id_producto"));
+                if (idProducto != null) {
+                    idsProducto.add(idProducto);
+                }
+            }
+        }
+        if (idsProducto.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        return otRepository.obtenerProductosCuadre(new ArrayList<>(idsProducto), idSucursal);
+    }
+
+    private List<Map<String, Object>> normalizarDetalle(List<Map<String, Object>> rows, List<Map<String, Object>> retiros, Integer idSucursal) {
+        Map<Integer, Double> retiradoPorProducto = agruparRetirosPorProducto(retiros);
+        Map<Integer, String> nombresProducto = resolverNombresProducto(rows, idSucursal);
         List<Map<String, Object>> out = new ArrayList<>();
         if (rows == null) {
             return out;
         }
         for (Map<String, Object> row : rows) {
             Integer idProducto = toPositiveInteger(findValue(row, "idProducto", "Id_Producto", "id_producto"));
+            if (idProducto != null && nombresProducto != null && !nombresProducto.containsKey(idProducto)) {
+                continue;
+            }
+            String productoCatalogo = idProducto == null || nombresProducto == null ? null : nombresProducto.get(idProducto);
+            String productoRow = valueAsString(findValue(row, "producto", "Producto", "nombre", "Nombre", "nombreProducto", "NombreProducto", "Nombre_Producto"));
+            if (esNombreProductoGenerico(productoRow, idProducto) && productoCatalogo != null) {
+                productoRow = null;
+            }
             String producto = firstNonBlank(
-                    valueAsString(findValue(row, "producto", "Producto", "nombre", "Nombre")),
-                    idProducto == null ? "Producto" : "Producto " + idProducto
+                    productoRow,
+                    firstNonBlank(productoCatalogo, idProducto == null ? "Producto" : "Producto " + idProducto)
             );
             double saldo = toDouble(findValue(row, "saldo", "Saldo", "SaldoDia", "SaldoDiaHoy", "Cantidad", "cantidad", "existencia", "Disponible"));
-            double vendido = toDouble(findValue(row, "venta", "Venta", "Vendido", "ItemsVendidos", "itemsVendidos"));
+            double vendido = toDouble(findValue(
+                    row,
+                    "venta", "Venta", "Vendido", "ItemsVendidos", "itemsVendidos",
+                    "UsadoHoy", "usadoHoy", "SaldoUsadoHoy", "saldoUsadoHoy"
+            ));
             double retirado = retiradoPorProducto.containsKey(idProducto)
                     ? retiradoPorProducto.get(idProducto)
                     : toDouble(findValue(row, "retirado", "Retirado", "ItemsRetirados", "itemsRetirados", "NoEntregado", "noEntregado"));
             Object sobranteRaw = findValue(row, "sobrante", "Sobrante", "ItemsSobrantes", "itemsSobrantes");
-            double sobrante = sobranteRaw == null ? Math.max(0, saldo - vendido - retirado) : toDouble(sobranteRaw);
+            double sobrante = sobranteRaw == null ? saldo - vendido : toDouble(sobranteRaw);
             double precio = toDouble(findValue(row, "precio", "Precio", "PrecioVenta", "precioVenta"));
             double totalVendido = toDouble(findValue(row, "totalVendido", "TotalVendido", "TotalVendidos", "totalVendidos"));
             if (totalVendido == 0 && precio != 0 && vendido != 0) {
@@ -417,6 +878,37 @@ public class CuadreService {
             out.add(item);
         }
         return out;
+    }
+
+    private Map<Integer, String> resolverNombresProducto(List<Map<String, Object>> rows, Integer idSucursal) {
+        Set<Integer> idsProducto = new LinkedHashSet<>();
+        if (rows != null) {
+            for (Map<String, Object> row : rows) {
+                Integer idProducto = toPositiveInteger(findValue(row, "idProducto", "Id_Producto", "id_producto"));
+                if (idProducto != null) {
+                    idsProducto.add(idProducto);
+                }
+            }
+        }
+        if (idsProducto.isEmpty()) {
+            return new LinkedHashMap<>();
+        }
+        try {
+            return otRepository.obtenerNombresProducto(new ArrayList<>(idsProducto), idSucursal);
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private boolean esNombreProductoGenerico(String producto, Integer idProducto) {
+        if (producto == null || producto.trim().isEmpty()) {
+            return false;
+        }
+        String normalizado = normalize(producto).replace(" ", "");
+        if ("producto".equals(normalizado)) {
+            return true;
+        }
+        return idProducto != null && normalizado.equals("producto" + idProducto);
     }
 
     private Map<String, Object> resumir(List<Map<String, Object>> detalle) {

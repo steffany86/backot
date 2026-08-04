@@ -108,15 +108,17 @@ public class CorteTapRepository {
 
     public int actualizarDigitacion(
             Integer id,
+            String nodoTapBocaAntiguo,
             String zonaHfc,
             String zona,
             String distrito,
             String usuario) {
         return jdbcTemplate.update(
-                "UPDATE dbo.tbl_CorteTap SET Zona_HFC_D2 = ?, Zona_D2 = ?, "
+                "UPDATE dbo.tbl_CorteTap SET NodoTapBocaAntiguo_D2 = ?, Zona_HFC_D2 = ?, Zona_D2 = ?, "
                         + "Distrito_D2 = ?, UsuarioDig_D2 = ?, FechaRegDig_D2 = GETDATE() "
                         + "WHERE id = ? AND ISNULL(E_Eliminado, 0) = 0 "
                         + "AND UPPER(ISNULL(Estado, '')) NOT IN ('EJECUTADA', 'FINALIZADO')",
+                nodoTapBocaAntiguo,
                 zonaHfc,
                 zona,
                 distrito,
@@ -153,7 +155,8 @@ public class CorteTapRepository {
         return jdbcTemplate.update(
                 "UPDATE dbo.tbl_CorteTap SET Estado = 'FINALIZADO' "
                         + "WHERE id = ? AND ISNULL(E_Eliminado, 0) = 0 "
-                        + "AND FechaRegTec_T3 IS NOT NULL AND UPPER(ISNULL(Estado, '')) = 'EJECUTADA'",
+                        + "AND FechaRegDig_D2 IS NOT NULL "
+                        + "AND UPPER(ISNULL(Estado, '')) <> 'FINALIZADO'",
                 id
         );
     }
@@ -168,7 +171,10 @@ public class CorteTapRepository {
             String nodoTapBoca) {
         Timestamp ahora = Timestamp.valueOf(LocalDateTime.now());
         jdbcTemplate.update(
-                "EXEC dbo.spx_InsertarCorteTap ?, ?, ?, ?, ?, ?, ?, ?",
+                "INSERT INTO dbo.tbl_CorteTap ("
+                        + "CodigoCliente_OT1, TOR_OT1, Id_Tecnico_OT1, Tecnico1_OT1, Sucursal_OT1, Estado, "
+                        + "Usuario_OT1, FechaReg_OT1, FechaFinalizacion_OT1, ContadorDias, NodoTapBoca_D2, E_Eliminado"
+                        + ") VALUES (?, ?, ?, ?, ?, 'PENDIENTE', ?, ?, ?, 1, ?, 0)",
                 codigoCliente,
                 tor,
                 idTecnico,
@@ -176,23 +182,9 @@ public class CorteTapRepository {
                 sucursal,
                 usuario,
                 ahora,
-                ahora
+                ahora,
+                nodoTapBoca
         );
-        int updated = jdbcTemplate.update(
-                "UPDATE dbo.tbl_CorteTap SET NodoTapBoca_D2 = ? "
-                        + "WHERE id = (SELECT TOP 1 id FROM dbo.tbl_CorteTap "
-                        + "WHERE CodigoCliente_OT1 = ? AND TOR_OT1 = ? AND Id_Tecnico_OT1 = ? "
-                        + "AND Usuario_OT1 = ? AND NodoTapBoca_D2 IS NULL "
-                        + "ORDER BY id DESC)",
-                nodoTapBoca,
-                codigoCliente,
-                tor,
-                idTecnico,
-                usuario
-        );
-        if (updated != 1) {
-            throw new IllegalStateException("No se pudo asociar Nodo/TAP/Boca al Corte TAP creado.");
-        }
     }
 }
 

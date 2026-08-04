@@ -108,10 +108,10 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleMaxUploadSize(MaxUploadSizeExceededException ex, HttpServletRequest request) {
         Map<String, Object> details = new HashMap<>();
         details.put("exception", ex.getClass().getSimpleName());
-        details.put("maxSize", "10MB");
+        details.put("maxSize", "20MB");
         ApiError apiError = new ApiError(
                 "FILE_TOO_LARGE",
-                "El archivo PDF supera el limite permitido (10 MB). Reduce el tamaño del archivo e intenta nuevamente.",
+                "El archivo supera el limite permitido (20 MB). Reduce el tamano del archivo e intenta nuevamente.",
                 details,
                 OffsetDateTime.now(),
                 request.getRequestURI()

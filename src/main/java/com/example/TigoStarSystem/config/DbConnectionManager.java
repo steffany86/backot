@@ -132,7 +132,7 @@ public class DbConnectionManager {
         config.setMinimumIdle(0);
         config.setInitializationFailTimeout(-1);
         JdbcTemplate template = new JdbcTemplate(new HikariDataSource(config));
-        template.setQueryTimeout(300);
+        template.setQueryTimeout(0);
         return template;
     }
 

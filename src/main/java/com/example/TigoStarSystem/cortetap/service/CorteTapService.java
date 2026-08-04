@@ -89,6 +89,22 @@ public class CorteTapService {
             throw new ApiException(HttpStatus.CONFLICT, "CORTE_TAP_CERRADO", "El Corte TAP ya no admite cambios de digitacion.");
         }
 
+        String nodoTapBocaAntiguo = toUpper(trimToNull(request == null ? null : request.getNodoTapBocaAntiguo()));
+        if (nodoTapBocaAntiguo == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Nodo/TAP/Boca antiguo es requerido."
+            );
+        }
+        if (nodoTapBocaAntiguo.length() > 50) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "Nodo/TAP/Boca antiguo no puede superar 50 caracteres."
+            );
+        }
+
         String zonaHfc = toUpper(trimToNull(request == null ? null : request.getZonaHfc()));
         if (zonaHfc == null) {
             throw new ApiException(
@@ -104,6 +120,7 @@ public class CorteTapService {
 
         int updated = repository.actualizarDigitacion(
                 id,
+                nodoTapBocaAntiguo,
                 zonaHfc,
                 zona,
                 distrito,
@@ -211,11 +228,11 @@ public class CorteTapService {
         if ("finalizado".equals(estado)) {
             return corte;
         }
-        if (findValue(corte, "FechaRegTec_T3") == null || !"ejecutada".equals(estado)) {
+        if (findValue(corte, "FechaRegDig_D2") == null) {
             throw new ApiException(
                     HttpStatus.CONFLICT,
-                    "CORTE_TAP_SIN_EJECUCION",
-                    "El tecnico debe completar la ejecucion antes de finalizar el Corte TAP."
+                    "CORTE_TAP_SIN_DIGITACION",
+                    "El digitador debe completar el Corte TAP antes de finalizarlo."
             );
         }
         int updated = repository.finalizar(id);

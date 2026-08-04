@@ -2,6 +2,7 @@ package com.example.TigoStarSystem.ot.controller;
 
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.common.ApiResponse;
+import com.example.TigoStarSystem.ot.service.CuadreAutomaticoJobService;
 import com.example.TigoStarSystem.ot.service.CuadreService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -12,7 +13,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -23,9 +26,11 @@ import java.util.Map;
 @RequestMapping("/cuadre")
 public class CuadreController {
     private final CuadreService cuadreService;
+    private final CuadreAutomaticoJobService cuadreAutomaticoJobService;
 
-    public CuadreController(CuadreService cuadreService) {
+    public CuadreController(CuadreService cuadreService, CuadreAutomaticoJobService cuadreAutomaticoJobService) {
         this.cuadreService = cuadreService;
+        this.cuadreAutomaticoJobService = cuadreAutomaticoJobService;
     }
 
     @GetMapping({"/tecnico/actual", "/tecnico/mi-cuadre"})
@@ -80,6 +85,24 @@ public class CuadreController {
                 cuadreService.ejecutarCuadreAutomaticoSistemas(token, fechaFinal, idSucursal),
                 "Cuadre automatico ejecutado."
         ));
+    }
+
+    @PostMapping("/sistemas/automatico/iniciar")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> iniciarCuadreAutomaticoSistemas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreAutomaticoJobService.iniciar(token, fechaFinal, idSucursal),
+                "Proceso de cuadre automatico iniciado."
+        ));
+    }
+
+    @GetMapping("/sistemas/automatico/progreso/{jobId}")
+    public SseEmitter progresoCuadreAutomaticoSistemas(@PathVariable("jobId") String jobId) {
+        return cuadreAutomaticoJobService.stream(jobId);
     }
 
     @GetMapping({"/spx_ValidarCuadreRuta", "/validar-hoy"})
