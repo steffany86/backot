@@ -57,8 +57,8 @@ public class CuadreService {
             );
         }
 
-        boolean cierreAlmacenRegistrado = coerceCount(otRepository.existeCierreAlmacenHoy(fechaFinal, sucursalFinal)) > 0;
-        boolean cierrePrPdRegistrado = coerceCount(otRepository.existeCierreAlmacenHoyPrPd(fechaFinal, sucursalFinal)) > 0;
+        boolean cierreAlmacenRegistrado = existeCierreAlmacen(fechaFinal, sucursalFinal);
+        boolean cierrePrPdRegistrado = existeCierreAlmacenPrPd(fechaFinal, sucursalFinal);
         List<Map<String, Object>> rutasCuadre = new ArrayList<>();
         for (Map<String, Object> ruta : rutas) {
             Integer idRuta = toPositiveInteger(findValue(ruta, "idRuta", "Id_Ruta", "id_ruta", "ruta"));
@@ -184,7 +184,32 @@ public class CuadreService {
         out.put("usuario", usuario.getNombre());
         out.put("rutas", resultados);
         out.put("resumen", resumirResultadosAutomaticos(resultados));
+        out.put("cierre", obtenerEstadoCierre(fechaFinal, sucursalFinal));
+        out.put("notificacionesCierre", obtenerNotificacionesCierre(sucursalFinal));
         return out;
+    }
+
+    public Map<String, Object> ejecutarCierreAutomaticoSistemas(String token, LocalDate fecha, Integer idSucursal) {
+        AuthLoginResponse usuario = requireSistemas(token);
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        Integer sucursalFinal = resolverSucursalSistemas(usuario, idSucursal);
+        Integer idUsuarioRegistro = resolverUsuarioRegistroAutomatico(usuario, sucursalFinal);
+        List<Map<String, Object>> cierres = ejecutarCierresAutomaticosSiCorresponde(fechaFinal, sucursalFinal, idUsuarioRegistro, null);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fecha", fechaFinal.toString());
+        out.put("idSucursal", sucursalFinal);
+        out.put("idUsuarioRegistro", idUsuarioRegistro);
+        out.put("cierres", cierres);
+        out.put("cierre", obtenerEstadoCierre(fechaFinal, sucursalFinal));
+        out.put("notificacionesCierre", obtenerNotificacionesCierre(sucursalFinal));
+        return out;
+    }
+
+    public List<Map<String, Object>> obtenerNotificacionesCierreSistemas(String token, Integer idSucursal) {
+        AuthLoginResponse usuario = requireSistemas(token);
+        Integer sucursalFinal = resolverSucursalSistemas(usuario, idSucursal);
+        return obtenerNotificacionesCierre(sucursalFinal);
     }
 
     public Map<String, Object> ejecutarCuadreAutomaticoSistemas(String token, LocalDate fecha, Integer idSucursal) {
@@ -673,9 +698,49 @@ public class CuadreService {
         return out;
     }
 
+    private Map<String, Object> obtenerEstadoCierre(LocalDate fecha, Integer idSucursal) {
+        List<Map<String, Object>> pendientes = otRepository.obtenerRutasNoCuadradas(fecha, idSucursal);
+        int pendientesCuadre = pendientes == null ? 0 : pendientes.size();
+        boolean cierreAlmacen = existeCierreAlmacen(fecha, idSucursal);
+        boolean cierrePrPd = existeCierreAlmacenPrPd(fecha, idSucursal);
+        boolean cierreCompleto = cierreAlmacen && cierrePrPd;
+        boolean puedeCerrar = pendientesCuadre == 0 && !cierreCompleto;
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fecha", fecha.toString());
+        out.put("idSucursal", idSucursal);
+        out.put("pendientesCuadre", pendientesCuadre);
+        out.put("cierreAlmacenRegistrado", cierreAlmacen);
+        out.put("cierrePrPdRegistrado", cierrePrPd);
+        out.put("cierreCompleto", cierreCompleto);
+        out.put("faltaCierre", !cierreCompleto);
+        out.put("puedeCerrar", puedeCerrar);
+        if (cierreCompleto) {
+            out.put("mensaje", "Cierre completo registrado.");
+        } else if (pendientesCuadre > 0) {
+            out.put("mensaje", "Aun existen " + pendientesCuadre + " ruta(s) pendiente(s) de cuadre.");
+        } else {
+            out.put("mensaje", "No hay cuadres pendientes y falta registrar cierre.");
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> obtenerNotificacionesCierre(Integer idSucursal) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        LocalDate hoy = LocalDate.now();
+        for (int i = 1; i <= 5; i++) {
+            LocalDate fecha = hoy.minusDays(i);
+            Map<String, Object> estado = obtenerEstadoCierre(fecha, idSucursal);
+            if (Boolean.TRUE.equals(estado.get("faltaCierre"))) {
+                out.add(estado);
+            }
+        }
+        return out;
+    }
+
     private String validarCierreAlmacen(LocalDate fecha, Integer idSucursal) {
         StringBuilder mensaje = new StringBuilder();
-        if (coerceCount(otRepository.existeCierreAlmacenHoy(fecha, idSucursal)) > 0) {
+        if (existeCierreAlmacen(fecha, idSucursal)) {
             mensaje.append("No se puede registrar cierre de almacen. Ya existe cierre para la fecha.").append('\n');
         }
         appendSiNoSePuede(mensaje, "No se puede registrar cierre de almacen. ", otRepository.sePuedeHacerCierreAlmacen(fecha, idSucursal));
@@ -692,7 +757,7 @@ public class CuadreService {
                 otRepository.sePuedeHacerCierreAlmacenPrPd(fecha, idSucursal));
         appendMovimientos(mensaje, "Transacciones pendientes. ", otRepository.validaMovimientosSCierre(fecha, idSucursal));
         appendRutasPendientesCierre(mensaje, fecha, idSucursal);
-        if (coerceCount(otRepository.existeCierreAlmacenHoyPrPd(fecha, idSucursal)) > 0) {
+        if (existeCierreAlmacenPrPd(fecha, idSucursal)) {
             mensaje.append("No se puede registrar el cierre PR_PD verificar.").append('\n');
         }
         return mensaje.toString().trim();
@@ -978,14 +1043,14 @@ public class CuadreService {
                     "El grupo ya realizo cuadre para la fecha seleccionada."
             );
         }
-        if (coerceCount(otRepository.existeCierreAlmacenHoy(fecha, idSucursal)) > 0) {
+        if (existeCierreAlmacen(fecha, idSucursal)) {
             throw new ApiException(
                     HttpStatus.CONFLICT,
                     "CIERRE_ALMACEN_EXISTE",
                     "No se puede registrar el cuadre porque existe cierre de almacen para la fecha."
             );
         }
-        if (coerceCount(otRepository.existeCierreAlmacenHoyPrPd(fecha, idSucursal)) > 0) {
+        if (existeCierreAlmacenPrPd(fecha, idSucursal)) {
             throw new ApiException(
                     HttpStatus.CONFLICT,
                     "CIERRE_ALMACEN_PRPD_EXISTE",
@@ -1115,6 +1180,16 @@ public class CuadreService {
             }
         }
         return 0;
+    }
+
+    private boolean existeCierreAlmacen(LocalDate fecha, Integer idSucursal) {
+        return coerceCount(otRepository.existeCierreAlmacenHoy(fecha, idSucursal)) > 0
+                || otRepository.contarCierreAlmacenDirecto(fecha, idSucursal) > 0;
+    }
+
+    private boolean existeCierreAlmacenPrPd(LocalDate fecha, Integer idSucursal) {
+        return coerceCount(otRepository.existeCierreAlmacenHoyPrPd(fecha, idSucursal)) > 0
+                || otRepository.contarCierreAlmacenPrPdDirecto(fecha, idSucursal) > 0;
     }
 
     private AuthLoginResponse requireTecnico(String token) {

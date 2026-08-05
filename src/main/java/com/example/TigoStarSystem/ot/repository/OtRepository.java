@@ -901,6 +901,26 @@ public class OtRepository {
         }
     }
 
+    public int contarCierreAlmacenDirecto(LocalDate fecha, Integer idSucursal) {
+        Integer count = template(idSucursal).queryForObject(
+                "SELECT COUNT(1) FROM dbo.tbl_CierreAlmacen " +
+                        "WHERE CONVERT(date, Fecha) = ? AND ISNULL(E_Eliminado, 0) = 0",
+                Integer.class,
+                sqlDate(fecha)
+        );
+        return count == null ? 0 : count;
+    }
+
+    public int contarCierreAlmacenPrPdDirecto(LocalDate fecha, Integer idSucursal) {
+        Integer count = template(idSucursal).queryForObject(
+                "SELECT COUNT(1) FROM dbo.tbl_CierreAlmacenPR_PD " +
+                        "WHERE CONVERT(date, Fecha) = ? AND ISNULL(E_Eliminado, 0) = 0",
+                Integer.class,
+                sqlDate(fecha)
+        );
+        return count == null ? 0 : count;
+    }
+
     public List<Map<String, Object>> validaMovimientos(LocalDate fecha, Integer idSucursal) {
         JdbcTemplate target = template(idSucursal);
         Date fechaSql = sqlDate(fecha);
@@ -1659,15 +1679,15 @@ public class OtRepository {
     private Integer insertarCierreAlmacen(Connection connection, LocalDate fecha, Integer idUsuario) throws SQLException {
         String sql = "INSERT INTO dbo.tbl_CierreAlmacen " +
                 "(Id_Usuario, Fecha, Observacion, E_Eliminado, Fecha_Registro, CierreAlmacenPR_PD) " +
-                "OUTPUT INSERTED.Id_CierreAlmacen VALUES (?, ?, ?, 0, GETDATE(), 0)";
+                "VALUES (?, ?, ?, 0, GETDATE(), 0); " +
+                "SELECT CAST(SCOPE_IDENTITY() AS int)";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setInt(1, idUsuario);
             ps.setDate(2, sqlDate(fecha));
             ps.setString(3, "Cierre automatico");
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getInt(1);
-                }
+            Integer id = ejecutarBatchIdentidad(ps);
+            if (id != null) {
+                return id;
             }
         }
         throw new SQLException("No se pudo obtener Id_CierreAlmacen generado.");
@@ -1676,18 +1696,35 @@ public class OtRepository {
     private Integer insertarCierreAlmacenPrPd(Connection connection, LocalDate fecha, Integer idUsuario) throws SQLException {
         String sql = "INSERT INTO dbo.tbl_CierreAlmacenPR_PD " +
                 "(Id_Usuario, Fecha, Observacion, E_Eliminado, Fecha_Registro) " +
-                "OUTPUT INSERTED.Id_CierreAlmacenPR_PD VALUES (?, ?, ?, 0, GETDATE())";
+                "VALUES (?, ?, ?, 0, GETDATE()); " +
+                "SELECT CAST(SCOPE_IDENTITY() AS int)";
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setInt(1, idUsuario);
             ps.setDate(2, sqlDate(fecha));
             ps.setString(3, "Cierre automatico PR_PD");
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getInt(1);
-                }
+            Integer id = ejecutarBatchIdentidad(ps);
+            if (id != null) {
+                return id;
             }
         }
         throw new SQLException("No se pudo obtener Id_CierreAlmacenPR_PD generado.");
+    }
+
+    private Integer ejecutarBatchIdentidad(PreparedStatement ps) throws SQLException {
+        boolean hasResultSet = ps.execute();
+        while (true) {
+            if (hasResultSet) {
+                try (ResultSet rs = ps.getResultSet()) {
+                    if (rs != null && rs.next()) {
+                        return rs.getInt(1);
+                    }
+                }
+            } else if (ps.getUpdateCount() == -1) {
+                break;
+            }
+            hasResultSet = ps.getMoreResults();
+        }
+        return null;
     }
 
     private void insertarCodigoCierreAlmacen(Connection connection, Integer idCierre, Map<String, Object> row) throws SQLException {

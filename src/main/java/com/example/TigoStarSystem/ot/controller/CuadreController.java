@@ -100,6 +100,29 @@ public class CuadreController {
         ));
     }
 
+    @PostMapping("/sistemas/cierre/ejecutar")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> ejecutarCierreAutomaticoSistemas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        LocalDate fechaFinal = fecha == null ? LocalDate.now() : fecha;
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreService.ejecutarCierreAutomaticoSistemas(token, fechaFinal, idSucursal),
+                "Cierre automatico ejecutado."
+        ));
+    }
+
+    @GetMapping("/sistemas/cierres/notificaciones")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> notificacionesCierreAutomaticoSistemas(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "idSucursal", required = false) Integer idSucursal) {
+        return ResponseEntity.ok(ApiResponse.of(
+                cuadreService.obtenerNotificacionesCierreSistemas(token, idSucursal),
+                "Notificaciones de cierre automatico."
+        ));
+    }
+
     @GetMapping("/sistemas/automatico/progreso/{jobId}")
     public SseEmitter progresoCuadreAutomaticoSistemas(@PathVariable("jobId") String jobId) {
         return cuadreAutomaticoJobService.stream(jobId);

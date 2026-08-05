@@ -618,8 +618,8 @@ public class TecnicoInicioJornadaRepository {
         Set<String> columnas = obtenerColumnasInicioJornada(template);
         String columnaTrabajoSolo = firstExistingColumn(
                 columnas,
+                "EstoyTrabajandoSolo",
                 "estoy_trabajando_solo",
-                "estoyTrabajandoSolo",
                 "trabajando_solo",
                 "trabajandoSolo"
         );

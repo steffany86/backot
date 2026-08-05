@@ -63,8 +63,15 @@ public class SupervisionService {
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
-        return repository.listar(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite);
+        String sucursal = resolveSucursalNombre(me);
+        Integer idSucursal = resolveIdSucursal(me);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : repository.listar(null, fechaDesde, fechaHasta, limite)) {
+            if (perteneceSucursalEstricta(row, sucursal, idSucursal)) {
+                out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(row), sucursal));
+            }
+        }
+        return out;
     }
 
     public List<Map<String, Object>> listarPendientes(
@@ -74,16 +81,15 @@ public class SupervisionService {
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
         String sucursal = resolveSucursalNombre(me);
+        Integer idSucursal = resolveIdSucursal(me);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> pendiente : repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
-            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+        for (Map<String, Object> pendiente : repository.listarPendientes(null, fechaDesde, fechaHasta, limite)) {
+            if (perteneceSucursalEstricta(pendiente, sucursal, idSucursal)) {
+                out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+            }
         }
-        out.addAll(enriquecerRevisionesPenalizadas(
-                repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
-                sucursal
-        ));
+        out.addAll(listarRevisionesPenalizadasSucursal(sucursal));
         return out;
     }
 
@@ -101,9 +107,8 @@ public class SupervisionService {
 
     public Map<String, Object> obtenerDetalle(String idSupervision, String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
         String sucursal = resolveSucursalNombre(me);
-        Map<String, Object> detalle = repository.obtenerDetalle(idSupervision, String.valueOf(idSupervisor));
+        Map<String, Object> detalle = repository.obtenerDetalle(idSupervision, null);
         if (detalle == null) {
             throw new ApiException(
                     HttpStatus.NOT_FOUND,
@@ -188,6 +193,24 @@ public class SupervisionService {
                 request.getDescripcionAdicionalObservacion(),
                 request.getUbicacion()
         );
+        if (updated <= 0) {
+            updated = repository.realizarPendiente(
+                    idSupervision,
+                    null,
+                    request.getFotoBoletaSupervision(),
+                    request.getFotoCanalesPilos(),
+                    request.getFotoNivelesDocsis(),
+                    request.getFotoMedicionRuido(),
+                    request.getFotoBarridoCanales(),
+                    request.getFotoObservacion1(),
+                    request.getFotoObservacion2(),
+                    request.getFotoObservacion3(),
+                    request.getFotoObservacion4(),
+                    request.getObservacion(),
+                    request.getDescripcionAdicionalObservacion(),
+                    request.getUbicacion()
+            );
+        }
         if (updated <= 0 && esRevisionPenalizada(idSupervision)) {
             String idGenerado = repository.registrar(
                     idSupervisor,
@@ -271,10 +294,16 @@ public class SupervisionService {
 
     public List<Map<String, Object>> listarIniciosPendientes(String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSucursal = resolveIdSucursal(me);
         String sucursal = resolveSucursalNombre(me);
+        Integer idSucursal = resolveIdSucursal(me);
         try {
-            return repository.listarIniciosJornadaPendientesSucursal(idSucursal, sucursal);
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Map<String, Object> row : repository.listarIniciosJornadaPendientesSucursal(idSucursal, sucursal)) {
+                if (perteneceSucursalEstricta(row, sucursal, idSucursal)) {
+                    out.add(row);
+                }
+            }
+            return out;
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
@@ -282,10 +311,16 @@ public class SupervisionService {
 
     public List<Map<String, Object>> listarIniciosConfirmadosHoy(String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSucursal = resolveIdSucursal(me);
         String sucursal = resolveSucursalNombre(me);
+        Integer idSucursal = resolveIdSucursal(me);
         try {
-            return repository.listarIniciosJornadaConfirmadosHoySucursal(idSucursal, sucursal);
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Map<String, Object> row : repository.listarIniciosJornadaConfirmadosHoyTodos(sucursal)) {
+                if (perteneceSucursalEstricta(row, sucursal, idSucursal)) {
+                    out.add(row);
+                }
+            }
+            return out;
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
@@ -297,7 +332,6 @@ public class SupervisionService {
 
     public List<Map<String, Object>> listarHistoricoJornadasSupervisor(LocalDate fecha, LocalDate fechaDesde, LocalDate fechaHasta, Integer idTecnico, String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
         String sucursal = resolveSucursalNombre(me);
         LocalDate desde = fechaDesde == null ? (fecha == null ? LocalDate.now() : fecha) : fechaDesde;
         LocalDate hasta = fechaHasta == null ? desde : fechaHasta;
@@ -307,7 +341,7 @@ public class SupervisionService {
             hasta = tmp;
         }
         try {
-            return listarHistoricoJornadasRango(desde, hasta, sucursal, idSupervisor, idTecnico, true);
+            return listarHistoricoJornadasRango(desde, hasta, sucursal, null, idTecnico, false);
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
@@ -353,9 +387,15 @@ public class SupervisionService {
     }
 
     public Map<String, Object> obtenerDetalleInicioJornada(Integer idInicio, String token) {
-        authService.me(token);
+        AuthMeResponse me = authService.me(token);
+        String sucursal = resolveSucursalNombre(me);
+        Integer idSucursal = resolveIdSucursal(me);
         try {
-            return repository.obtenerDetalleInicioJornada(idInicio);
+            Map<String, Object> detalle = repository.obtenerDetalleInicioJornada(idInicio, sucursal);
+            if (!perteneceSucursalEstricta(detalle, sucursal, idSucursal)) {
+                return new LinkedHashMap<>();
+            }
+            return detalle;
         } catch (DataAccessException ex) {
             return new LinkedHashMap<>();
         }
@@ -590,6 +630,79 @@ public class SupervisionService {
         return null;
     }
 
+    private boolean perteneceSucursal(Map<String, Object> row, String sucursalSesion) {
+        if (isBlank(sucursalSesion)) {
+            return true;
+        }
+        String sucursalRow = asText(findValue(row, "sucursal", "Sucursal"));
+        if (isBlank(sucursalRow)) {
+            return true;
+        }
+        return normalizeName(sucursalSesion).equals(normalizeName(SucursalCanonicalizer.canonicalize(sucursalRow)));
+    }
+
+    private boolean perteneceSucursalEstricta(Map<String, Object> row, String sucursalSesion, Integer idSucursalSesion) {
+        if (row == null || row.isEmpty()) {
+            return false;
+        }
+        Integer idSucursalRow = toInteger(findValue(
+                row,
+                "idSucursal",
+                "id_sucursal",
+                "Id_Sucursal",
+                "IDSucursal",
+                "idSucursalInicio",
+                "id_sucursal_inicio",
+                "idSucursalJornada",
+                "id_sucursal_jornada",
+                "idSucursalTecnico",
+                "id_sucursal_tecnico"
+        ));
+        if (idSucursalRow != null && idSucursalSesion != null) {
+            return idSucursalSesion.equals(idSucursalRow);
+        }
+        String sucursalRow = asText(findValue(
+                row,
+                "sucursal",
+                "Sucursal",
+                "nombreSucursal",
+                "NombreSucursal",
+                "nombre_sucursal",
+                "Nombre_Sucursal",
+                "sucursalNombre",
+                "SucursalNombre"
+        ));
+        if (!isBlank(sucursalRow) && !isBlank(sucursalSesion)) {
+            return normalizeName(sucursalSesion).equals(normalizeName(SucursalCanonicalizer.canonicalize(sucursalRow)));
+        }
+        return false;
+    }
+
+    private List<Map<String, Object>> listarRevisionesPenalizadasSucursal(String sucursal) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<Map<String, Object>> supervisores = repository.listarSupervisores(sucursal);
+        for (Map<String, Object> supervisor : supervisores) {
+            Integer idSupervisor = toInteger(findValue(
+                    supervisor,
+                    "idSupervisor",
+                    "id_supervisor",
+                    "idUsuarioSupervisor",
+                    "id_usuario_supervisor",
+                    "idUsuario",
+                    "id_usuario",
+                    "Id_Usuario"
+            ));
+            if (idSupervisor == null || idSupervisor <= 0) {
+                continue;
+            }
+            out.addAll(enriquecerRevisionesPenalizadas(
+                    repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
+                    sucursal
+            ));
+        }
+        return out;
+    }
+
     private List<Map<String, Object>> enriquecerRevisionesPenalizadas(List<Map<String, Object>> revisiones, String sucursal) {
         if (revisiones == null || revisiones.isEmpty()) {
             return new ArrayList<>();
@@ -645,6 +758,20 @@ public class SupervisionService {
         if (value == null) return null;
         String text = String.valueOf(value).trim();
         return text.isEmpty() ? null : text;
+    }
+
+    private Integer toInteger(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        if (value == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value).trim().replaceAll("[^0-9-]", ""));
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private String normalizeName(String value) {

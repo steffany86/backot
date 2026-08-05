@@ -482,8 +482,8 @@ public class NpsService {
             supervisorNombre = null;
         } else if (esSupervisor) {
             rolConsulta = "SUPERVISOR";
-            // Regla: supervisor logeado manda su propio idSupervisor de sesion, no selector.
-            supervisorObjetivo = idUsuarioSesion;
+            // Supervisores consultan la sucursal completa; solo se filtra supervisor si el usuario lo selecciona.
+            supervisorObjetivo = idSupervisor;
             if (idTecnico != null) {
                 JdbcTemplate sucursalTemplate = resolveSucursalTemplate(sucursalObjetivo);
                 List<Integer> idsTecnicoNps = repository.listarIdsTecnicoNpsPorUsuario(sucursalTemplate, idTecnico);
@@ -491,14 +491,16 @@ public class NpsService {
             } else {
                 tecnicoObjetivo = null;
             }
-            supervisorNombre = null;
+            supervisorNombre = trimToNull(supervisorNombre);
         } else {
             rolConsulta = "CENTRAL";
             // Regla: central/admin toma supervisor y tecnico desde selectores.
         }
 
         Map<String, Object> scope = new LinkedHashMap<String, Object>();
-        String supervisorNombreObjetivo = "CENTRAL".equalsIgnoreCase(rolConsulta) ? trimToNull(supervisorNombre) : null;
+        String supervisorNombreObjetivo = ("CENTRAL".equalsIgnoreCase(rolConsulta) || "SUPERVISOR".equalsIgnoreCase(rolConsulta))
+                ? trimToNull(supervisorNombre)
+                : null;
         if (supervisorObjetivo != null) {
             // Si ya filtramos por idSupervisor, no forzar match por supervisor_1 de NPS.
             supervisorNombreObjetivo = null;
@@ -557,7 +559,9 @@ public class NpsService {
             filtrosTecnicos = propios;
         } else if ("SUPERVISOR".equalsIgnoreCase(rolConsulta)) {
             filtrosTecnicos = repository.listarTecnicosPorSupervisor(sucursalTemplate, sucursalObjetivo, supervisorObjetivo);
-            List<Map<String, Object>> historicos = repository.listarTecnicosHistoricosSupervisorNps(centralTemplate, supervisorObjetivo, sucursalObjetivo);
+            List<Map<String, Object>> historicos = supervisorObjetivo == null
+                    ? new ArrayList<Map<String, Object>>()
+                    : repository.listarTecnicosHistoricosSupervisorNps(centralTemplate, supervisorObjetivo, sucursalObjetivo);
             filtrosTecnicos = mergeTecnicosSinDuplicados(filtrosTecnicos, historicos);
         } else {
             List<Map<String, Object>> filtroCentral = repository.listarFiltrosCentralPorNombres(centralTemplate, sucursalObjetivo);
@@ -642,6 +646,15 @@ public class NpsService {
                         supervisorObjetivo == null ? 0 : supervisorObjetivo,
                         idUsuarioSesion
                 );
+        if ("SUPERVISOR".equalsIgnoreCase(rolConsulta) && supervisorObjetivo == null) {
+            String sucursalNombre = resolveSucursalNombre(sucursalObjetivo);
+            if (!isBlank(sucursalNombre)) {
+                List<Map<String, Object>> todosTecnicosSucursal = supervisionRepository.listarTecnicosDeGrupos(sucursalNombre);
+                if (todosTecnicosSucursal != null && !todosTecnicosSucursal.isEmpty()) {
+                    tecnicosConformacion = mergeTecnicosSinDuplicados(todosTecnicosSucursal, tecnicosConformacion);
+                }
+            }
+        }
         if ((tecnicosConformacion == null || tecnicosConformacion.isEmpty()) && supervisorObjetivo != null) {
             // Fallback: cuando la sucursal no tiene conformacion local cargada, usar historico central.
             tecnicosConformacion = repository.listarTecnicosHistoricosSupervisorNps(

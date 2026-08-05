@@ -613,18 +613,18 @@ public class SupervisionRepository {
         return enriquecerNombresTecnicos(rows, sucursal);
     }
 
-    public List<Map<String, Object>> listarIniciosJornadaPendientesTodos() {
+    public List<Map<String, Object>> listarIniciosJornadaPendientesTodos(String sucursal) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 "EXEC dbo.SP_Inicio_ListarPendientesHoyTodos"
         );
-        return enriquecerNombresTecnicos(rows, null);
+        return enriquecerNombresTecnicos(rows, sucursal);
     }
 
-    public List<Map<String, Object>> listarIniciosJornadaConfirmadosHoyTodos() {
+    public List<Map<String, Object>> listarIniciosJornadaConfirmadosHoyTodos(String sucursal) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 "EXEC dbo.SP_Inicio_ListarConfirmadosHoyTodos"
         );
-        return enriquecerNombresTecnicos(rows, null);
+        return enriquecerNombresTecnicos(rows, sucursal);
     }
 
     public List<Map<String, Object>> listarIniciosJornadaConfirmadosHoySucursal(Integer idSucursal, String sucursal) {
@@ -796,7 +796,8 @@ public class SupervisionRepository {
                 "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
                         "ij.fecha_registro, ij.fecha_cierre, ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, " +
                         "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
-                        "ij.nombre_tecnico, ij.tecnico_nombre, ij.firma_inicio, ij.firma_cierre " +
+                        "ij.nombre_tecnico, ij.tecnico_nombre, ij.EstoyTrabajandoSolo AS estoy_trabajando_solo, " +
+                        "ij.firma_inicio, ij.firma_cierre " +
                         "FROM dbo.tbl_InicioJornadaAlturas ij " +
                         "WHERE ij.fecha_registro >= ? " +
                         "  AND ij.fecha_registro < ? " +
@@ -1093,7 +1094,7 @@ public class SupervisionRepository {
         return out;
     }
 
-    public Map<String, Object> obtenerDetalleInicioJornada(Integer idInicio) {
+    public Map<String, Object> obtenerDetalleInicioJornada(Integer idInicio, String sucursal) {
         if (idInicio == null || idInicio <= 0) {
             return java.util.Collections.emptyMap();
         }
@@ -1104,11 +1105,15 @@ public class SupervisionRepository {
                             "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                             "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                             "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre " +
+                            "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, " +
+                            "EstoyTrabajandoSolo AS estoy_trabajando_solo, firma_inicio, firma_cierre " +
                             "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio = ?",
                     idInicio
             );
-            return rows == null || rows.isEmpty() ? java.util.Collections.emptyMap() : rows.get(0);
+            List<Map<String, Object>> enriquecidos = enriquecerNombresTecnicos(rows, sucursal);
+            return enriquecidos == null || enriquecidos.isEmpty()
+                    ? java.util.Collections.emptyMap()
+                    : enriquecidos.get(0);
         } catch (Exception ex) {
             return java.util.Collections.emptyMap();
         }
@@ -1290,11 +1295,20 @@ public class SupervisionRepository {
             if (idSucursalFila == null || idSucursalFila <= 0) {
                 idSucursalFila = toInteger(findValue(row, "id_sucursal", "idSucursal", "Id_Sucursal"));
             }
-            String sucursalFila = firstText(
+            String sucursalRealFila = firstText(
                     toText(findValue(inicioDetalle, "sucursal", "Sucursal")),
-                    toText(findValue(row, "sucursal", "Sucursal")),
-                    sucursalBase
+                    toText(findValue(row, "sucursal", "Sucursal"))
             );
+            String sucursalFila = firstText(sucursalRealFila, sucursalBase);
+            if (idSucursalFila != null && idSucursalFila > 0) {
+                row.put("idSucursal", idSucursalFila);
+                row.put("id_sucursal", idSucursalFila);
+            }
+            if (sucursalRealFila != null && !sucursalRealFila.trim().isEmpty()) {
+                String sucursalCanonica = com.example.TigoStarSystem.supervisor.SucursalCanonicalizer.canonicalize(sucursalRealFila);
+                row.put("sucursal", sucursalCanonica);
+                row.put("Sucursal", sucursalCanonica);
+            }
             JdbcTemplate sucursalTemplate = sucursalTemplateBase;
             Map<Integer, String> usuarios = usuariosBase;
             if (idSucursalFila != null && idSucursalFila > 0) {
@@ -1359,7 +1373,7 @@ public class SupervisionRepository {
                 }
             }
             if (inicioDetalle != null && !inicioDetalle.isEmpty()) {
-                copyIfMissing(row, inicioDetalle, "capacitado", "charla", "botiquin", "extintor", "fecha_vencimiento", "equipo_epp", "estado_epp", "apr", "escalera", "anclaje", "ubicacion_georef");
+                copyIfMissing(row, inicioDetalle, "capacitado", "charla", "botiquin", "extintor", "fecha_vencimiento", "estoy_trabajando_solo", "equipo_epp", "estado_epp", "apr", "escalera", "anclaje", "ubicacion_georef");
                 copyIfMissing(row, inicioDetalle,
                         "codigo_cliente_cierre", "codigoClienteCierre", "codigo_cliente", "codigoCliente",
                         "dano_material", "danoMaterial",
@@ -1404,37 +1418,44 @@ public class SupervisionRepository {
         if (ids.isEmpty()) {
             return out;
         }
-        StringBuilder sql = new StringBuilder(
-                "SELECT id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
+        Object[] params = new Object[ids.size()];
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) {
+                placeholders.append(",");
+            }
+            placeholders.append("?");
+            params[i] = ids.get(i);
+        }
+
+        String[] columnasConsultadas = new String[]{
+                "id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
                         "pendiente, capacitado, charla, botiquin, extintor, fecha_vencimiento, equipo_epp, " +
                         "estado_epp, apr, escalera, anclaje, e_eliminado, codigo_cliente, dano_material, " +
                         "observacion_material, dano_persona, observacion_persona, novedades_trabajo, " +
                         "observacion_novedades, ubicacion_georef, no_marco_cierre, id_usuario_supervisor_grupo, " +
-                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, firma_inicio, firma_cierre " +
-                        "FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio IN ("
-        );
-        Object[] params = new Object[ids.size()];
-        for (int i = 0; i < ids.size(); i++) {
-            if (i > 0) {
-                sql.append(",");
-            }
-            sql.append("?");
-            params[i] = ids.get(i);
-        }
-        sql.append(")");
-        try {
-            List<Map<String, Object>> detalles = tigohogarJdbcTemplate.queryForList(sql.toString(), params);
-            if (detalles == null || detalles.isEmpty()) {
-                return out;
-            }
-            for (Map<String, Object> detalle : detalles) {
-                Integer idInicio = toInteger(findValue(detalle, "id_inicio", "idInicio"));
-                if (idInicio != null && idInicio > 0 && !out.containsKey(idInicio)) {
-                    out.put(idInicio, detalle);
+                        "id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, " +
+                        "EstoyTrabajandoSolo AS estoy_trabajando_solo, firma_inicio, firma_cierre",
+                "id_inicio, id_tecnico, id_auxiliar, id_encargado, fecha_registro, fecha_cierre, " +
+                        "pendiente, e_eliminado, no_marco_cierre, id_sucursal, sucursal, nombre_tecnico, tecnico_nombre, " +
+                        "EstoyTrabajandoSolo AS estoy_trabajando_solo"
+        };
+        for (String columnas : columnasConsultadas) {
+            try {
+                List<Map<String, Object>> detalles = tigohogarJdbcTemplate.queryForList(
+                        "SELECT " + columnas + " FROM dbo.tbl_InicioJornadaAlturas WHERE id_inicio IN (" + placeholders + ")",
+                        params
+                );
+                for (Map<String, Object> detalle : detalles) {
+                    Integer idInicio = toInteger(findValue(detalle, "id_inicio", "idInicio"));
+                    if (idInicio != null && idInicio > 0) {
+                        out.putIfAbsent(idInicio, detalle);
+                    }
                 }
+                return out;
+            } catch (Exception ignored) {
+                out.clear();
             }
-        } catch (Exception ignored) {
-            return out;
         }
         return out;
     }
