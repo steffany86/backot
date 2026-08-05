@@ -725,6 +725,8 @@ public class OtService {
                     request.getTieneObservacion(),
                     request.getLatitud(),
                     request.getLongitud(),
+                    request.getLatitudVenta(),
+                    request.getLongitudVenta(),
                     idSucursalResolucion
             );
             logRegistroOtWbTiming("sp-registrar-venta", stepStart, totalStart, request);

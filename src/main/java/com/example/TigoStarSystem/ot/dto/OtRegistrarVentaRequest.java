@@ -48,6 +48,12 @@ public class OtRegistrarVentaRequest {
     @NotNull(message = "longitud es requerida")
     private BigDecimal longitud;
 
+    @JsonAlias({"latitud_venta", "LatitudVenta", "LATITUD_VENTA"})
+    private BigDecimal latitudVenta;
+
+    @JsonAlias({"longitud_venta", "LongitudVenta", "LONGITUD_VENTA"})
+    private BigDecimal longitudVenta;
+
     @NotBlank(message = "nodo es requerido")
     @Pattern(regexp = "^[A-Za-z]{3}\\d{3,4}$", message = "nodo debe tener formato 3 letras y 3 o 4 numeros, ejemplo SCZ123 o SCZ1234")
     private String nodo;
@@ -208,6 +214,22 @@ public class OtRegistrarVentaRequest {
 
     public void setLongitud(BigDecimal longitud) {
         this.longitud = longitud;
+    }
+
+    public BigDecimal getLatitudVenta() {
+        return latitudVenta;
+    }
+
+    public void setLatitudVenta(BigDecimal latitudVenta) {
+        this.latitudVenta = latitudVenta;
+    }
+
+    public BigDecimal getLongitudVenta() {
+        return longitudVenta;
+    }
+
+    public void setLongitudVenta(BigDecimal longitudVenta) {
+        this.longitudVenta = longitudVenta;
     }
 
     public String getNodo() {

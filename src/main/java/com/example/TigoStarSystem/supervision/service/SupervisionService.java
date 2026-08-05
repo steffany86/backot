@@ -271,10 +271,10 @@ public class SupervisionService {
 
     public List<Map<String, Object>> listarIniciosPendientes(String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
+        Integer idSucursal = resolveIdSucursal(me);
         String sucursal = resolveSucursalNombre(me);
         try {
-            return repository.listarIniciosJornadaPendientesSupervisor(idSupervisor, sucursal);
+            return repository.listarIniciosJornadaPendientesSucursal(idSucursal, sucursal);
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
@@ -282,10 +282,10 @@ public class SupervisionService {
 
     public List<Map<String, Object>> listarIniciosConfirmadosHoy(String token) {
         AuthMeResponse me = authService.me(token);
-        Integer idSupervisor = resolveIdUsuario(me);
+        Integer idSucursal = resolveIdSucursal(me);
         String sucursal = resolveSucursalNombre(me);
         try {
-            return repository.listarIniciosJornadaConfirmadosHoySupervisor(idSupervisor, sucursal);
+            return repository.listarIniciosJornadaConfirmadosHoySucursal(idSucursal, sucursal);
         } catch (DataAccessException ex) {
             return new ArrayList<>();
         }
@@ -451,6 +451,18 @@ public class SupervisionService {
             );
         }
         return idUsuario;
+    }
+
+    private Integer resolveIdSucursal(AuthMeResponse me) {
+        Integer idSucursal = me != null && me.getUsuario() != null ? me.getUsuario().getIdSucursal() : null;
+        if (idSucursal == null || idSucursal <= 0) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "SUCURSAL_REQUIRED",
+                    "No se pudo identificar la sucursal de la sesion."
+            );
+        }
+        return idSucursal;
     }
 
     private JornadaImagen decodeImagen(Object raw) {

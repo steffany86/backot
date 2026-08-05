@@ -605,10 +605,10 @@ public class SupervisionRepository {
         return out;
     }
 
-    public List<Map<String, Object>> listarIniciosJornadaPendientesSupervisor(Integer idSupervisor, String sucursal) {
+    public List<Map<String, Object>> listarIniciosJornadaPendientesSucursal(Integer idSucursal, String sucursal) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 "EXEC dbo.SP_Inicio_ListarPendientesSupervisorHoy ?",
-                idSupervisor
+                idSucursal
         );
         return enriquecerNombresTecnicos(rows, sucursal);
     }
@@ -627,10 +627,10 @@ public class SupervisionRepository {
         return enriquecerNombresTecnicos(rows, null);
     }
 
-    public List<Map<String, Object>> listarIniciosJornadaConfirmadosHoySupervisor(Integer idSupervisor, String sucursal) {
+    public List<Map<String, Object>> listarIniciosJornadaConfirmadosHoySucursal(Integer idSucursal, String sucursal) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 "EXEC dbo.SP_Inicio_ListarConfirmadosSupervisorHoy ?",
-                idSupervisor
+                idSucursal
         );
         return enriquecerNombresTecnicos(rows, sucursal);
     }
