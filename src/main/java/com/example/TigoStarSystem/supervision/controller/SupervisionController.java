@@ -41,9 +41,10 @@ public class SupervisionController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
             @RequestParam(value = "fechaHasta", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
+            @RequestParam(value = "idSupervisor", required = false) String idSupervisor,
             @RequestParam(value = "limite", required = false) Integer limite) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listar(fechaDesde, fechaHasta, limite, token),
+                service.listar(fechaDesde, fechaHasta, idSupervisor, limite, token),
                 "Listado de notas de supervision."
         ));
     }
@@ -55,9 +56,10 @@ public class SupervisionController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
             @RequestParam(value = "fechaHasta", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
+            @RequestParam(value = "idSupervisor", required = false) String idSupervisor,
             @RequestParam(value = "limite", required = false) Integer limite) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarPendientes(fechaDesde, fechaHasta, limite, token),
+                service.listarPendientes(fechaDesde, fechaHasta, idSupervisor, limite, token),
                 "Listado de supervisiones pendientes (agenda)."
         ));
     }

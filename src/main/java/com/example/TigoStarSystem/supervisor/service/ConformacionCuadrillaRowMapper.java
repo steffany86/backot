@@ -338,6 +338,13 @@ final class ConformacionCuadrillaRowMapper {
             idUsuarioRegistra = idUsuarioSupervisor;
         }
         out.put("idUsuarioRegistra", idUsuarioRegistra);
+        out.put("supervisorConfirmo", getCaseInsensitive(
+                row,
+                "supervisorConfirmo",
+                "supervisor_confirmo",
+                "usuarioConfirmo",
+                "confirmadoPor"
+        ));
         out.put("fechaRegistro", getCaseInsensitive(row, "fechaRegistro", "fecha_registro"));
 
         boolean eliminado = isEliminado(row);

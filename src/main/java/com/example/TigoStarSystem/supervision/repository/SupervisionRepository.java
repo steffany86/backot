@@ -1191,12 +1191,13 @@ public class SupervisionRepository {
         }
     }
 
-    public int aprobarInicioJornada(Integer idSupervisor, Integer idInicio) {
+    public int aprobarInicioJornada(Integer idSupervisor, String nombreSupervisor, Integer idInicio) {
         Integer updated = tigohogarJdbcTemplate.queryForObject(
-                "EXEC dbo.SP_Inicio_AprobarSupervisor ?, ?",
+                "EXEC dbo.SP_Inicio_AprobarSupervisor ?, ?, ?",
                 Integer.class,
                 idInicio,
-                idSupervisor
+                idSupervisor,
+                nombreSupervisor
         );
         return updated == null ? 0 : updated;
     }
@@ -1211,11 +1212,13 @@ public class SupervisionRepository {
         return updated == null ? 0 : updated;
     }
 
-    public int aprobarInicioJornadaPorId(Integer idInicio) {
+    public int aprobarInicioJornadaPorId(Integer idInicio, Integer idSupervisor, String nombreSupervisor) {
         Integer updated = tigohogarJdbcTemplate.queryForObject(
-                "EXEC dbo.SP_Inicio_AprobarPorIdHoy ?",
+                "EXEC dbo.SP_Inicio_AprobarPorIdHoy ?, ?, ?",
                 Integer.class,
-                idInicio
+                idInicio,
+                idSupervisor,
+                nombreSupervisor
         );
         return updated == null ? 0 : updated;
     }

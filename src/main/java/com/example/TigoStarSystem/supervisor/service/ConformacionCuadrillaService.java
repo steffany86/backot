@@ -261,9 +261,34 @@ public class ConformacionCuadrillaService {
         LocalDate fechaConsulta = resolverFecha(fecha);
         List<Map<String, Object>> rows = repository.listarConEliminadosCentral(fechaConsulta, sucursal, null, null);
         List<Map<String, Object>> out = new ArrayList<>();
+        Map<Integer, String> nombresConfirmadores = new HashMap<>();
         for (Map<String, Object> row : rows) {
             if (rowMapper.isEliminado(row)) {
                 continue;
+            }
+            Object nombreActual = getCaseInsensitive(
+                    row,
+                    "supervisorConfirmo",
+                    "supervisor_confirmo",
+                    "usuarioConfirmo",
+                    "confirmadoPor"
+            );
+            if (nombreActual == null || String.valueOf(nombreActual).trim().isEmpty()) {
+                Integer idUsuarioRegistra = valueAsInteger(getCaseInsensitive(
+                        row,
+                        "idUsuarioRegistra",
+                        "id_usuario_registra",
+                        "idusuarioregistra"
+                ));
+                if (idUsuarioRegistra != null) {
+                    String nombre = nombresConfirmadores.computeIfAbsent(
+                            idUsuarioRegistra,
+                            id -> repository.obtenerNombreUsuarioPorId(id, sucursal)
+                    );
+                    if (nombre != null && !nombre.trim().isEmpty()) {
+                        row.put("supervisorConfirmo", nombre);
+                    }
+                }
             }
             out.add(rowMapper.mapConfirmada(row, sucursal, fechaConsulta));
         }

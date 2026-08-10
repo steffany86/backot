@@ -59,17 +59,16 @@ public class SupervisionService {
     public List<Map<String, Object>> listar(
             LocalDate fechaDesde,
             LocalDate fechaHasta,
+            String idSupervisorFiltro,
             Integer limite,
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
         String sucursal = resolveSucursalNombre(me);
-        Integer idSucursal = resolveIdSucursal(me);
+        Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> row : repository.listar(null, fechaDesde, fechaHasta, limite)) {
-            if (perteneceSucursalEstricta(row, sucursal, idSucursal)) {
-                out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(row), sucursal));
-            }
+        for (Map<String, Object> row : repository.listar(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
+            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(row), sucursal));
         }
         return out;
     }
@@ -77,20 +76,59 @@ public class SupervisionService {
     public List<Map<String, Object>> listarPendientes(
             LocalDate fechaDesde,
             LocalDate fechaHasta,
+            String idSupervisorFiltro,
             Integer limite,
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
         String sucursal = resolveSucursalNombre(me);
-        Integer idSucursal = resolveIdSucursal(me);
+        Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> pendiente : repository.listarPendientes(null, fechaDesde, fechaHasta, limite)) {
-            if (perteneceSucursalEstricta(pendiente, sucursal, idSucursal)) {
-                out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+        for (Map<String, Object> pendiente : repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
+            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+        }
+        out.addAll(enriquecerRevisionesPenalizadas(
+                repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
+                sucursal
+        ));
+        return out;
+    }
+
+    private Integer resolveSupervisorConsulta(AuthMeResponse me, String sucursal, String idSupervisorFiltro) {
+        Integer idUsuarioSesion = resolveIdUsuario(me);
+        if (isBlank(idSupervisorFiltro)) {
+            return idUsuarioSesion;
+        }
+
+        Integer idSupervisor = toInteger(idSupervisorFiltro);
+        if (idSupervisor == null || idSupervisor <= 0) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "idSupervisor no es valido.");
+        }
+        if (idSupervisor.equals(idUsuarioSesion)) {
+            return idSupervisor;
+        }
+
+        for (Map<String, Object> supervisor : repository.listarSupervisores(sucursal)) {
+            Integer idPermitido = toInteger(findValue(
+                    supervisor,
+                    "idSupervisor",
+                    "id_supervisor",
+                    "idUsuarioSupervisor",
+                    "id_usuario_supervisor",
+                    "idUsuario",
+                    "id_usuario",
+                    "Id_Usuario"
+            ));
+            if (idSupervisor.equals(idPermitido)) {
+                return idSupervisor;
             }
         }
-        out.addAll(listarRevisionesPenalizadasSucursal(sucursal));
-        return out;
+
+        throw new ApiException(
+                HttpStatus.FORBIDDEN,
+                "SUPERVISOR_NOT_ALLOWED",
+                "El supervisor seleccionado no pertenece a la sucursal de la sesion."
+        );
     }
 
     public List<Map<String, Object>> listarBackofficePorEstado(
@@ -452,9 +490,10 @@ public class SupervisionService {
     public Map<String, Object> aprobarInicioPendiente(Integer idInicio, String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
-        int updated = repository.aprobarInicioJornada(idSupervisor, idInicio);
+        String nombreSupervisor = me.getUsuario().getNombre();
+        int updated = repository.aprobarInicioJornada(idSupervisor, nombreSupervisor, idInicio);
         if (updated <= 0) {
-            updated = repository.aprobarInicioJornadaPorId(idInicio);
+            updated = repository.aprobarInicioJornadaPorId(idInicio, idSupervisor, nombreSupervisor);
         }
         if (updated <= 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro inicio pendiente para aprobar.");

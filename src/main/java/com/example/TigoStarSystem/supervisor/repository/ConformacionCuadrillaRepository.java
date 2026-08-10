@@ -305,11 +305,16 @@ public class ConformacionCuadrillaRepository {
         if (centralJdbcTemplate == null) {
             throw new IllegalStateException("No hay datasource central configurado para guardar confirmaciones.");
         }
+        String supervisorConfirmo = obtenerNombreUsuarioPorId(
+                fila == null ? null : fila.getIdUsuarioRegistra(),
+                fila == null ? null : fila.getSucursal()
+        );
         // Regla principal: la confirmacion debe persistirse siempre en BDControlOrdenes.
         int affectedCentral = ejecutarRegistrar(centralJdbcTemplate, fila);
         if (affectedCentral <= 0) {
             throw new IllegalStateException("No se pudo guardar la confirmacion en BDControlOrdenes.");
         }
+        actualizarSupervisorConfirmo(centralJdbcTemplate, fila, supervisorConfirmo);
 
         // Replica obligatoria en base local de la sucursal seleccionada.
         List<JdbcTemplate> templates = construirTemplatesEscritura(
@@ -326,6 +331,7 @@ public class ConformacionCuadrillaRepository {
                 try {
                     int affectedLocal = ejecutarRegistrar(template, fila);
                     if (affectedLocal > 0) {
+                        actualizarSupervisorConfirmo(template, fila, supervisorConfirmo);
                         guardadoLocal = true;
                         break;
                     }
@@ -341,6 +347,79 @@ public class ConformacionCuadrillaRepository {
             throw new IllegalStateException("No se pudo guardar la confirmacion en la BD local de la sucursal.");
         }
         return affectedCentral;
+    }
+
+    public String obtenerNombreUsuarioPorId(Integer idUsuario, String sucursal) {
+        if (idUsuario == null || idUsuario <= 0) {
+            return null;
+        }
+        String sucursalNormalizada = normalizeText(sucursal);
+        if (sucursalNormalizada.contains("santacruz")) {
+            try {
+                List<Map<String, Object>> rows = queryForList(
+                        centralJdbcTemplate,
+                        "SELECT TOP 1 Nombre FROM [tigo.makiro.com.bo].BDSistemaAntenaPM.dbo.tbl_Usuario " +
+                                "WHERE Id_Usuario = ?",
+                        idUsuario
+                );
+                if (rows != null && !rows.isEmpty()) {
+                    String nombre = asTrimmedText(findValueCaseInsensitive(rows.get(0), "Nombre"));
+                    if (!isBlank(nombre)) {
+                        return nombre;
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // Continua con la conexion directa de la sucursal.
+            }
+        }
+        List<JdbcTemplate> templates = construirTemplatesEscritura(sucursal, null);
+        if (!containsTemplate(templates, jdbcTemplate)) {
+            templates.add(jdbcTemplate);
+        }
+        for (JdbcTemplate template : templates) {
+            try {
+                List<Map<String, Object>> rows = queryForList(
+                        template,
+                        "SELECT TOP 1 Nombre FROM dbo.tbl_Usuario WHERE Id_Usuario = ?",
+                        idUsuario
+                );
+                if (rows != null && !rows.isEmpty()) {
+                    String nombre = asTrimmedText(findValueCaseInsensitive(rows.get(0), "Nombre"));
+                    if (!isBlank(nombre)) {
+                        return nombre;
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // Continua con el siguiente datasource de sucursal.
+            }
+        }
+        return null;
+    }
+
+    private void actualizarSupervisorConfirmo(
+            JdbcTemplate template,
+            ConformacionCuadrillaRowRequest fila,
+            String supervisorConfirmo) {
+        if (template == null || fila == null || isBlank(supervisorConfirmo)
+                || fila.getFecha() == null || fila.getIdTecnico() == null
+                || fila.getIdUsuarioRegistra() == null) {
+            return;
+        }
+        try {
+            template.update(
+                    "UPDATE dbo.tbl_ConformacionCuadrillaDiario " +
+                            "SET supervisorConfirmo = ? " +
+                            "WHERE id = (SELECT TOP 1 id FROM dbo.tbl_ConformacionCuadrillaDiario " +
+                            "WHERE fecha = ? AND id_tecnico = ? AND idUsuarioRegistra = ? " +
+                            "ORDER BY id DESC)",
+                    supervisorConfirmo,
+                    Date.valueOf(fila.getFecha()),
+                    fila.getIdTecnico(),
+                    fila.getIdUsuarioRegistra()
+            );
+        } catch (DataAccessException ignored) {
+            // Bases locales antiguas pueden no tener todavia la columna de auditoria.
+        }
     }
 
     /**

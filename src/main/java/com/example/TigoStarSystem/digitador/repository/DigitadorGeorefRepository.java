@@ -12,22 +12,15 @@ import java.util.Map;
 
 @Repository
 public class DigitadorGeorefRepository {
-    private final JdbcTemplate jdbcTemplate;
     private final JdbcTemplate centralJdbcTemplate;
 
     public DigitadorGeorefRepository(
-            JdbcTemplate jdbcTemplate,
             @Qualifier("centralJdbcTemplate") JdbcTemplate centralJdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
         this.centralJdbcTemplate = centralJdbcTemplate;
     }
 
     public List<Map<String, Object>> listarAnalisisDistancias(LocalDate fecha) {
-        try {
-            return ejecutarSpAnalisisDistancias(jdbcTemplate, fecha);
-        } catch (DataAccessException ex) {
-            return ejecutarSpAnalisisDistancias(centralJdbcTemplate, fecha);
-        }
+        return ejecutarSpAnalisisDistancias(centralJdbcTemplate, fecha);
     }
 
     private List<Map<String, Object>> ejecutarSpAnalisisDistancias(JdbcTemplate template, LocalDate fecha) {
@@ -42,10 +35,6 @@ public class DigitadorGeorefRepository {
     }
 
     public int confirmarAnalisisDistancia(Long id, boolean confirmarUbicacion, boolean confirmarNodo, String usuarioModifica) {
-        int updated = actualizarAnalisisDistancia(jdbcTemplate, id, confirmarUbicacion, confirmarNodo, usuarioModifica);
-        if (updated > 0) {
-            return updated;
-        }
         return actualizarAnalisisDistancia(centralJdbcTemplate, id, confirmarUbicacion, confirmarNodo, usuarioModifica);
     }
 
