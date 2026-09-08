@@ -15,13 +15,16 @@ import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Repository
 public class SupervisionRepository {
     private static final String SP_LISTAR =
-            "EXEC dbo.spx_ListarSupervisionManual ?, ?, ?, ?";
+            "EXEC dbo.spx_ListarSupervisionManual ?, ?, ?";
     private static final String SP_LISTAR_PENDIENTES =
             "EXEC dbo.spx_ListarSupervisionPendiente ?, ?, ?, ?";
+    private static final String SP_LISTAR_PENDIENTES_TODOS =
+            "EXEC dbo.spx_ListarSupervisionPendienteTodos ?, ?, ?";
     private static final String SP_LISTAR_POR_ESTADO =
             "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?";
     private static final String SP_OBTENER_DETALLE =
@@ -67,8 +70,7 @@ public class SupervisionRepository {
                 SP_LISTAR,
                 idSupervisor,
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
-                fechaHasta == null ? null : Date.valueOf(fechaHasta),
-                resolveLimit(limite)
+                fechaHasta == null ? null : Date.valueOf(fechaHasta)
         );
     }
 
@@ -76,6 +78,15 @@ public class SupervisionRepository {
         return tigohogarJdbcTemplate.queryForList(
                 SP_LISTAR_PENDIENTES,
                 idSupervisor,
+                fechaDesde == null ? null : Date.valueOf(fechaDesde),
+                fechaHasta == null ? null : Date.valueOf(fechaHasta),
+                resolveLimit(limite)
+        );
+    }
+
+    public List<Map<String, Object>> listarPendientesTodos(java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite) {
+        return tigohogarJdbcTemplate.queryForList(
+                SP_LISTAR_PENDIENTES_TODOS,
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
                 fechaHasta == null ? null : Date.valueOf(fechaHasta),
                 resolveLimit(limite)
@@ -664,7 +675,8 @@ public class SupervisionRepository {
         if (idTecnico != null && idTecnico > 0) {
             idsParaResolverUsuario.add(idTecnico);
         }
-        Map<Integer, Set<Integer>> usuariosPorTecnico = resolverUsuariosPorTecnico(sucursal, idsParaResolverUsuario);
+        Set<Integer> tecnicosSinRutaActiva = new LinkedHashSet<>();
+        Map<Integer, Set<Integer>> usuariosPorTecnico = resolverUsuariosPorTecnico(sucursal, idsParaResolverUsuario, tecnicosSinRutaActiva);
         List<Map<String, Object>> jornadas = queryHistoricoJornadas(fechaConsulta, sucursal, idTecnico, esperadosPorTecnico.keySet(), usuariosPorTecnico);
         jornadas = enriquecerNombresTecnicos(jornadas, sucursal);
 
@@ -701,6 +713,9 @@ public class SupervisionRepository {
 
         for (Map.Entry<Integer, Map<String, Object>> entry : esperadosPorTecnico.entrySet()) {
             if (conRegistro.contains(entry.getKey())) {
+                continue;
+            }
+            if (tecnicosSinRutaActiva.contains(entry.getKey())) {
                 continue;
             }
             out.add(crearJornadaSinInicio(entry.getKey(), entry.getValue(), fechaConsulta));
@@ -792,42 +807,15 @@ public class SupervisionRepository {
     }
 
     private List<Map<String, Object>> queryHistoricoJornadasChunk(java.time.LocalDate fecha, String sucursal, Map<Integer, Integer> idsUsuarioTecnico) {
-        StringBuilder sql = new StringBuilder(
-                "SELECT ij.id_inicio, ij.id_tecnico, ij.id_auxiliar, ij.id_encargado, " +
-                        "ij.fecha_registro, ij.fecha_cierre, ij.pendiente, ij.e_eliminado, ij.no_marco_cierre, " +
-                        "ij.id_usuario_supervisor_grupo, ij.id_sucursal, ij.sucursal, " +
-                        "ij.nombre_tecnico, ij.tecnico_nombre, ij.EstoyTrabajandoSolo AS estoy_trabajando_solo, " +
-                        "ij.firma_inicio, ij.firma_cierre " +
-                        "FROM dbo.tbl_InicioJornadaAlturas ij " +
-                        "WHERE ij.fecha_registro >= ? " +
-                        "  AND ij.fecha_registro < ? " +
-                        "  AND ISNULL(ij.e_eliminado, 0) = 0 "
-        );
-        List<Object> params = new ArrayList<>();
-        params.add(Date.valueOf(fecha));
-        params.add(Date.valueOf(fecha.plusDays(1)));
         String sucursalNorm = trimToNull(sucursal);
-        if (sucursalNorm != null) {
-            sql.append(" AND LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(ij.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = ")
-                    .append("LOWER(REPLACE(REPLACE(REPLACE(?, '_', ''), '-', ''), ' ', '')) ");
-            params.add(sucursalNorm);
-        }
-        if (idsUsuarioTecnico != null && !idsUsuarioTecnico.isEmpty()) {
-            sql.append(" AND ij.id_tecnico IN (");
-            int i = 0;
-            for (Integer idUsuario : idsUsuarioTecnico.keySet()) {
-                if (i > 0) {
-                    sql.append(",");
-                }
-                sql.append("?");
-                params.add(idUsuario);
-                i++;
-            }
-            sql.append(") ");
-        }
-        sql.append("ORDER BY ij.fecha_registro ASC, ij.id_inicio ASC");
+        String idsCsv = (idsUsuarioTecnico == null || idsUsuarioTecnico.isEmpty())
+                ? null
+                : idsUsuarioTecnico.keySet().stream().map(String::valueOf).collect(Collectors.joining(","));
         try {
-            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(sql.toString(), params.toArray());
+            List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
+                    "EXEC dbo.spx_Sup_ListarHistoricoJornadas ?, ?, ?, ?",
+                    Date.valueOf(fecha), Date.valueOf(fecha), sucursalNorm, idsCsv
+            );
             if (idsUsuarioTecnico != null && !idsUsuarioTecnico.isEmpty()) {
                 for (Map<String, Object> row : rows) {
                     Integer idUsuario = toInteger(findValue(row, "id_tecnico", "idTecnico"));
@@ -844,7 +832,7 @@ public class SupervisionRepository {
         }
     }
 
-    private Map<Integer, Set<Integer>> resolverUsuariosPorTecnico(String sucursal, Set<Integer> idsTecnicos) {
+    private Map<Integer, Set<Integer>> resolverUsuariosPorTecnico(String sucursal, Set<Integer> idsTecnicos, Set<Integer> sinRutaActivaOut) {
         Map<Integer, Set<Integer>> out = new LinkedHashMap<>();
         if (idsTecnicos == null || idsTecnicos.isEmpty()) {
             return out;
@@ -864,36 +852,39 @@ public class SupervisionRepository {
         int chunkSize = 800;
         for (int from = 0; from < ids.size(); from += chunkSize) {
             int to = Math.min(from + chunkSize, ids.size());
-            resolverUsuariosPorTecnicoChunk(template, ids.subList(from, to), out);
+            resolverUsuariosPorTecnicoChunk(template, ids.subList(from, to), out, sinRutaActivaOut);
         }
         return out;
     }
 
-    private void resolverUsuariosPorTecnicoChunk(JdbcTemplate template, List<Integer> idsTecnicos, Map<Integer, Set<Integer>> out) {
+    private void resolverUsuariosPorTecnicoChunk(
+            JdbcTemplate template,
+            List<Integer> idsTecnicos,
+            Map<Integer, Set<Integer>> out,
+            Set<Integer> sinRutaActivaOut) {
         if (template == null || idsTecnicos == null || idsTecnicos.isEmpty()) {
             return;
         }
-        StringBuilder sql = new StringBuilder(
-                "SELECT ut.Id_Vendedor, ut.id_Usuario " +
-                        "FROM dbo.tbl_UsuarioTecnico ut " +
-                        "WHERE ISNULL(ut.e_eliminado,0)=0 AND ut.Id_Vendedor IN ("
-        );
-        List<Object> params = new ArrayList<>();
-        for (int i = 0; i < idsTecnicos.size(); i++) {
-            if (i > 0) {
-                sql.append(",");
-            }
-            sql.append("?");
-            params.add(idsTecnicos.get(i));
-        }
-        sql.append(") ORDER BY ut.id DESC");
+        String idsCsv = idsTecnicos.stream().map(String::valueOf).collect(Collectors.joining(","));
         try {
-            List<Map<String, Object>> rows = template.queryForList(sql.toString(), params.toArray());
+            List<Map<String, Object>> rows = template.queryForList(
+                    "EXEC dbo.spx_Sup_ResolverUsuariosPorTecnico ?",
+                    idsCsv
+            );
             for (Map<String, Object> row : rows) {
                 Integer idTecnico = toInteger(findValue(row, "Id_Vendedor", "id_vendedor"));
                 Integer idUsuario = toInteger(findValue(row, "id_Usuario", "idUsuario"));
                 if (idTecnico != null && idTecnico > 0 && idUsuario != null && idUsuario > 0) {
                     out.computeIfAbsent(idTecnico, ignored -> new LinkedHashSet<>()).add(idUsuario);
+                }
+                if (idTecnico != null && idTecnico > 0 && sinRutaActivaOut != null) {
+                    Object tieneRutaActivaRaw = findValue(row, "tieneRutaActiva");
+                    boolean sinRutaActiva = tieneRutaActivaRaw instanceof Boolean
+                            ? !((Boolean) tieneRutaActivaRaw)
+                            : tieneRutaActivaRaw instanceof Number && ((Number) tieneRutaActivaRaw).intValue() == 0;
+                    if (tieneRutaActivaRaw != null && sinRutaActiva) {
+                        sinRutaActivaOut.add(idTecnico);
+                    }
                 }
             }
         } catch (Exception ignored) {
@@ -963,46 +954,14 @@ public class SupervisionRepository {
     private List<Map<String, Object>> listarTecnicosEsperadosJornada(String sucursal, Integer idSupervisor) {
         JdbcTemplate central = dbConnectionManager.connDb("bdcontrolordenes");
         String sucursalNorm = trimToNull(sucursal);
-        Object[] params = new Object[]{
-                sucursalNorm, sucursalNorm, idSupervisor, idSupervisor,
-                sucursalNorm, sucursalNorm, idSupervisor, idSupervisor
-        };
-        String baseWhere =
-                "WHERE ISNULL(c.e_eliminado, 0) = 0 " +
-                        "  AND (? IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''))), '_', ''), '-', ''), ' ', '')) = " +
-                        "                  LOWER(REPLACE(REPLACE(REPLACE(?, '_', ''), '-', ''), ' ', ''))) " +
-                        "  AND (? IS NULL OR CAST(c.idUsuarioSupervisor AS INT) = ?) ";
-        String sqlAuxCamel = construirSqlTecnicosEsperados(baseWhere, "c.id_tecnicoAuxiliar");
-        String sqlAuxSnake = construirSqlTecnicosEsperados(baseWhere, "c.id_tecnico_auxiliar");
         try {
-            return central.queryForList(sqlAuxCamel, params);
+            return central.queryForList(
+                    "EXEC dbo.spx_Sup_ListarTecnicosEsperadosJornada ?, ?",
+                    sucursalNorm, idSupervisor
+            );
         } catch (Exception ex) {
-            try {
-                return central.queryForList(sqlAuxSnake, params);
-            } catch (Exception ignored) {
-                return new ArrayList<>();
-            }
+            return new ArrayList<>();
         }
-    }
-
-    private String construirSqlTecnicosEsperados(String baseWhere, String auxColumn) {
-        return "WITH tecnicos AS ( " +
-                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(c.id_tecnico AS INT) AS idTecnico, c.tecnico AS tecnico, c.fecha, c.fechaRegistro, c.id " +
-                "  FROM dbo.tbl_ConformacionCuadrillaDiario c " +
-                baseWhere +
-                "    AND c.id_tecnico IS NOT NULL AND c.id_tecnico > 0 " +
-                "  UNION ALL " +
-                "  SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo, CAST(" + auxColumn + " AS INT) AS idTecnico, c.auxiliar AS tecnico, c.fecha, c.fechaRegistro, c.id " +
-                "  FROM dbo.tbl_ConformacionCuadrillaDiario c " +
-                baseWhere +
-                "    AND " + auxColumn + " IS NOT NULL AND " + auxColumn + " > 0 " +
-                "), ranked AS ( " +
-                "  SELECT *, ROW_NUMBER() OVER (PARTITION BY idTecnico ORDER BY ISNULL(fecha, '19000101') DESC, ISNULL(fechaRegistro, '19000101') DESC, id DESC) AS rn " +
-                "  FROM tecnicos " +
-                ") " +
-                "SELECT CAST(idTecnico AS INT) AS idTecnico, CAST(idTecnico AS INT) AS id_tecnico, tecnico AS tecnicoNombre, tecnico, " +
-                "       sucursal, grupo, CAST(idUsuarioSupervisor AS INT) AS idSupervisor, supervisorACargo AS supervisorNombre " +
-                "FROM ranked WHERE rn = 1 ORDER BY sucursal, grupo, tecnico";
     }
 
     private Map<String, Object> normalizarHistoricoJornada(
@@ -1047,6 +1006,8 @@ public class SupervisionRepository {
         if (supervisorNombre == null && esperado != null) {
             supervisorNombre = toText(findValue(esperado, "supervisorNombre"));
         }
+        String supervisorAproboInicio = toText(findValue(row, "supervisorAproboInicio", "supervisor_aprobo_inicio"));
+        Object fechaAprobacionInicio = findValue(row, "fechaAprobacionInicio", "fecha_aprobacion_inicio");
 
         out.put("idInicio", idInicio);
         out.put("idTecnico", idTecnico);
@@ -1063,6 +1024,8 @@ public class SupervisionRepository {
         out.put("grupo", grupo);
         out.put("idSupervisor", idSupervisor);
         out.put("supervisorNombre", supervisorNombre);
+        out.put("supervisorAproboInicio", supervisorAproboInicio);
+        out.put("fechaAprobacionInicio", fechaAprobacionInicio);
         boolean sinCierre = (noMarcoCierre != null && noMarcoCierre == 1) || fechaCierre == null;
         out.put("sinInicio", false);
         out.put("sinCierre", sinCierre);
@@ -1261,6 +1224,26 @@ public class SupervisionRepository {
                         "AND ISNULL(pendiente, 0) = 1",
                 idInicio
         );
+    }
+
+    /**
+     * Se ejecuta como paso separado tras rechazarInicioJornada/PorId/Directo porque los SP legacy
+     * de rechazo no reciben ni guardan el motivo. La columna real en bd_tigohogar se llama
+     * "observacionrechazado" (sin guion bajo); si el entorno no la tiene, la excepcion se ignora
+     * en vez de romper el flujo de rechazo (que ya se aplico).
+     */
+    public void actualizarObservacionRechazado(Integer idInicio, String observacionRechazado) {
+        if (idInicio == null || idInicio <= 0 || observacionRechazado == null) {
+            return;
+        }
+        try {
+            tigohogarJdbcTemplate.update(
+                    "UPDATE dbo.tbl_InicioJornadaAlturas SET observacionrechazado = ? WHERE id_inicio = ?",
+                    observacionRechazado,
+                    idInicio
+            );
+        } catch (Exception ignored) {
+        }
     }
 
     private int resolveLimit(Integer limite) {

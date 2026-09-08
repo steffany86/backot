@@ -45,9 +45,10 @@ public class BackOfficeSupervisionController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
             @RequestParam(value = "fechaHasta", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
+            @RequestParam(value = "idSupervisor", required = false) String idSupervisor,
             @RequestParam(value = "limite", required = false) Integer limite) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, limite, token),
+                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, idSupervisor, limite, token),
                 "Listado de supervisiones por estado."
         ));
     }

@@ -67,7 +67,7 @@ public class SupervisionService {
         String sucursal = resolveSucursalNombre(me);
         Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> row : repository.listar(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
+        for (Map<String, Object> row : repository.listar(idSupervisor == null ? null : String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
             out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(row), sucursal));
         }
         return out;
@@ -84,7 +84,7 @@ public class SupervisionService {
         String sucursal = resolveSucursalNombre(me);
         Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> pendiente : repository.listarPendientes(String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
+        for (Map<String, Object> pendiente : repository.listarPendientes(idSupervisor == null ? null : String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
             out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
         }
         out.addAll(enriquecerRevisionesPenalizadas(
@@ -94,10 +94,15 @@ public class SupervisionService {
         return out;
     }
 
+    private static final String SUPERVISOR_FILTRO_TODOS = "TODOS";
+
     private Integer resolveSupervisorConsulta(AuthMeResponse me, String sucursal, String idSupervisorFiltro) {
         Integer idUsuarioSesion = resolveIdUsuario(me);
         if (isBlank(idSupervisorFiltro)) {
             return idUsuarioSesion;
+        }
+        if (SUPERVISOR_FILTRO_TODOS.equalsIgnoreCase(idSupervisorFiltro.trim())) {
+            return null;
         }
 
         Integer idSupervisor = toInteger(idSupervisorFiltro);
@@ -135,12 +140,29 @@ public class SupervisionService {
             String estadoSup,
             LocalDate fechaDesde,
             LocalDate fechaHasta,
+            String idSupervisorFiltro,
             Integer limite,
             String token) {
-        authService.me(token);
+        AuthMeResponse me = authService.me(token);
         validarRangoFechas(fechaDesde, fechaHasta);
         String estado = normalizarEstadoSup(estadoSup);
-        return repository.listarPorEstado(estado, null, fechaDesde, fechaHasta, limite);
+        if ("pendiente".equals(estado)) {
+            String sucursal = resolveSucursalNombre(me);
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite)) {
+                out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+            }
+            return out;
+        }
+        String idSupervisor = isBlank(idSupervisorFiltro) || SUPERVISOR_FILTRO_TODOS.equalsIgnoreCase(idSupervisorFiltro.trim())
+                ? null
+                : idSupervisorFiltro.trim();
+        String sucursal = resolveSucursalNombre(me);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> registro : repository.listarPorEstado(estado, idSupervisor, fechaDesde, fechaHasta, limite)) {
+            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(registro), sucursal));
+        }
+        return out;
     }
 
     public Map<String, Object> obtenerDetalle(String idSupervision, String token) {
@@ -507,7 +529,7 @@ public class SupervisionService {
         return out;
     }
 
-    public Map<String, Object> rechazarInicioPendiente(Integer idInicio, String token) {
+    public Map<String, Object> rechazarInicioPendiente(Integer idInicio, String token, String observacionRechazado) {
         AuthMeResponse me = authService.me(token);
         Integer idSupervisor = resolveIdUsuario(me);
         int updated = repository.rechazarInicioJornada(idSupervisor, idInicio);
@@ -519,6 +541,9 @@ public class SupervisionService {
         }
         if (updated <= 0) {
             throw new ApiException(HttpStatus.NOT_FOUND, "NOT_FOUND", "No se encontro inicio pendiente para rechazar.");
+        }
+        if (observacionRechazado != null && !observacionRechazado.trim().isEmpty()) {
+            repository.actualizarObservacionRechazado(idInicio, observacionRechazado.trim());
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("idInicio", idInicio);

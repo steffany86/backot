@@ -238,9 +238,11 @@ public class SupervisionController {
     @PostMapping("/jornadas/{idInicio}/rechazar")
     public ResponseEntity<ApiResponse<Map<String, Object>>> rechazarJornada(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
-            @PathVariable("idInicio") Integer idInicio) {
+            @PathVariable("idInicio") Integer idInicio,
+            @RequestBody(required = false) Map<String, Object> body) {
+        Object observacionRechazado = body == null ? null : body.get("observacionRechazado");
         return ResponseEntity.ok(ApiResponse.of(
-                service.rechazarInicioPendiente(idInicio, token),
+                service.rechazarInicioPendiente(idInicio, token, observacionRechazado == null ? null : String.valueOf(observacionRechazado)),
                 "Inicio de jornada rechazado."
         ));
     }

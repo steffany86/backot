@@ -66,6 +66,18 @@ public class TecnicoInicioJornadaService {
         out.put("pendiente", !existe);
         out.put("fechaServidor", java.time.OffsetDateTime.now().toString());
         agregarCierrePendienteAyer(out, cierrePendienteAyer);
+        if (!existe) {
+            Map<String, Object> rechazadoHoy = repository.buscarInicioRechazadoHoy(tigohogarJdbcTemplate, tecnico.getIdUsuario());
+            if (rechazadoHoy != null) {
+                String observacion = valueAsString(rechazadoHoy.get("observacion_rechazado"));
+                out.put("inicioRechazadoHoy", true);
+                out.put("idInicioRechazado", rechazadoHoy.get("id_inicio"));
+                out.put("fechaInicioRechazado", valueAsString(rechazadoHoy.get("fecha_registro")));
+                if (!isBlank(observacion)) {
+                    out.put("observacionRechazado", observacion);
+                }
+            }
+        }
         if (encargadoActual != null) {
             String encargado = valueAsString(encargadoActual.get("encargado"));
             String idEncargado = valueAsString(encargadoActual.get("idEncargado"));

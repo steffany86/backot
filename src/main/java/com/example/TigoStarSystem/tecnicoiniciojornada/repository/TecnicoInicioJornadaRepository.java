@@ -807,6 +807,29 @@ public class TecnicoInicioJornadaRepository {
         return text.isEmpty() ? null : text;
     }
 
+    public Map<String, Object> buscarInicioRechazadoHoy(JdbcTemplate template, Integer idTecnico) {
+        if (template == null || idTecnico == null || idTecnico <= 0) {
+            return null;
+        }
+        Set<String> columnas = obtenerColumnasInicioJornada(template);
+        String columnaObservacion = firstExistingColumn(columnas, "observacionrechazado", "observacion_rechazado", "ObservacionRechazado");
+        String selectObservacion = columnaObservacion == null ? "NULL AS observacion_rechazado" : ("[" + columnaObservacion + "] AS observacion_rechazado");
+        try {
+            List<Map<String, Object>> rows = template.queryForList(
+                    "SELECT TOP 1 id_inicio, fecha_registro, " + selectObservacion + " " +
+                            "FROM dbo.tbl_InicioJornadaAlturas " +
+                            "WHERE id_tecnico = ? " +
+                            "  AND CAST(fecha_registro AS DATE) = CAST(GETDATE() AS DATE) " +
+                            "  AND ISNULL(e_eliminado, 0) = 1 " +
+                            "ORDER BY fecha_registro DESC, id_inicio DESC",
+                    idTecnico
+            );
+            return rows.isEmpty() ? null : rows.get(0);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
     private Set<String> obtenerColumnasInicioJornada(JdbcTemplate template) {
         Set<String> out = new HashSet<>();
         List<Map<String, Object>> rows = template.queryForList(
