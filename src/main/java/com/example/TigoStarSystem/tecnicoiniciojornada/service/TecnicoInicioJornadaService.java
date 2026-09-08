@@ -146,6 +146,9 @@ public class TecnicoInicioJornadaService {
                 || isBlank(request.getAnclaje()) || isBlank(request.getImagen())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "Todos los campos del checklist y la foto son obligatorios.");
         }
+        if (request.getFechaVencimiento().isBefore(java.time.LocalDate.now(java.time.ZoneId.of("America/La_Paz")))) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La fecha de vencimiento del extintor no puede ser una fecha pasada.");
+        }
         if (isBlank(request.getFirmaInicio())) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La firma de inicio es obligatoria.");
         }
@@ -190,11 +193,19 @@ public class TecnicoInicioJornadaService {
         Integer idAuxiliarRegistro = request.getIdAuxiliar() != null && request.getIdAuxiliar() > 0
                 ? request.getIdAuxiliar()
                 : idAuxiliarConformacion;
-        if (idAuxiliarRegistro != null && isBlank(request.getImagenAuxiliar())) {
+        if (idAuxiliarRegistro != null) {
+            if (isBlank(request.getImagenAuxiliar())) {
+                throw new ApiException(
+                        HttpStatus.BAD_REQUEST,
+                        "VALIDATION_ERROR",
+                        "Debe cargar la foto del auxiliar asignado para registrar el inicio de jornada."
+                );
+            }
+        } else if (!Boolean.TRUE.equals(request.getEstoyTrabajandoSolo())) {
             throw new ApiException(
                     HttpStatus.BAD_REQUEST,
                     "VALIDATION_ERROR",
-                    "Debe cargar la foto del auxiliar asignado para registrar el inicio de jornada."
+                    "No tiene un auxiliar asignado en la conformacion de cuadrilla de hoy. Debe confirmar que esta trabajando solo para registrar el inicio de jornada."
             );
         }
 

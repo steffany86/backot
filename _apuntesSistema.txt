@@ -1,4 +1,5 @@
 ****Marca en historico de jornadas
-Algún ítem del checklist respondido "NO" — capacitado, charla, botiquín, extintor, equipo EPP, estado EPP, APR, escalera o anclaje.
-"Ubicación georef faltante" — el campo ubicacion_georef no tiene un formato lat,lng válido (vacío o con otro formato).
-"Foto auxiliar faltante" — hay un auxiliar asignado (requiereFotoAuxiliar) pero no se pudo resolver su imagen.
+*Algún ítem del checklist respondido "NO" — capacitado, charla, botiquín, extintor, equipo EPP, estado EPP, APR, escalera o anclaje.
+*"Ubicación georef faltante" — el campo ubicacion_georef no tiene un formato lat,lng válido (vacío o con otro formato).
+*"Foto auxiliar faltante" — hay un auxiliar asignado (requiereFotoAuxiliar) pero no se pudo resolver su imagen.
+* fecha vencimiento extintor
