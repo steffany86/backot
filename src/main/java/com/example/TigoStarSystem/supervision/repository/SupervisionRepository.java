@@ -30,9 +30,9 @@ public class SupervisionRepository {
     private static final String SP_OBTENER_DETALLE =
             "EXEC dbo.spx_ObtenerSupervisionManualPorId ?, ?";
     private static final String SP_REGISTRAR =
-            "EXEC dbo.spx_RegistrarSupervisionManual ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+            "EXEC dbo.spx_RegistrarSupervisionManual ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_REGISTRAR_PENDIENTE =
-            "EXEC dbo.spx_RegistrarSupervisionPendiente ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+            "EXEC dbo.spx_RegistrarSupervisionPendiente ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_REALIZAR_PENDIENTE =
             "EXEC dbo.spx_RealizarSupervisionPendiente ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_TECNICOS_AGENDA_SUP =
@@ -295,7 +295,14 @@ public class SupervisionRepository {
             String fotoObservacion4,
             String observacion,
             String descripcionAdicionalObservacion,
-            String ubicacion) {
+            String ubicacion,
+            String nombreSupervisor,
+            String sucursal,
+            String origen,
+            String nombreTecnicoPrincipal,
+            String nombreTipoSupervision,
+            String nombreTipoTrabajo,
+            String nombreTipoPenalizacion) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 SP_REGISTRAR,
                 idSupervisor,
@@ -320,7 +327,14 @@ public class SupervisionRepository {
                 trimToNull(fotoObservacion4),
                 trimToNull(observacion),
                 trimToNull(descripcionAdicionalObservacion),
-                trimToNull(ubicacion)
+                trimToNull(ubicacion),
+                trimToNull(nombreSupervisor),
+                trimToNull(sucursal),
+                trimToNull(origen),
+                trimToNull(nombreTecnicoPrincipal),
+                trimToNull(nombreTipoSupervision),
+                trimToNull(nombreTipoTrabajo),
+                trimToNull(nombreTipoPenalizacion)
         );
 
         if (rows != null && !rows.isEmpty()) {
@@ -1880,7 +1894,14 @@ public class SupervisionRepository {
             String observacion,
             String descripcionAdicionalObservacion,
             String ubicacion,
-            String creadoPor) {
+            String creadoPor,
+            String nombreSupervisor,
+            String sucursal,
+            String origen,
+            String nombreTecnicoPrincipal,
+            String nombreTipoSupervision,
+            String nombreTipoTrabajo,
+            String nombreTipoPenalizacion) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 SP_REGISTRAR_PENDIENTE,
                 trimToNull(idSupervisorAsignado),
@@ -1906,7 +1927,14 @@ public class SupervisionRepository {
                 trimToNull(observacion),
                 trimToNull(descripcionAdicionalObservacion),
                 trimToNull(ubicacion),
-                trimToNull(creadoPor)
+                trimToNull(creadoPor),
+                trimToNull(nombreSupervisor),
+                trimToNull(sucursal),
+                trimToNull(origen),
+                trimToNull(nombreTecnicoPrincipal),
+                trimToNull(nombreTipoSupervision),
+                trimToNull(nombreTipoTrabajo),
+                trimToNull(nombreTipoPenalizacion)
         );
 
         if (rows != null && !rows.isEmpty()) {

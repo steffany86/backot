@@ -204,6 +204,18 @@ public class SupervisionService {
             );
         }
 
+        String sucursal = resolveSucursalNombre(me);
+        CamposDenormalizados campos = resolverCamposDenormalizados(
+                sucursal,
+                "MANUAL",
+                idSupervisor,
+                resolveNombreUsuario(me),
+                request.getIdTecnicoPrincipal(),
+                request.getIdTipoSupervision(),
+                request.getIdTipoTrabajo(),
+                request.getIdTipoPenalizacion()
+        );
+
         String idGenerado = repository.registrar(
                 idSupervisor,
                 request.getIdTecnicoPrincipal(),
@@ -227,7 +239,14 @@ public class SupervisionService {
                 request.getFotoObservacion4(),
                 request.getObservacion(),
                 request.getDescripcionAdicionalObservacion(),
-                request.getUbicacion()
+                request.getUbicacion(),
+                campos.nombreSupervisor,
+                campos.sucursal,
+                campos.origen,
+                campos.nombreTecnicoPrincipal,
+                campos.nombreTipoSupervision,
+                campos.nombreTipoTrabajo,
+                campos.nombreTipoPenalizacion
         );
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -285,6 +304,17 @@ public class SupervisionService {
             );
         }
         if (updated <= 0 && esRevisionPenalizada(idSupervision)) {
+            String sucursalPenalizada = resolveSucursalNombre(me);
+            CamposDenormalizados camposPenalizada = resolverCamposDenormalizados(
+                    sucursalPenalizada,
+                    "REV_PENALIZADA",
+                    idSupervisor,
+                    resolveNombreUsuario(me),
+                    request.getIdTecnicoPrincipal(),
+                    request.getIdTipoSupervision(),
+                    request.getIdTipoTrabajo(),
+                    request.getIdTipoPenalizacion()
+            );
             String idGenerado = repository.registrar(
                     idSupervisor,
                     request.getIdTecnicoPrincipal(),
@@ -308,7 +338,14 @@ public class SupervisionService {
                     request.getFotoObservacion4(),
                     request.getObservacion(),
                     request.getDescripcionAdicionalObservacion(),
-                    request.getUbicacion()
+                    request.getUbicacion(),
+                    camposPenalizada.nombreSupervisor,
+                    camposPenalizada.sucursal,
+                    camposPenalizada.origen,
+                    camposPenalizada.nombreTecnicoPrincipal,
+                    camposPenalizada.nombreTipoSupervision,
+                    camposPenalizada.nombreTipoTrabajo,
+                    camposPenalizada.nombreTipoPenalizacion
             );
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("idSupervision", idGenerado);
@@ -876,6 +913,18 @@ public class SupervisionService {
             );
         }
 
+        String sucursal = resolveSucursalNombre(me);
+        CamposDenormalizados campos = resolverCamposDenormalizados(
+                sucursal,
+                "PENDIENTE",
+                request.getIdSupervisorAsignado(),
+                null,
+                request.getIdTecnicoPrincipal(),
+                request.getIdTipoSupervision(),
+                request.getIdTipoTrabajo(),
+                request.getIdTipoPenalizacion()
+        );
+
         String idGenerado = repository.registrarPendiente(
                 request.getIdSupervisorAsignado(),
                 request.getIdTecnicoPrincipal(),
@@ -900,7 +949,14 @@ public class SupervisionService {
                 request.getObservacion(),
                 request.getDescripcionAdicionalObservacion(),
                 request.getUbicacion(),
-                creadoPor
+                creadoPor,
+                campos.nombreSupervisor,
+                campos.sucursal,
+                campos.origen,
+                campos.nombreTecnicoPrincipal,
+                campos.nombreTipoSupervision,
+                campos.nombreTipoTrabajo,
+                campos.nombreTipoPenalizacion
         );
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -977,6 +1033,114 @@ public class SupervisionService {
         if (!isBlank(login)) return login.trim();
         Integer idUsuario = me != null && me.getUsuario() != null ? me.getUsuario().getIdUsuario() : null;
         return idUsuario == null ? null : String.valueOf(idUsuario);
+    }
+
+    private static final class CamposDenormalizados {
+        final String nombreSupervisor;
+        final String sucursal;
+        final String origen;
+        final String nombreTecnicoPrincipal;
+        final String nombreTipoSupervision;
+        final String nombreTipoTrabajo;
+        final String nombreTipoPenalizacion;
+
+        CamposDenormalizados(
+                String nombreSupervisor,
+                String sucursal,
+                String origen,
+                String nombreTecnicoPrincipal,
+                String nombreTipoSupervision,
+                String nombreTipoTrabajo,
+                String nombreTipoPenalizacion) {
+            this.nombreSupervisor = nombreSupervisor;
+            this.sucursal = sucursal;
+            this.origen = origen;
+            this.nombreTecnicoPrincipal = nombreTecnicoPrincipal;
+            this.nombreTipoSupervision = nombreTipoSupervision;
+            this.nombreTipoTrabajo = nombreTipoTrabajo;
+            this.nombreTipoPenalizacion = nombreTipoPenalizacion;
+        }
+    }
+
+    private CamposDenormalizados resolverCamposDenormalizados(
+            String sucursal,
+            String origen,
+            Object idSupervisor,
+            String nombreSupervisorConocido,
+            String idTecnicoPrincipal,
+            String idTipoSupervision,
+            String idTipoTrabajo,
+            String idTipoPenalizacion) {
+        Map<String, Object> temp = new LinkedHashMap<>();
+        if (idSupervisor != null) temp.put("idSupervisor", idSupervisor);
+        if (!isBlank(idTecnicoPrincipal)) temp.put("idTecnicoPrincipal", idTecnicoPrincipal);
+        Map<String, Object> enriquecido = temp.isEmpty() ? temp : repository.enriquecerDetalleConNombres(temp, sucursal);
+
+        String nombreSupervisor = !isBlank(nombreSupervisorConocido)
+                ? nombreSupervisorConocido
+                : asText(findValue(enriquecido, "supervisorNombre", "supervisor"));
+        String nombreTecnicoPrincipal = asText(findValue(enriquecido, "tecnicoPrincipalNombre", "tecnicoNombre"));
+
+        String nombreTipoSupervision = resolverNombreCatalogo(
+                listarTiposSupervisionSeguro(),
+                idTipoSupervision,
+                new String[]{"idTipoSupervision", "Id_TipoSupervision", "id"},
+                new String[]{"tipoSupervision", "TipoSupervision", "Nombre", "nombre"});
+        String nombreTipoTrabajo = resolverNombreCatalogo(
+                listarTiposTrabajoSeguro(),
+                idTipoTrabajo,
+                new String[]{"idTipoTrabajo", "Id_TipoTrabajo", "id"},
+                new String[]{"tipoTrabajo", "TipoTrabajo", "Nombre", "nombre"});
+        String nombreTipoPenalizacion = resolverNombreCatalogo(
+                listarTiposPenalizacionSeguro(),
+                idTipoPenalizacion,
+                new String[]{"idTipoPenalizacion", "Id_TipoPenalizacion", "id"},
+                new String[]{"tipoPenalizacion", "Nombre", "nombre"});
+
+        return new CamposDenormalizados(
+                nombreSupervisor, sucursal, origen, nombreTecnicoPrincipal,
+                nombreTipoSupervision, nombreTipoTrabajo, nombreTipoPenalizacion);
+    }
+
+    private String resolverNombreCatalogo(
+            List<Map<String, Object>> catalogo,
+            String idBuscado,
+            String[] idKeys,
+            String[] nombreKeys) {
+        if (isBlank(idBuscado) || catalogo == null) return null;
+        String idNormalizado = idBuscado.trim();
+        for (Map<String, Object> item : catalogo) {
+            Object idValor = findValue(item, idKeys);
+            if (idValor != null && idNormalizado.equalsIgnoreCase(String.valueOf(idValor).trim())) {
+                Object nombre = findValue(item, nombreKeys);
+                return nombre == null ? null : asText(String.valueOf(nombre));
+            }
+        }
+        return null;
+    }
+
+    private List<Map<String, Object>> listarTiposSupervisionSeguro() {
+        try {
+            return repository.listarTiposSupervision();
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    private List<Map<String, Object>> listarTiposTrabajoSeguro() {
+        try {
+            return repository.listarTiposTrabajo();
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    private List<Map<String, Object>> listarTiposPenalizacionSeguro() {
+        try {
+            return repository.listarTiposPenalizacion();
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
     }
 
 }
