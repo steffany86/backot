@@ -47,9 +47,10 @@ public class BackOfficeSupervisionController {
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
             @RequestParam(value = "idSupervisor", required = false) String idSupervisor,
             @RequestParam(value = "limite", required = false) Integer limite,
-            @RequestParam(value = "sucursal", required = false) String sucursal) {
+            @RequestParam(value = "sucursal", required = false) String sucursal,
+            @RequestParam(value = "tecnicoPrincipal", required = false) String tecnicoPrincipal) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, idSupervisor, limite, sucursal, token),
+                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, idSupervisor, limite, sucursal, tecnicoPrincipal, token),
                 "Listado de supervisiones por estado."
         ));
     }
@@ -60,6 +61,15 @@ public class BackOfficeSupervisionController {
         return ResponseEntity.ok(ApiResponse.of(
                 service.listarSucursalesSupervisionBackoffice(token),
                 "Listado de sucursales."
+        ));
+    }
+
+    @GetMapping("/filtros/tecnicos-principales")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarTecnicosPrincipalesFiltro(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarTecnicosPrincipalesSupervisionBackoffice(token),
+                "Listado de tecnicos principales."
         ));
     }
 

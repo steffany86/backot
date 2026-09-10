@@ -24,9 +24,11 @@ public class SupervisionRepository {
     private static final String SP_LISTAR_PENDIENTES =
             "EXEC dbo.spx_ListarSupervisionPendiente ?, ?, ?, ?";
     private static final String SP_LISTAR_PENDIENTES_TODOS =
-            "EXEC dbo.spx_ListarSupervisionPendienteTodos ?, ?, ?, ?";
+            "EXEC dbo.spx_ListarSupervisionPendienteTodos ?, ?, ?, ?, ?";
     private static final String SP_LISTAR_SUCURSALES_SUPERVISION =
             "EXEC dbo.spx_ListarSucursalesSupervision";
+    private static final String SP_LISTAR_TECNICOS_PRINCIPALES_SUPERVISION =
+            "EXEC dbo.spx_ListarTecnicosPrincipalesSupervision";
     private static final String SP_LISTAR_POR_ESTADO =
             "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?";
     private static final String SP_OBTENER_DETALLE =
@@ -87,21 +89,30 @@ public class SupervisionRepository {
     }
 
     public List<Map<String, Object>> listarPendientesTodos(java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite) {
-        return listarPendientesTodos(fechaDesde, fechaHasta, limite, null);
+        return listarPendientesTodos(fechaDesde, fechaHasta, limite, null, null);
     }
 
     public List<Map<String, Object>> listarPendientesTodos(java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite, String sucursal) {
+        return listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursal, null);
+    }
+
+    public List<Map<String, Object>> listarPendientesTodos(java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite, String sucursal, String tecnicoPrincipal) {
         return tigohogarJdbcTemplate.queryForList(
                 SP_LISTAR_PENDIENTES_TODOS,
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
                 fechaHasta == null ? null : Date.valueOf(fechaHasta),
                 resolveLimit(limite),
-                trimToNull(sucursal)
+                trimToNull(sucursal),
+                trimToNull(tecnicoPrincipal)
         );
     }
 
     public List<Map<String, Object>> listarSucursalesSupervision() {
         return tigohogarJdbcTemplate.queryForList(SP_LISTAR_SUCURSALES_SUPERVISION);
+    }
+
+    public List<Map<String, Object>> listarTecnicosPrincipalesSupervision() {
+        return tigohogarJdbcTemplate.queryForList(SP_LISTAR_TECNICOS_PRINCIPALES_SUPERVISION);
     }
 
     public List<Map<String, Object>> listarRevisionesPenalizadasSupervisor(Integer idSupervisor) {

@@ -156,7 +156,7 @@ public class SupervisionService {
             String idSupervisorFiltro,
             Integer limite,
             String token) {
-        return listarBackofficePorEstado(estadoSup, fechaDesde, fechaHasta, idSupervisorFiltro, limite, null, token);
+        return listarBackofficePorEstado(estadoSup, fechaDesde, fechaHasta, idSupervisorFiltro, limite, null, null, token);
     }
 
     public List<Map<String, Object>> listarBackofficePorEstado(
@@ -166,6 +166,7 @@ public class SupervisionService {
             String idSupervisorFiltro,
             Integer limite,
             String sucursalFiltro,
+            String tecnicoPrincipalFiltro,
             String token) {
         AuthMeResponse me = authService.me(token);
         validarRangoFechas(fechaDesde, fechaHasta);
@@ -173,10 +174,13 @@ public class SupervisionService {
         String sucursalTabla = isBlank(sucursalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursalFiltro.trim())
                 ? null
                 : sucursalFiltro.trim();
+        String tecnicoPrincipalTabla = isBlank(tecnicoPrincipalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(tecnicoPrincipalFiltro.trim())
+                ? null
+                : tecnicoPrincipalFiltro.trim();
         if ("pendiente".equals(estado)) {
             String sucursal = resolveSucursalNombre(me);
             List<Map<String, Object>> out = new ArrayList<>();
-            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla)) {
+            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla, tecnicoPrincipalTabla)) {
                 out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
             }
             return out;
@@ -986,6 +990,15 @@ public class SupervisionService {
         authService.me(token);
         try {
             return repository.listarSucursalesSupervision();
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
+    }
+
+    public List<Map<String, Object>> listarTecnicosPrincipalesSupervisionBackoffice(String token) {
+        authService.me(token);
+        try {
+            return repository.listarTecnicosPrincipalesSupervision();
         } catch (DataAccessException ex) {
             return java.util.Collections.emptyList();
         }
