@@ -190,7 +190,7 @@ public class SupervisionService {
                 : idSupervisorFiltro.trim();
         String sucursal = resolveSucursalNombre(me);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> registro : repository.listarPorEstado(estado, idSupervisor, fechaDesde, fechaHasta, limite)) {
+        for (Map<String, Object> registro : repository.listarPorEstado(estado, idSupervisor, fechaDesde, fechaHasta, limite, sucursalTabla, supervisorNombreTabla)) {
             out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(registro), sucursal));
         }
         return out;
@@ -996,12 +996,17 @@ public class SupervisionService {
     }
 
     public List<Map<String, Object>> listarNombresSupervisorSupervisionBackoffice(String sucursalFiltro, String token) {
+        return listarNombresSupervisorSupervisionBackoffice(sucursalFiltro, "pendiente", token);
+    }
+
+    public List<Map<String, Object>> listarNombresSupervisorSupervisionBackoffice(String sucursalFiltro, String estadoSup, String token) {
         authService.me(token);
         String sucursalTabla = isBlank(sucursalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursalFiltro.trim())
                 ? null
                 : sucursalFiltro.trim();
+        String estado = normalizarEstadoSup(estadoSup);
         try {
-            return repository.listarNombresSupervisorSupervision(sucursalTabla);
+            return repository.listarNombresSupervisorSupervision(sucursalTabla, estado);
         } catch (DataAccessException ex) {
             return java.util.Collections.emptyList();
         }

@@ -28,9 +28,9 @@ public class SupervisionRepository {
     private static final String SP_LISTAR_SUCURSALES_SUPERVISION =
             "EXEC dbo.spx_ListarSucursalesSupervision";
     private static final String SP_LISTAR_NOMBRES_SUPERVISOR_SUPERVISION =
-            "EXEC dbo.spx_ListarNombresSupervisorSupervision ?";
+            "EXEC dbo.spx_ListarNombresSupervisorSupervision ?, ?";
     private static final String SP_LISTAR_POR_ESTADO =
-            "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?";
+            "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_OBTENER_DETALLE =
             "EXEC dbo.spx_ObtenerSupervisionManualPorId ?, ?";
     private static final String SP_REGISTRAR =
@@ -112,7 +112,15 @@ public class SupervisionRepository {
     }
 
     public List<Map<String, Object>> listarNombresSupervisorSupervision(String sucursal) {
-        return tigohogarJdbcTemplate.queryForList(SP_LISTAR_NOMBRES_SUPERVISOR_SUPERVISION, trimToNull(sucursal));
+        return listarNombresSupervisorSupervision(sucursal, "pendiente");
+    }
+
+    public List<Map<String, Object>> listarNombresSupervisorSupervision(String sucursal, String estadoSup) {
+        return tigohogarJdbcTemplate.queryForList(
+                SP_LISTAR_NOMBRES_SUPERVISOR_SUPERVISION,
+                trimToNull(sucursal),
+                trimToNull(estadoSup)
+        );
     }
 
     public List<Map<String, Object>> listarRevisionesPenalizadasSupervisor(Integer idSupervisor) {
@@ -134,13 +142,26 @@ public class SupervisionRepository {
     }
 
     public List<Map<String, Object>> listarPorEstado(String estadoSup, String idSupervisor, java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite) {
+        return listarPorEstado(estadoSup, idSupervisor, fechaDesde, fechaHasta, limite, null, null);
+    }
+
+    public List<Map<String, Object>> listarPorEstado(
+            String estadoSup,
+            String idSupervisor,
+            java.time.LocalDate fechaDesde,
+            java.time.LocalDate fechaHasta,
+            Integer limite,
+            String sucursal,
+            String supervisorNombre) {
         return tigohogarJdbcTemplate.queryForList(
                 SP_LISTAR_POR_ESTADO,
                 trimToNull(estadoSup),
                 trimToNull(idSupervisor),
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
                 fechaHasta == null ? null : Date.valueOf(fechaHasta),
-                resolveLimit(limite)
+                resolveLimit(limite),
+                trimToNull(sucursal),
+                trimToNull(supervisorNombre)
         );
     }
 

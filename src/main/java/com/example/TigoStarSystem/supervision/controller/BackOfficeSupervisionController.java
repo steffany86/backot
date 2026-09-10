@@ -67,9 +67,10 @@ public class BackOfficeSupervisionController {
     @GetMapping("/filtros/nombre-supervisor")
     public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarNombresSupervisorFiltro(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
-            @RequestParam(value = "sucursal", required = false) String sucursal) {
+            @RequestParam(value = "sucursal", required = false) String sucursal,
+            @RequestParam(value = "estado", required = false, defaultValue = "pendiente") String estado) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarNombresSupervisorSupervisionBackoffice(sucursal, token),
+                service.listarNombresSupervisorSupervisionBackoffice(sucursal, estado, token),
                 "Listado de supervisores."
         ));
     }
