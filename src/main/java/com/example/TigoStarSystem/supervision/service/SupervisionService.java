@@ -166,7 +166,7 @@ public class SupervisionService {
             String idSupervisorFiltro,
             Integer limite,
             String sucursalFiltro,
-            String tecnicoPrincipalFiltro,
+            String supervisorNombreFiltro,
             String token) {
         AuthMeResponse me = authService.me(token);
         validarRangoFechas(fechaDesde, fechaHasta);
@@ -174,13 +174,13 @@ public class SupervisionService {
         String sucursalTabla = isBlank(sucursalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursalFiltro.trim())
                 ? null
                 : sucursalFiltro.trim();
-        String tecnicoPrincipalTabla = isBlank(tecnicoPrincipalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(tecnicoPrincipalFiltro.trim())
+        String supervisorNombreTabla = isBlank(supervisorNombreFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(supervisorNombreFiltro.trim())
                 ? null
-                : tecnicoPrincipalFiltro.trim();
+                : supervisorNombreFiltro.trim();
         if ("pendiente".equals(estado)) {
             String sucursal = resolveSucursalNombre(me);
             List<Map<String, Object>> out = new ArrayList<>();
-            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla, tecnicoPrincipalTabla)) {
+            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla, supervisorNombreTabla)) {
                 out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
             }
             return out;
@@ -995,10 +995,10 @@ public class SupervisionService {
         }
     }
 
-    public List<Map<String, Object>> listarTecnicosPrincipalesSupervisionBackoffice(String token) {
+    public List<Map<String, Object>> listarNombresSupervisorSupervisionBackoffice(String token) {
         authService.me(token);
         try {
-            return repository.listarTecnicosPrincipalesSupervision();
+            return repository.listarNombresSupervisorSupervision();
         } catch (DataAccessException ex) {
             return java.util.Collections.emptyList();
         }
