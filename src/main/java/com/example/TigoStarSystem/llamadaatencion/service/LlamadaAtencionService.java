@@ -135,6 +135,11 @@ public class LlamadaAtencionService {
         return repository.listarTiposComunicacion();
     }
 
+    public List<Map<String, Object>> listarMotivosIncidencia(String token) {
+        authService.me(token);
+        return repository.listarMotivosIncidencia();
+    }
+
     public LlamadaAtencionFirmaStorageService.FirmaFile obtenerFirma(String path, String token) {
         authService.me(token);
         return firmaStorageService.cargarFirma(path);

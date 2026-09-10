@@ -354,7 +354,7 @@ public class SupervisionRepository {
 
     public List<Map<String, Object>> listarTiposPenalizacion() {
         return tigohogarJdbcTemplate.queryForList(
-                "EXEC dbo.SP_Supervision_ListarTiposPenalizacion"
+                "EXEC dbo.spx_ListarTipoPenalizacion"
         );
     }
 

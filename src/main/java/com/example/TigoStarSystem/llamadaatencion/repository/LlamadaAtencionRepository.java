@@ -31,6 +31,12 @@ public class LlamadaAtencionRepository {
         );
     }
 
+    public List<Map<String, Object>> listarMotivosIncidencia() {
+        return tigohogarJdbcTemplate.queryForList(
+                "EXEC dbo.spx_ListarMotivoLlamadaDeAtencion"
+        );
+    }
+
     public List<Map<String, Object>> listarLlamadasAtencion(
             String idTecnico,
             LocalDate fechaDesde,

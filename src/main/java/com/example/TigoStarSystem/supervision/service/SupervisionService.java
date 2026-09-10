@@ -84,7 +84,20 @@ public class SupervisionService {
         String sucursal = resolveSucursalNombre(me);
         Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> pendiente : repository.listarPendientes(idSupervisor == null ? null : String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
+        for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite)) {
+            if (idSupervisor != null) {
+                Integer idSupervisorFila = toInteger(findValue(
+                        pendiente,
+                        "idSupervisor",
+                        "id_supervisor",
+                        "idUsuarioSupervisor",
+                        "id_usuariosupervisor",
+                        "supervisor"
+                ));
+                if (idSupervisorFila == null || !idSupervisorFila.equals(idSupervisor)) {
+                    continue;
+                }
+            }
             out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
         }
         out.addAll(enriquecerRevisionesPenalizadas(
@@ -897,8 +910,13 @@ public class SupervisionService {
         return out;
     }
 
+    private static final String SUCURSAL_FILTRO_TODOS = "TODOS";
+
     public List<Map<String, Object>> listarSupervisores(String sucursal, String token) {
         AuthMeResponse me = authService.me(token);
+        if (!isBlank(sucursal) && SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursal.trim())) {
+            return listarSupervisoresTodasSucursales();
+        }
         String sucursalResuelta = SucursalCanonicalizer.canonicalize(
                 isBlank(sucursal) ? resolveSucursalNombre(me) : sucursal
         );
@@ -907,6 +925,32 @@ public class SupervisionService {
         } catch (DataAccessException ex) {
             return java.util.Collections.emptyList();
         }
+    }
+
+    private List<Map<String, Object>> listarSupervisoresTodasSucursales() {
+        Map<String, Map<String, Object>> porSupervisor = new LinkedHashMap<>();
+        for (SucursalResponse item : authService.listarSucursales()) {
+            if (item == null || isBlank(item.getSucursal())) {
+                continue;
+            }
+            String canon = SucursalCanonicalizer.canonicalize(item.getSucursal());
+            try {
+                for (Map<String, Object> supervisor : repository.listarSupervisores(canon)) {
+                    Integer idSupervisor = toInteger(findValue(
+                            supervisor,
+                            "idSupervisor",
+                            "id_supervisor",
+                            "idUsuarioSupervisor",
+                            "id_usuario_supervisor"
+                    ));
+                    String key = idSupervisor != null ? String.valueOf(idSupervisor) : String.valueOf(supervisor);
+                    porSupervisor.putIfAbsent(key, supervisor);
+                }
+            } catch (DataAccessException ignored) {
+                // Sucursal sin conexion o sin datos; se continua con las demas.
+            }
+        }
+        return new ArrayList<>(porSupervisor.values());
     }
 
     public List<Map<String, Object>> listarTecnicosPorSupervisorBackoffice(Integer idSupervisor, String sucursal) {

@@ -64,6 +64,15 @@ public class LlamadaAtencionController {
         ));
     }
 
+    @GetMapping("/motivos")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarMotivosIncidencia(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarMotivosIncidencia(token),
+                "Listado de motivos de incidencia."
+        ));
+    }
+
     @GetMapping(value = "/firma")
     public ResponseEntity<byte[]> obtenerFirma(
             @RequestHeader(value = "X-Session-Token", required = false) String token,
