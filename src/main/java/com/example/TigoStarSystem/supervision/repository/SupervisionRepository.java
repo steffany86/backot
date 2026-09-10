@@ -24,7 +24,9 @@ public class SupervisionRepository {
     private static final String SP_LISTAR_PENDIENTES =
             "EXEC dbo.spx_ListarSupervisionPendiente ?, ?, ?, ?";
     private static final String SP_LISTAR_PENDIENTES_TODOS =
-            "EXEC dbo.spx_ListarSupervisionPendienteTodos ?, ?, ?";
+            "EXEC dbo.spx_ListarSupervisionPendienteTodos ?, ?, ?, ?";
+    private static final String SP_LISTAR_SUCURSALES_SUPERVISION =
+            "EXEC dbo.spx_ListarSucursalesSupervision";
     private static final String SP_LISTAR_POR_ESTADO =
             "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?";
     private static final String SP_OBTENER_DETALLE =
@@ -85,12 +87,21 @@ public class SupervisionRepository {
     }
 
     public List<Map<String, Object>> listarPendientesTodos(java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite) {
+        return listarPendientesTodos(fechaDesde, fechaHasta, limite, null);
+    }
+
+    public List<Map<String, Object>> listarPendientesTodos(java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite, String sucursal) {
         return tigohogarJdbcTemplate.queryForList(
                 SP_LISTAR_PENDIENTES_TODOS,
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
                 fechaHasta == null ? null : Date.valueOf(fechaHasta),
-                resolveLimit(limite)
+                resolveLimit(limite),
+                trimToNull(sucursal)
         );
+    }
+
+    public List<Map<String, Object>> listarSucursalesSupervision() {
+        return tigohogarJdbcTemplate.queryForList(SP_LISTAR_SUCURSALES_SUPERVISION);
     }
 
     public List<Map<String, Object>> listarRevisionesPenalizadasSupervisor(Integer idSupervisor) {

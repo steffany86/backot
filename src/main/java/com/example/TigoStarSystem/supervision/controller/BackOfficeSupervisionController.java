@@ -46,10 +46,20 @@ public class BackOfficeSupervisionController {
             @RequestParam(value = "fechaHasta", required = false)
             @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
             @RequestParam(value = "idSupervisor", required = false) String idSupervisor,
-            @RequestParam(value = "limite", required = false) Integer limite) {
+            @RequestParam(value = "limite", required = false) Integer limite,
+            @RequestParam(value = "sucursal", required = false) String sucursal) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, idSupervisor, limite, token),
+                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, idSupervisor, limite, sucursal, token),
                 "Listado de supervisiones por estado."
+        ));
+    }
+
+    @GetMapping("/filtros/sucursales")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> listarSucursalesFiltro(
+            @RequestHeader(value = "X-Session-Token", required = false) String token) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.listarSucursalesSupervisionBackoffice(token),
+                "Listado de sucursales."
         ));
     }
 

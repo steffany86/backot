@@ -156,13 +156,27 @@ public class SupervisionService {
             String idSupervisorFiltro,
             Integer limite,
             String token) {
+        return listarBackofficePorEstado(estadoSup, fechaDesde, fechaHasta, idSupervisorFiltro, limite, null, token);
+    }
+
+    public List<Map<String, Object>> listarBackofficePorEstado(
+            String estadoSup,
+            LocalDate fechaDesde,
+            LocalDate fechaHasta,
+            String idSupervisorFiltro,
+            Integer limite,
+            String sucursalFiltro,
+            String token) {
         AuthMeResponse me = authService.me(token);
         validarRangoFechas(fechaDesde, fechaHasta);
         String estado = normalizarEstadoSup(estadoSup);
+        String sucursalTabla = isBlank(sucursalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursalFiltro.trim())
+                ? null
+                : sucursalFiltro.trim();
         if ("pendiente".equals(estado)) {
             String sucursal = resolveSucursalNombre(me);
             List<Map<String, Object>> out = new ArrayList<>();
-            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite)) {
+            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla)) {
                 out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
             }
             return out;
@@ -967,6 +981,15 @@ public class SupervisionService {
     }
 
     private static final String SUCURSAL_FILTRO_TODOS = "TODOS";
+
+    public List<Map<String, Object>> listarSucursalesSupervisionBackoffice(String token) {
+        authService.me(token);
+        try {
+            return repository.listarSucursalesSupervision();
+        } catch (DataAccessException ex) {
+            return java.util.Collections.emptyList();
+        }
+    }
 
     public List<Map<String, Object>> listarSupervisores(String sucursal, String token) {
         AuthMeResponse me = authService.me(token);
