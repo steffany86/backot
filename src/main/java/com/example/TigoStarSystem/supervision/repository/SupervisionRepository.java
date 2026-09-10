@@ -28,7 +28,7 @@ public class SupervisionRepository {
     private static final String SP_LISTAR_SUCURSALES_SUPERVISION =
             "EXEC dbo.spx_ListarSucursalesSupervision";
     private static final String SP_LISTAR_NOMBRES_SUPERVISOR_SUPERVISION =
-            "EXEC dbo.spx_ListarNombresSupervisorSupervision";
+            "EXEC dbo.spx_ListarNombresSupervisorSupervision ?";
     private static final String SP_LISTAR_POR_ESTADO =
             "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?";
     private static final String SP_OBTENER_DETALLE =
@@ -111,8 +111,8 @@ public class SupervisionRepository {
         return tigohogarJdbcTemplate.queryForList(SP_LISTAR_SUCURSALES_SUPERVISION);
     }
 
-    public List<Map<String, Object>> listarNombresSupervisorSupervision() {
-        return tigohogarJdbcTemplate.queryForList(SP_LISTAR_NOMBRES_SUPERVISOR_SUPERVISION);
+    public List<Map<String, Object>> listarNombresSupervisorSupervision(String sucursal) {
+        return tigohogarJdbcTemplate.queryForList(SP_LISTAR_NOMBRES_SUPERVISOR_SUPERVISION, trimToNull(sucursal));
     }
 
     public List<Map<String, Object>> listarRevisionesPenalizadasSupervisor(Integer idSupervisor) {

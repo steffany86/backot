@@ -995,10 +995,13 @@ public class SupervisionService {
         }
     }
 
-    public List<Map<String, Object>> listarNombresSupervisorSupervisionBackoffice(String token) {
+    public List<Map<String, Object>> listarNombresSupervisorSupervisionBackoffice(String sucursalFiltro, String token) {
         authService.me(token);
+        String sucursalTabla = isBlank(sucursalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursalFiltro.trim())
+                ? null
+                : sucursalFiltro.trim();
         try {
-            return repository.listarNombresSupervisorSupervision();
+            return repository.listarNombresSupervisorSupervision(sucursalTabla);
         } catch (DataAccessException ex) {
             return java.util.Collections.emptyList();
         }
