@@ -1048,6 +1048,24 @@ public class SupervisionService {
         return new ArrayList<>(porSupervisor.values());
     }
 
+    private String resolverNombreSupervisorPorId(Object idSupervisor) {
+        if (idSupervisor == null) return null;
+        String idNormalizado = String.valueOf(idSupervisor).trim();
+        if (idNormalizado.isEmpty()) return null;
+        try {
+            for (Map<String, Object> item : listarSupervisoresTodasSucursales()) {
+                Object idValor = findValue(item, "idSupervisor", "idUsuarioSupervisor", "id_supervisor", "id_usuario_supervisor");
+                if (idValor != null && idNormalizado.equalsIgnoreCase(String.valueOf(idValor).trim())) {
+                    Object nombre = findValue(item, "nombre", "supervisor", "Nombre", "Supervisor");
+                    return nombre == null ? null : asText(String.valueOf(nombre));
+                }
+            }
+        } catch (Exception ignored) {
+            // Si falla la resolucion no bloqueamos el registro de la supervision.
+        }
+        return null;
+    }
+
     public List<Map<String, Object>> listarTecnicosPorSupervisorBackoffice(Integer idSupervisor, String sucursal) {
         return listarTecnicosPorSupervisorBackoffice(idSupervisor, sucursal, null);
     }
@@ -1115,9 +1133,13 @@ public class SupervisionService {
         if (!isBlank(idTecnicoPrincipal)) temp.put("idTecnicoPrincipal", idTecnicoPrincipal);
         Map<String, Object> enriquecido = temp.isEmpty() ? temp : repository.enriquecerDetalleConNombres(temp, sucursal);
 
-        String nombreSupervisor = !isBlank(nombreSupervisorConocido)
-                ? nombreSupervisorConocido
-                : asText(findValue(enriquecido, "supervisorNombre", "supervisor"));
+        String nombreSupervisor = nombreSupervisorConocido;
+        if (isBlank(nombreSupervisor)) {
+            nombreSupervisor = resolverNombreSupervisorPorId(idSupervisor);
+        }
+        if (isBlank(nombreSupervisor)) {
+            nombreSupervisor = asText(findValue(enriquecido, "supervisorNombre", "supervisor"));
+        }
         String nombreTecnicoPrincipal = asText(findValue(enriquecido, "tecnicoPrincipalNombre", "tecnicoNombre"));
 
         String nombreTipoSupervision = resolverNombreCatalogo(
