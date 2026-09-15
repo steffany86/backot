@@ -62,15 +62,36 @@ public class SupervisionService {
             String idSupervisorFiltro,
             Integer limite,
             String token) {
+        return listar(fechaDesde, fechaHasta, idSupervisorFiltro, limite, null, null, token);
+    }
+
+    public List<Map<String, Object>> listar(
+            LocalDate fechaDesde,
+            LocalDate fechaHasta,
+            String idSupervisorFiltro,
+            Integer limite,
+            String sucursalFiltro,
+            String token) {
+        return listar(fechaDesde, fechaHasta, idSupervisorFiltro, limite, sucursalFiltro, null, token);
+    }
+
+    public List<Map<String, Object>> listar(
+            LocalDate fechaDesde,
+            LocalDate fechaHasta,
+            String idSupervisorFiltro,
+            Integer limite,
+            String sucursalFiltro,
+            String tipoFechaFiltro,
+            String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        String sucursal = resolveSucursalNombre(me);
-        Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> row : repository.listar(idSupervisor == null ? null : String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
-            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(row), sucursal));
-        }
-        return out;
+        String sucursalSesion = resolveSucursalNombre(me);
+        Integer idSupervisor = resolveSupervisorConsulta(me, sucursalSesion, sucursalFiltro, idSupervisorFiltro);
+        String sucursalTabla = isBlank(sucursalFiltro) ? null : sucursalFiltro.trim();
+        String tipoFecha = "supervision".equalsIgnoreCase(isBlank(tipoFechaFiltro) ? null : tipoFechaFiltro.trim())
+                ? "supervision"
+                : "registro";
+        return repository.listar(idSupervisor == null ? null : String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite, sucursalTabla, tipoFecha);
     }
 
     public List<Map<String, Object>> listarPendientes(
@@ -79,13 +100,26 @@ public class SupervisionService {
             String idSupervisorFiltro,
             Integer limite,
             String token) {
+        return listarPendientes(fechaDesde, fechaHasta, idSupervisorFiltro, limite, null, token);
+    }
+
+    public List<Map<String, Object>> listarPendientes(
+            LocalDate fechaDesde,
+            LocalDate fechaHasta,
+            String idSupervisorFiltro,
+            Integer limite,
+            String sucursalFiltro,
+            String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        String sucursal = resolveSucursalNombre(me);
-        Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite)) {
-            if (idSupervisor != null) {
+        String sucursalSesion = resolveSucursalNombre(me);
+        Integer idSupervisor = resolveSupervisorConsulta(me, sucursalSesion, sucursalFiltro, idSupervisorFiltro);
+        String sucursalTabla = isBlank(sucursalFiltro) ? null : sucursalFiltro.trim();
+        List<Map<String, Object>> out = new ArrayList<>(
+                repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla, null)
+        );
+        if (idSupervisor != null) {
+            out.removeIf(pendiente -> {
                 Integer idSupervisorFila = toInteger(findValue(
                         pendiente,
                         "idSupervisor",
@@ -94,22 +128,19 @@ public class SupervisionService {
                         "id_usuariosupervisor",
                         "supervisor"
                 ));
-                if (idSupervisorFila == null || !idSupervisorFila.equals(idSupervisor)) {
-                    continue;
-                }
-            }
-            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
+                return idSupervisorFila == null || !idSupervisorFila.equals(idSupervisor);
+            });
         }
         out.addAll(enriquecerRevisionesPenalizadas(
                 repository.listarRevisionesPenalizadasSupervisor(idSupervisor),
-                sucursal
+                sucursalSesion
         ));
         return out;
     }
 
     private static final String SUPERVISOR_FILTRO_TODOS = "TODOS";
 
-    private Integer resolveSupervisorConsulta(AuthMeResponse me, String sucursal, String idSupervisorFiltro) {
+    private Integer resolveSupervisorConsulta(AuthMeResponse me, String sucursalSesion, String sucursalFiltro, String idSupervisorFiltro) {
         Integer idUsuarioSesion = resolveIdUsuario(me);
         if (isBlank(idSupervisorFiltro)) {
             return idUsuarioSesion;
@@ -126,7 +157,7 @@ public class SupervisionService {
             return idSupervisor;
         }
 
-        for (Map<String, Object> supervisor : repository.listarSupervisores(sucursal)) {
+        for (Map<String, Object> supervisor : listarSupervisoresParaValidacion(sucursalFiltro, sucursalSesion)) {
             Integer idPermitido = toInteger(findValue(
                     supervisor,
                     "idSupervisor",
@@ -149,6 +180,18 @@ public class SupervisionService {
         );
     }
 
+    private List<Map<String, Object>> listarSupervisoresParaValidacion(String sucursalFiltro, String sucursalSesion) {
+        if (!isBlank(sucursalFiltro) && SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursalFiltro.trim())) {
+            return listarSupervisoresTodasSucursales();
+        }
+        String sucursalResuelta = isBlank(sucursalFiltro) ? sucursalSesion : sucursalFiltro.trim();
+        try {
+            return repository.listarSupervisores(SucursalCanonicalizer.canonicalize(sucursalResuelta));
+        } catch (DataAccessException ex) {
+            return new ArrayList<>();
+        }
+    }
+
     public List<Map<String, Object>> listarBackofficePorEstado(
             String estadoSup,
             LocalDate fechaDesde,
@@ -156,7 +199,7 @@ public class SupervisionService {
             String idSupervisorFiltro,
             Integer limite,
             String token) {
-        return listarBackofficePorEstado(estadoSup, fechaDesde, fechaHasta, idSupervisorFiltro, limite, null, null, token);
+        return listarBackofficePorEstado(estadoSup, fechaDesde, fechaHasta, idSupervisorFiltro, limite, null, null, null, token);
     }
 
     public List<Map<String, Object>> listarBackofficePorEstado(
@@ -168,7 +211,20 @@ public class SupervisionService {
             String sucursalFiltro,
             String supervisorNombreFiltro,
             String token) {
-        AuthMeResponse me = authService.me(token);
+        return listarBackofficePorEstado(estadoSup, fechaDesde, fechaHasta, idSupervisorFiltro, limite, sucursalFiltro, supervisorNombreFiltro, null, token);
+    }
+
+    public List<Map<String, Object>> listarBackofficePorEstado(
+            String estadoSup,
+            LocalDate fechaDesde,
+            LocalDate fechaHasta,
+            String idSupervisorFiltro,
+            Integer limite,
+            String sucursalFiltro,
+            String supervisorNombreFiltro,
+            String tipoFechaFiltro,
+            String token) {
+        authService.me(token);
         validarRangoFechas(fechaDesde, fechaHasta);
         String estado = normalizarEstadoSup(estadoSup);
         String sucursalTabla = isBlank(sucursalFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(sucursalFiltro.trim())
@@ -177,23 +233,16 @@ public class SupervisionService {
         String supervisorNombreTabla = isBlank(supervisorNombreFiltro) || SUCURSAL_FILTRO_TODOS.equalsIgnoreCase(supervisorNombreFiltro.trim())
                 ? null
                 : supervisorNombreFiltro.trim();
+        String tipoFecha = "supervision".equalsIgnoreCase(isBlank(tipoFechaFiltro) ? null : tipoFechaFiltro.trim())
+                ? "supervision"
+                : "registro";
         if ("pendiente".equals(estado)) {
-            String sucursal = resolveSucursalNombre(me);
-            List<Map<String, Object>> out = new ArrayList<>();
-            for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla, supervisorNombreTabla)) {
-                out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(pendiente), sucursal));
-            }
-            return out;
+            return repository.listarPendientesTodos(fechaDesde, fechaHasta, limite, sucursalTabla, supervisorNombreTabla);
         }
         String idSupervisor = isBlank(idSupervisorFiltro) || SUPERVISOR_FILTRO_TODOS.equalsIgnoreCase(idSupervisorFiltro.trim())
                 ? null
                 : idSupervisorFiltro.trim();
-        String sucursal = resolveSucursalNombre(me);
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> registro : repository.listarPorEstado(estado, idSupervisor, fechaDesde, fechaHasta, limite, sucursalTabla, supervisorNombreTabla)) {
-            out.add(repository.enriquecerDetalleConNombres(new LinkedHashMap<>(registro), sucursal));
-        }
-        return out;
+        return repository.listarPorEstado(estado, idSupervisor, fechaDesde, fechaHasta, limite, sucursalTabla, supervisorNombreTabla, tipoFecha);
     }
 
     public Map<String, Object> obtenerDetalle(String idSupervision, String token) {
@@ -225,7 +274,7 @@ public class SupervisionService {
         String sucursal = resolveSucursalNombre(me);
         CamposDenormalizados campos = resolverCamposDenormalizados(
                 sucursal,
-                "MANUAL",
+                resolveRolUsuario(me),
                 idSupervisor,
                 resolveNombreUsuario(me),
                 request.getIdTecnicoPrincipal(),
@@ -264,7 +313,8 @@ public class SupervisionService {
                 campos.nombreTecnicoPrincipal,
                 campos.nombreTipoSupervision,
                 campos.nombreTipoTrabajo,
-                campos.nombreTipoPenalizacion
+                campos.nombreTipoPenalizacion,
+                resolveNombreUsuario(me)
         );
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -323,9 +373,10 @@ public class SupervisionService {
         }
         if (updated <= 0 && esRevisionPenalizada(idSupervision)) {
             String sucursalPenalizada = resolveSucursalNombre(me);
+            String origenPenalizada = "CORREO";
             CamposDenormalizados camposPenalizada = resolverCamposDenormalizados(
                     sucursalPenalizada,
-                    "REV_PENALIZADA",
+                    origenPenalizada,
                     idSupervisor,
                     resolveNombreUsuario(me),
                     request.getIdTecnicoPrincipal(),
@@ -363,13 +414,14 @@ public class SupervisionService {
                     camposPenalizada.nombreTecnicoPrincipal,
                     camposPenalizada.nombreTipoSupervision,
                     camposPenalizada.nombreTipoTrabajo,
-                    camposPenalizada.nombreTipoPenalizacion
+                    camposPenalizada.nombreTipoPenalizacion,
+                    resolveNombreUsuario(me)
             );
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("idSupervision", idGenerado);
             out.put("idUsuarioSesion", idSupervisor);
             out.put("estadoSup", "completado");
-            out.put("origen", "REV_PENALIZADA");
+            out.put("origen", origenPenalizada);
             return out;
         }
         if (updated <= 0) {
@@ -934,7 +986,7 @@ public class SupervisionService {
         String sucursal = resolveSucursalNombre(me);
         CamposDenormalizados campos = resolverCamposDenormalizados(
                 sucursal,
-                "PENDIENTE",
+                resolveRolUsuario(me),
                 request.getIdSupervisorAsignado(),
                 null,
                 request.getIdTecnicoPrincipal(),
@@ -1095,6 +1147,11 @@ public class SupervisionService {
         if (!isBlank(login)) return login.trim();
         Integer idUsuario = me != null && me.getUsuario() != null ? me.getUsuario().getIdUsuario() : null;
         return idUsuario == null ? null : String.valueOf(idUsuario);
+    }
+
+    private String resolveRolUsuario(AuthMeResponse me) {
+        String rol = me != null && me.getUsuario() != null ? me.getUsuario().getRol() : null;
+        return isBlank(rol) ? null : rol.trim();
     }
 
     private static final class CamposDenormalizados {

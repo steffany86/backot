@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
 @Repository
 public class SupervisionRepository {
     private static final String SP_LISTAR =
-            "EXEC dbo.spx_ListarSupervisionManual ?, ?, ?";
+            "EXEC dbo.spx_ListarSupervisionManual ?, ?, ?, ?, ?";
     private static final String SP_LISTAR_PENDIENTES =
             "EXEC dbo.spx_ListarSupervisionPendiente ?, ?, ?, ?";
     private static final String SP_LISTAR_PENDIENTES_TODOS =
@@ -30,11 +30,11 @@ public class SupervisionRepository {
     private static final String SP_LISTAR_NOMBRES_SUPERVISOR_SUPERVISION =
             "EXEC dbo.spx_ListarNombresSupervisorSupervision ?, ?";
     private static final String SP_LISTAR_POR_ESTADO =
-            "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?, ?, ?";
+            "EXEC dbo.spx_ListarSupervisionPorEstado ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_OBTENER_DETALLE =
             "EXEC dbo.spx_ObtenerSupervisionManualPorId ?, ?";
     private static final String SP_REGISTRAR =
-            "EXEC dbo.spx_RegistrarSupervisionManual ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
+            "EXEC dbo.spx_RegistrarSupervisionManual ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_REGISTRAR_PENDIENTE =
             "EXEC dbo.spx_RegistrarSupervisionPendiente ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?";
     private static final String SP_REALIZAR_PENDIENTE =
@@ -70,11 +70,21 @@ public class SupervisionRepository {
     }
 
     public List<Map<String, Object>> listar(String idSupervisor, java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite) {
+        return listar(idSupervisor, fechaDesde, fechaHasta, limite, null);
+    }
+
+    public List<Map<String, Object>> listar(String idSupervisor, java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite, String sucursal) {
+        return listar(idSupervisor, fechaDesde, fechaHasta, limite, sucursal, null);
+    }
+
+    public List<Map<String, Object>> listar(String idSupervisor, java.time.LocalDate fechaDesde, java.time.LocalDate fechaHasta, Integer limite, String sucursal, String tipoFecha) {
         return tigohogarJdbcTemplate.queryForList(
                 SP_LISTAR,
                 idSupervisor,
                 fechaDesde == null ? null : Date.valueOf(fechaDesde),
-                fechaHasta == null ? null : Date.valueOf(fechaHasta)
+                fechaHasta == null ? null : Date.valueOf(fechaHasta),
+                trimToNull(sucursal),
+                trimToNull(tipoFecha)
         );
     }
 
@@ -153,6 +163,18 @@ public class SupervisionRepository {
             Integer limite,
             String sucursal,
             String supervisorNombre) {
+        return listarPorEstado(estadoSup, idSupervisor, fechaDesde, fechaHasta, limite, sucursal, supervisorNombre, null);
+    }
+
+    public List<Map<String, Object>> listarPorEstado(
+            String estadoSup,
+            String idSupervisor,
+            java.time.LocalDate fechaDesde,
+            java.time.LocalDate fechaHasta,
+            Integer limite,
+            String sucursal,
+            String supervisorNombre,
+            String tipoFecha) {
         return tigohogarJdbcTemplate.queryForList(
                 SP_LISTAR_POR_ESTADO,
                 trimToNull(estadoSup),
@@ -161,7 +183,8 @@ public class SupervisionRepository {
                 fechaHasta == null ? null : Date.valueOf(fechaHasta),
                 resolveLimit(limite),
                 trimToNull(sucursal),
-                trimToNull(supervisorNombre)
+                trimToNull(supervisorNombre),
+                trimToNull(tipoFecha)
         );
     }
 
@@ -250,10 +273,17 @@ public class SupervisionRepository {
         return count == null ? 0 : count;
     }
 
-    public Map<String, Object> enriquecerDetalleConNombres(Map<String, Object> detalle, String sucursal) {
-        if (detalle == null || detalle.isEmpty()) {
-            return detalle;
+    private static final class NombresContext {
+        final Map<Integer, String> usuarios;
+        final JdbcTemplate sucursalTemplate;
+
+        NombresContext(Map<Integer, String> usuarios, JdbcTemplate sucursalTemplate) {
+            this.usuarios = usuarios;
+            this.sucursalTemplate = sucursalTemplate;
         }
+    }
+
+    private NombresContext prepararContextoNombres(String sucursal) {
         Map<Integer, String> usuarios = cargarUsuariosDesdeSucursalPreferida(sucursal);
         if (usuarios.isEmpty()) {
             usuarios = cargarUsuariosDesdeTecnicosSp();
@@ -262,6 +292,22 @@ public class SupervisionRepository {
         try {
             sucursalTemplate = resolveJdbcTemplateBySucursalNombre(sucursal);
         } catch (Exception ignored) {}
+        return new NombresContext(usuarios, sucursalTemplate);
+    }
+
+    public Map<String, Object> enriquecerDetalleConNombres(Map<String, Object> detalle, String sucursal) {
+        if (detalle == null || detalle.isEmpty()) {
+            return detalle;
+        }
+        return enriquecerDetalleConNombres(detalle, prepararContextoNombres(sucursal));
+    }
+
+    private Map<String, Object> enriquecerDetalleConNombres(Map<String, Object> detalle, NombresContext ctx) {
+        if (detalle == null || detalle.isEmpty()) {
+            return detalle;
+        }
+        Map<Integer, String> usuarios = ctx.usuarios;
+        JdbcTemplate sucursalTemplate = ctx.sucursalTemplate;
 
         Integer idTecnicoPrincipal = toInteger(findValue(
                 detalle,
@@ -345,7 +391,8 @@ public class SupervisionRepository {
             String nombreTecnicoPrincipal,
             String nombreTipoSupervision,
             String nombreTipoTrabajo,
-            String nombreTipoPenalizacion) {
+            String nombreTipoPenalizacion,
+            String creadoPor) {
         List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
                 SP_REGISTRAR,
                 idSupervisor,
@@ -377,7 +424,8 @@ public class SupervisionRepository {
                 trimToNull(nombreTecnicoPrincipal),
                 trimToNull(nombreTipoSupervision),
                 trimToNull(nombreTipoTrabajo),
-                trimToNull(nombreTipoPenalizacion)
+                trimToNull(nombreTipoPenalizacion),
+                trimToNull(creadoPor)
         );
 
         if (rows != null && !rows.isEmpty()) {

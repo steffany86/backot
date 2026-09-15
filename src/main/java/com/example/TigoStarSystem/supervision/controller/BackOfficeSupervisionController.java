@@ -48,9 +48,10 @@ public class BackOfficeSupervisionController {
             @RequestParam(value = "idSupervisor", required = false) String idSupervisor,
             @RequestParam(value = "limite", required = false) Integer limite,
             @RequestParam(value = "sucursal", required = false) String sucursal,
-            @RequestParam(value = "supervisorNombre", required = false) String supervisorNombre) {
+            @RequestParam(value = "supervisorNombre", required = false) String supervisorNombre,
+            @RequestParam(value = "tipoFecha", required = false, defaultValue = "registro") String tipoFecha) {
         return ResponseEntity.ok(ApiResponse.of(
-                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, idSupervisor, limite, sucursal, supervisorNombre, token),
+                service.listarBackofficePorEstado(estado, fechaDesde, fechaHasta, idSupervisor, limite, sucursal, supervisorNombre, tipoFecha, token),
                 "Listado de supervisiones por estado."
         ));
     }

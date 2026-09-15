@@ -1,39 +1,27 @@
 -- ========================================================================
--- REEMPLAZAR EL FILTRO DE "TECNICO" POR "SUPERVISOR" EN LA PESTAÑA
--- "PENDIENTES" DE /backoffice/supervision
+-- FIX: el filtro de "supervisor" en Pendientes filtraba la columna
+-- equivocada (nombre_Id_TecnicoPrincipal en vez de nombre_Id_Supervisor)
 -- ========================================================================
--- El combo agregado en SQL_ADD_FILTRO_TECNICO_SUPERVISION_PENDIENTES.sql
--- estaba mal: el dato que se queria mostrar ahi es el supervisor, no el
--- tecnico principal. Este script reemplaza ese filtro por uno basado en la
--- columna nombre_Id_Supervisor de tbl_Supervision (mismo criterio: sin
--- conectarse a otra tabla/base), y deja spx_ListarSupervisionPendienteTodos
--- con @Supervisor en vez de @TecnicoPrincipal.
+-- El dropdown "Todos los supervisores" de la pestana Pendientes de
+-- /backoffice/supervision envia el nombre del SUPERVISOR seleccionado al
+-- backend, que lo pasa como 5to parametro a spx_ListarSupervisionPendienteTodos.
+-- Pero el SP desplegado (revisado ahora mismo con OBJECT_DEFINITION) sigue
+-- comparando ese valor contra nombre_Id_TecnicoPrincipal -- una columna
+-- de TECNICO, no de supervisor. Por eso elegir cualquier supervisor
+-- devolvia 0 resultados: el nombre del supervisor nunca coincide con un
+-- nombre de tecnico.
 --
--- Correr DESPUES de SQL_MOSTRAR_ID_NUMERICO_EN_PENDIENTES.sql (mantiene la
--- columna Id AS id agregada ahi). El SP dbo.spx_ListarTecnicosPrincipalesSupervision
--- que quedo de la version anterior ya no se usa y se puede eliminar
--- si se quiere (no lo borra este script para no arriesgar nada).
+-- (spx_ListarSupervisionPorEstado, la pestana Completadas, ya filtraba
+-- correctamente contra nombre_Id_Supervisor -- ese SP no se toca aqui.)
+--
+-- Este script solo cambia la columna que compara el filtro (de
+-- nombre_Id_TecnicoPrincipal a nombre_Id_Supervisor) y renombra el
+-- parametro a @SupervisorNombre para que sea claro. Como el backend llama
+-- al SP con "?" posicionales (no por nombre), renombrar el parametro no
+-- rompe nada.
 -- ========================================================================
 
 USE [BD_TigoHogar]
-GO
-
-CREATE OR ALTER PROC dbo.spx_ListarNombresSupervisorSupervision
-AS
-BEGIN
-    SET NOCOUNT ON;
-
-    IF COL_LENGTH('dbo.tbl_Supervision', 'nombre_Id_Supervisor') IS NULL
-    BEGIN
-        SELECT TOP 0 CAST(NULL AS NVARCHAR(250)) AS supervisor;
-        RETURN;
-    END
-
-    SELECT DISTINCT LTRIM(RTRIM(nombre_Id_Supervisor)) AS supervisor
-    FROM dbo.tbl_Supervision
-    WHERE nombre_Id_Supervisor IS NOT NULL AND LTRIM(RTRIM(nombre_Id_Supervisor)) <> ''
-    ORDER BY supervisor;
-END
 GO
 
 CREATE OR ALTER PROC dbo.spx_ListarSupervisionPendienteTodos
@@ -41,7 +29,7 @@ CREATE OR ALTER PROC dbo.spx_ListarSupervisionPendienteTodos
     @FechaHasta DATE = NULL,
     @Limite INT = 200,
     @Sucursal NVARCHAR(250) = NULL,
-    @Supervisor NVARCHAR(250) = NULL
+    @SupervisorNombre NVARCHAR(250) = NULL
 AS
 BEGIN
     SET NOCOUNT ON;
@@ -52,6 +40,10 @@ BEGIN
     DECLARE @HasEstadoSup BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'estado_sup') IS NULL THEN 0 ELSE 1 END;
     DECLARE @HasSucursal BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'sucursal') IS NULL THEN 0 ELSE 1 END;
     DECLARE @HasNombreSupervisor BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'nombre_Id_Supervisor') IS NULL THEN 0 ELSE 1 END;
+    DECLARE @HasNombreTecnicoPrincipal BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'nombre_Id_TecnicoPrincipal') IS NULL THEN 0 ELSE 1 END;
+    DECLARE @HasNombreTipoSupervision BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'nombre_id_TipoSupervision') IS NULL THEN 0 ELSE 1 END;
+    DECLARE @HasNombreTipoTrabajo BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'nombre_id_Tipotrabajo') IS NULL THEN 0 ELSE 1 END;
+    DECLARE @HasNombreTipoPenalizacion BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'nombre_id_TipoPenalizacion') IS NULL THEN 0 ELSE 1 END;
     DECLARE @HasId BIT = CASE WHEN COL_LENGTH('dbo.tbl_Supervision', 'Id') IS NULL THEN 0 ELSE 1 END;
     DECLARE @Sql NVARCHAR(MAX);
 
@@ -60,17 +52,17 @@ BEGIN
         s.Id_Supervision AS idSupervision,
         ' + CASE WHEN @HasFecha = 1 THEN N's.FechaRegistro AS fechaRegistro' ELSE N'CAST(NULL AS DATETIME) AS fechaRegistro' END + N',
         s.Id_Supervisor AS idSupervisor,
-        CAST(NULL AS NVARCHAR(200)) AS supervisor,
+        ' + CASE WHEN @HasNombreSupervisor = 1 THEN N'NULLIF(LTRIM(RTRIM(s.nombre_Id_Supervisor)), '''') AS supervisor' ELSE N'CAST(NULL AS NVARCHAR(200)) AS supervisor' END + N',
         s.Id_TecnicoPrincipal AS idTecnicoPrincipal,
-        CAST(NULL AS NVARCHAR(200)) AS tecnicoPrincipal,
+        ' + CASE WHEN @HasNombreTecnicoPrincipal = 1 THEN N'NULLIF(LTRIM(RTRIM(s.nombre_Id_TecnicoPrincipal)), '''') AS tecnicoPrincipal' ELSE N'CAST(NULL AS NVARCHAR(200)) AS tecnicoPrincipal' END + N',
         s.Id_TecnicoAuxiliar AS idTecnicoAuxiliar,
-        CAST(NULL AS NVARCHAR(200)) AS tecnicoAuxiliar,
+        NULLIF(LTRIM(RTRIM(s.Id_TecnicoAuxiliar)), '''') AS tecnicoAuxiliar,
         s.Id_TipoSupervision AS idTipoSupervision,
-        CAST(NULL AS NVARCHAR(200)) AS tipoSupervision,
+        ' + CASE WHEN @HasNombreTipoSupervision = 1 THEN N'NULLIF(LTRIM(RTRIM(s.nombre_id_TipoSupervision)), '''') AS tipoSupervision' ELSE N'CAST(NULL AS NVARCHAR(200)) AS tipoSupervision' END + N',
         s.Id_TipoTrabajo AS idTipoTrabajo,
-        CAST(NULL AS NVARCHAR(200)) AS tipoTrabajo,
+        ' + CASE WHEN @HasNombreTipoTrabajo = 1 THEN N'NULLIF(LTRIM(RTRIM(s.nombre_id_Tipotrabajo)), '''') AS tipoTrabajo' ELSE N'CAST(NULL AS NVARCHAR(200)) AS tipoTrabajo' END + N',
         s.Id_TipoPenalizacion AS idTipoPenalizacion,
-        CAST(NULL AS NVARCHAR(200)) AS tipoPenalizacion,
+        ' + CASE WHEN @HasNombreTipoPenalizacion = 1 THEN N'NULLIF(LTRIM(RTRIM(s.nombre_id_TipoPenalizacion)), '''') AS tipoPenalizacion' ELSE N'CAST(NULL AS NVARCHAR(200)) AS tipoPenalizacion' END + N',
         s.Supervision_Por AS supervisionPor,
         s.Tecnologia AS tecnologia,
         s.Codigo AS codigo,
@@ -87,7 +79,7 @@ BEGIN
     CASE WHEN @HasEliminado = 1 THEN N' AND ISNULL(s.E_Eliminado,0) = 0 ' ELSE N'' END +
     CASE WHEN @HasEstadoSup = 1 THEN N' AND s.estado_sup = ''pendiente'' ' ELSE N' AND 1 = 0 ' END + -- Si no existe la columna, devolver vacío
     CASE WHEN @HasSucursal = 1 THEN N' AND (@Sucursal IS NULL OR LTRIM(RTRIM(s.sucursal)) = @Sucursal) ' ELSE N'' END +
-    CASE WHEN @HasNombreSupervisor = 1 THEN N' AND (@Supervisor IS NULL OR LTRIM(RTRIM(s.nombre_Id_Supervisor)) = @Supervisor) ' ELSE N'' END +
+    CASE WHEN @HasNombreSupervisor = 1 THEN N' AND (@SupervisorNombre IS NULL OR LTRIM(RTRIM(s.nombre_Id_Supervisor)) = @SupervisorNombre) ' ELSE N'' END +
     CASE WHEN @HasFecha = 1 THEN N'
       AND (@FechaDesde IS NULL OR CAST(s.FechaRegistro AS DATE) >= @FechaDesde)
       AND (@FechaHasta IS NULL OR CAST(s.FechaRegistro AS DATE) <= @FechaHasta)
@@ -96,17 +88,17 @@ BEGIN
 
     EXEC sp_executesql
         @Sql,
-        N'@FechaDesde DATE, @FechaHasta DATE, @Limite INT, @Sucursal NVARCHAR(250), @Supervisor NVARCHAR(250)',
+        N'@FechaDesde DATE, @FechaHasta DATE, @Limite INT, @Sucursal NVARCHAR(250), @SupervisorNombre NVARCHAR(250)',
         @FechaDesde = @FechaDesde,
         @FechaHasta = @FechaHasta,
         @Limite = @Limite,
         @Sucursal = @Sucursal,
-        @Supervisor = @Supervisor;
+        @SupervisorNombre = @SupervisorNombre;
 END
 GO
 
 PRINT '========================================';
 PRINT 'SCRIPT COMPLETADO EXITOSAMENTE';
-PRINT '1. spx_ListarNombresSupervisorSupervision creado (catalogo de supervisores desde tbl_Supervision).';
-PRINT '2. spx_ListarSupervisionPendienteTodos actualizado: @TecnicoPrincipal reemplazado por @Supervisor.';
+PRINT 'spx_ListarSupervisionPendienteTodos ahora filtra el supervisor seleccionado';
+PRINT 'contra nombre_Id_Supervisor (antes comparaba contra nombre_Id_TecnicoPrincipal).';
 PRINT '========================================';
