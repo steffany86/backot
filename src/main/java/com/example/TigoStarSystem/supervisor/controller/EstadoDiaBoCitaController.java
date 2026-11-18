@@ -50,6 +50,17 @@ public class EstadoDiaBoCitaController {
         ));
     }
 
+    @GetMapping("/cruce-ordenes-agenda-makiro-v2")
+    public ResponseEntity<ApiResponse<List<Map<String, Object>>>> obtenerCruceOrdenesAgendaMakiroV2(
+            @RequestHeader(value = "X-Session-Token", required = false) String token,
+            @RequestParam(value = "fecha", required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fecha) {
+        return ResponseEntity.ok(ApiResponse.of(
+                service.consultarCruceOrdenesAgendaMakiroV2(fecha, token),
+                "Cruce Agenda vs Makiro V2 ejecutado en BDControlOrdenes."
+        ));
+    }
+
     @PostMapping("/cruce-ordenes-agenda-makiro/{idHistorial}/verifica-back")
     public ResponseEntity<ApiResponse<Integer>> marcarVerificaBack(
             @RequestHeader(value = "X-Session-Token", required = false) String token,

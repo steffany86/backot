@@ -22,6 +22,12 @@ public class SucursalRepository {
     }
 
     public List<Map<String, Object>> obtenerSucursales() {
+        List<Map<String, Object>> rows = obtenerSucursalesSp();
+        completarTecnologia(rows);
+        return rows;
+    }
+
+    private List<Map<String, Object>> obtenerSucursalesSp() {
         try {
             return jdbcTemplate.queryForList(SP_SUCURSALES_WEB_DBO);
         } catch (DataAccessException ex) {
@@ -35,6 +41,42 @@ public class SucursalRepository {
         } catch (DataAccessException ex) {
             logger.warn("Fallo al ejecutar {}.", SP_SUCURSALES_WEB, ex);
             throw ex;
+        }
+    }
+
+    /**
+     * Si el SP no devuelve la columna Tecnologia (HFC/DTH), la completa desde tbl_sucursal.
+     * Si tampoco se puede leer, deja las filas sin tecnologia (no rompe el login).
+     */
+    private void completarTecnologia(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        boolean yaTrae = rows.get(0).keySet().stream().anyMatch(k -> "tecnologia".equalsIgnoreCase(k));
+        if (yaTrae) {
+            return;
+        }
+        try {
+            Map<Integer, Object> porId = new java.util.HashMap<>();
+            for (Map<String, Object> r : jdbcTemplate.queryForList("SELECT Id_Sucursal, Tecnologia FROM tbl_Sucursal")) {
+                Object id = r.get("Id_Sucursal");
+                if (id instanceof Number) {
+                    porId.put(((Number) id).intValue(), r.get("Tecnologia"));
+                }
+            }
+            for (Map<String, Object> row : rows) {
+                for (Map.Entry<String, Object> e : row.entrySet()) {
+                    String k = e.getKey();
+                    if ("id_sucursal".equalsIgnoreCase(k) || "idsucursal".equalsIgnoreCase(k)) {
+                        if (e.getValue() instanceof Number) {
+                            row.put("Tecnologia", porId.get(((Number) e.getValue()).intValue()));
+                        }
+                        break;
+                    }
+                }
+            }
+        } catch (DataAccessException ex) {
+            logger.warn("No se pudo leer Tecnologia desde tbl_Sucursal.", ex);
         }
     }
 

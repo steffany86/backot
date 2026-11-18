@@ -1,11 +1,13 @@
 package com.example.TigoStarSystem.supervision.service;
 
+import com.example.TigoStarSystem.auth.dto.AuthLoginResponse;
 import com.example.TigoStarSystem.auth.dto.AuthMeResponse;
 import com.example.TigoStarSystem.auth.dto.SucursalResponse;
 import com.example.TigoStarSystem.auth.service.AuthService;
 import com.example.TigoStarSystem.common.ApiException;
 import com.example.TigoStarSystem.supervision.dto.SupervisionCrearRequest;
 import com.example.TigoStarSystem.supervision.dto.SupervisionCrearPendienteRequest;
+import com.example.TigoStarSystem.supervision.dto.SupervisionSucursalRequest;
 import com.example.TigoStarSystem.supervisor.SucursalCanonicalizer;
 import com.example.TigoStarSystem.supervision.repository.SupervisionRepository;
 import org.springframework.dao.DataAccessException;
@@ -23,6 +25,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -61,10 +64,11 @@ public class SupervisionService {
             LocalDate fechaHasta,
             String idSupervisorFiltro,
             Integer limite,
+            String sucursalFiltro,
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        String sucursal = resolveSucursalNombre(me);
+        String sucursal = resolveSucursalPermitida(me, sucursalFiltro);
         Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : repository.listar(idSupervisor == null ? null : String.valueOf(idSupervisor), fechaDesde, fechaHasta, limite)) {
@@ -78,10 +82,11 @@ public class SupervisionService {
             LocalDate fechaHasta,
             String idSupervisorFiltro,
             Integer limite,
+            String sucursalFiltro,
             String token) {
         validarRangoFechas(fechaDesde, fechaHasta);
         AuthMeResponse me = authService.me(token);
-        String sucursal = resolveSucursalNombre(me);
+        String sucursal = resolveSucursalPermitida(me, sucursalFiltro);
         Integer idSupervisor = resolveSupervisorConsulta(me, sucursal, idSupervisorFiltro);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> pendiente : repository.listarPendientesTodos(fechaDesde, fechaHasta, limite)) {
@@ -105,6 +110,23 @@ public class SupervisionService {
                 sucursal
         ));
         return out;
+    }
+
+    public List<String> listarMisSucursalesPermitidas(String token) {
+        AuthMeResponse me = authService.me(token);
+        Integer idUsuarioSesion = resolveIdUsuario(me);
+        LinkedHashSet<String> nombres = new LinkedHashSet<>();
+        String propia = resolveSucursalNombre(me);
+        if (!isBlank(propia)) {
+            nombres.add(propia);
+        }
+        for (Map<String, Object> permiso : repository.listarSucursalesPermitidas(idUsuarioSesion)) {
+            String nombre = asText(findValue(permiso, "nombreSucursalPermiso", "nombre_SucursalPermiso"));
+            if (!isBlank(nombre)) {
+                nombres.add(nombre);
+            }
+        }
+        return new ArrayList<>(nombres);
     }
 
     private static final String SUPERVISOR_FILTRO_TODOS = "TODOS";
@@ -768,6 +790,37 @@ public class SupervisionService {
         return null;
     }
 
+    /**
+     * Resuelve la sucursal a usar para una consulta: si no se pide una sucursal
+     * distinta a la propia, se usa la de la sesion (comportamiento historico).
+     * Si se pide una sucursal distinta, solo se permite cuando el usuario tiene
+     * un permiso vigente sobre ella en tbl_SupervisionSucursal (ver
+     * SupervisionRepository.listarSucursalesPermitidas / spx_ListarSupervisionSucursal);
+     * de lo contrario se rechaza con 403 en vez de dejar pasar cualquier sucursal.
+     */
+    private String resolveSucursalPermitida(AuthMeResponse me, String sucursalFiltro) {
+        String sucursalPropia = resolveSucursalNombre(me);
+        if (isBlank(sucursalFiltro)) {
+            return sucursalPropia;
+        }
+        String filtroCanon = SucursalCanonicalizer.canonicalize(sucursalFiltro);
+        if (filtroCanon != null && filtroCanon.equalsIgnoreCase(SucursalCanonicalizer.canonicalize(sucursalPropia))) {
+            return sucursalPropia;
+        }
+        Integer idUsuarioSesion = resolveIdUsuario(me);
+        for (Map<String, Object> permiso : repository.listarSucursalesPermitidas(idUsuarioSesion)) {
+            String nombrePermiso = asText(findValue(permiso, "nombreSucursalPermiso", "nombre_SucursalPermiso"));
+            if (!isBlank(nombrePermiso) && SucursalCanonicalizer.canonicalize(nombrePermiso).equalsIgnoreCase(filtroCanon)) {
+                return nombrePermiso;
+            }
+        }
+        throw new ApiException(
+                HttpStatus.FORBIDDEN,
+                "SUCURSAL_NOT_ALLOWED",
+                "No tienes permiso para consultar la sucursal seleccionada."
+        );
+    }
+
     private boolean perteneceSucursal(Map<String, Object> row, String sucursalSesion) {
         if (isBlank(sucursalSesion)) {
             return true;
@@ -1207,6 +1260,74 @@ public class SupervisionService {
         } catch (DataAccessException ex) {
             return java.util.Collections.emptyList();
         }
+    }
+
+    public List<Map<String, Object>> listarSupervisionSucursales(String token) {
+        requireSistemas(token);
+        return repository.listarSupervisionSucursales();
+    }
+
+    public Map<String, Object> crearSupervisionSucursal(SupervisionSucursalRequest request, String token) {
+        AuthLoginResponse actor = requireSistemas(token);
+        if (request == null || request.getIdUsuario() == null || request.getIdSucursalUsuario() == null
+                || request.getIdSucursalPermiso() == null) {
+            throw new ApiException(
+                    HttpStatus.BAD_REQUEST,
+                    "VALIDATION_ERROR",
+                    "idUsuario, idSucursalUsuario e idSucursalPermiso son requeridos."
+            );
+        }
+        String nombreUsuario = resolverNombreSupervisorPorId(request.getIdUsuario());
+        String nombreSucursalUsuario = resolverNombreSucursalPorId(request.getIdSucursalUsuario());
+        String nombreSucursalPermiso = resolverNombreSucursalPorId(request.getIdSucursalPermiso());
+        try {
+            return repository.crearSupervisionSucursal(
+                    request.getIdUsuario(),
+                    nombreUsuario,
+                    request.getIdSucursalUsuario(),
+                    nombreSucursalUsuario,
+                    request.getIdSucursalPermiso(),
+                    nombreSucursalPermiso,
+                    actor == null ? null : actor.getIdUsuario()
+            );
+        } catch (IllegalStateException ex) {
+            throw new ApiException(HttpStatus.CONFLICT, "SUPERVISION_SUCURSAL_DUPLICADA", ex.getMessage());
+        }
+    }
+
+    public void eliminarSupervisionSucursal(Integer id, String token) {
+        requireSistemas(token);
+        if (id == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "id es requerido.");
+        }
+        try {
+            repository.eliminarSupervisionSucursal(id);
+        } catch (IllegalStateException ex) {
+            throw new ApiException(HttpStatus.NOT_FOUND, "SUPERVISION_SUCURSAL_NOT_FOUND", ex.getMessage());
+        }
+    }
+
+    private String resolverNombreSucursalPorId(Integer idSucursal) {
+        if (idSucursal == null) return null;
+        for (SucursalResponse item : authService.listarSucursales()) {
+            if (item != null && idSucursal.equals(item.getIdSucursal())) {
+                return item.getSucursal();
+            }
+        }
+        return null;
+    }
+
+    private AuthLoginResponse requireSistemas(String token) {
+        AuthMeResponse me = authService.me(token);
+        AuthLoginResponse usuario = me == null ? null : me.getUsuario();
+        if (!authService.esAdministrador(usuario)) {
+            throw new ApiException(
+                    HttpStatus.FORBIDDEN,
+                    "FORBIDDEN_SISTEMAS_ONLY",
+                    "Solo el rol sistemas puede administrar sucursales de supervision."
+            );
+        }
+        return usuario;
     }
 
 }

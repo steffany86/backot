@@ -104,6 +104,10 @@
 						<goals>
 							<goal>build-info</goal>
 						</goals>
+						<configuration>
+							<!-- Fecha real de compilacion (UTC); sin esto puede salir 1980-02-01 por el timestamp reproducible -->
+							<time>${maven.build.timestamp}</time>
+						</configuration>
 					</execution>
 				</executions>
 			</plugin>

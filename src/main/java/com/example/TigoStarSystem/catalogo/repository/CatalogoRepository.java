@@ -762,7 +762,7 @@ public class CatalogoRepository {
             Integer idRuta,
             Integer idProducto,
             Integer idSucursal) {
-        int top = (limite == null || limite <= 0) ? 10 : Math.min(limite, 50);
+        int top = (limite == null || limite <= 0) ? 10 : Math.min(limite, 500);
         String text = prefijo == null ? "" : prefijo.trim();
         JdbcTemplate target = template(idSucursal);
         Integer rutaConsulta = resolverRutaActivaConSaldo(target, idRuta);

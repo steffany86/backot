@@ -286,8 +286,8 @@ public class SupervisionRepository {
                 "supervisor"
         ));
 
-        String nombrePrincipal = resolveNombrePersona(idTecnicoPrincipal, usuarios, sucursalTemplate);
-        String nombreAuxiliar = resolveNombrePersona(idTecnicoAuxiliar, usuarios, sucursalTemplate);
+        String nombrePrincipal = resolveNombreTecnico(idTecnicoPrincipal, usuarios, sucursalTemplate);
+        String nombreAuxiliar = resolveNombreTecnico(idTecnicoAuxiliar, usuarios, sucursalTemplate);
         String nombreSupervisor = resolveNombrePersona(idSupervisor, usuarios, sucursalTemplate);
 
         if (nombrePrincipal != null) {
@@ -1852,6 +1852,29 @@ public class SupervisionRepository {
         return out.isEmpty() ? null : out;
     }
 
+    /**
+     * El id de tecnico principal/auxiliar en supervision es Id_Vendedor (ver
+     * listarTecnicosDeGrupos/cargarTecnicosDesdeTodosLosGrupos), no Id_Usuario.
+     * Por eso hay que resolver primero contra tbl_Vendedor (obtenerNombreTecnicoSucursal)
+     * y solo caer al mapa de usuarios (indexado por Id_Usuario) si eso no encuentra nada;
+     * el orden inverso puede resolver el nombre de una persona distinta cuando un
+     * Id_Vendedor coincide numericamente con el Id_Usuario de otra persona.
+     */
+    private String resolveNombreTecnico(Integer idTecnico, Map<Integer, String> usuarios, JdbcTemplate sucursalTemplate) {
+        if (idTecnico == null || idTecnico <= 0) {
+            return null;
+        }
+        String nombre = sucursalTemplate == null ? null : obtenerNombreTecnicoSucursal(sucursalTemplate, idTecnico);
+        if ((nombre == null || nombre.trim().isEmpty()) && usuarios != null) {
+            nombre = usuarios.get(idTecnico);
+        }
+        if (nombre == null) {
+            return null;
+        }
+        String out = nombre.trim();
+        return out.isEmpty() ? null : out;
+    }
+
     private boolean isNumericText(String value) {
         if (value == null) {
             return false;
@@ -2114,4 +2137,86 @@ public class SupervisionRepository {
         // Se ignora idSupervisor y se lista desde todos los grupos de la sucursal.
         return listarTecnicosDeGrupos(sucursal);
     }
+
+    public List<Map<String, Object>> listarSucursalesPermitidas(Integer idUsuario) {
+        if (idUsuario == null) {
+            return new ArrayList<>();
+        }
+        try {
+            return tigohogarJdbcTemplate.queryForList(
+                    "EXEC dbo.spx_ListarSupervisionSucursal ?",
+                    idUsuario
+            );
+        } catch (Exception ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    public List<Map<String, Object>> listarSupervisionSucursales() {
+        try {
+            return tigohogarJdbcTemplate.queryForList(
+                    "SELECT id, id_usuario, nombreUsuario, id_sucursalUsuario, nombreSucursalUsuario, " +
+                            "id_SucursalPermiso, nombreSucursalPermiso, fechaRegistro, id_UsuarioRegistro " +
+                            "FROM dbo.tbl_SupervisionSucursal " +
+                            "WHERE ISNULL(e_eliminado, 0) = 0 " +
+                            "ORDER BY nombreUsuario, nombreSucursalPermiso"
+            );
+        } catch (Exception ex) {
+            return new ArrayList<>();
+        }
+    }
+
+    public Map<String, Object> crearSupervisionSucursal(
+            Integer idUsuario,
+            String nombreUsuario,
+            Integer idSucursalUsuario,
+            String nombreSucursalUsuario,
+            Integer idSucursalPermiso,
+            String nombreSucursalPermiso,
+            Integer idUsuarioRegistro) {
+        boolean yaExiste = tigohogarJdbcTemplate.queryForObject(
+                "SELECT COUNT(1) FROM dbo.tbl_SupervisionSucursal " +
+                        "WHERE id_usuario = ? AND id_SucursalPermiso = ? AND ISNULL(e_eliminado, 0) = 0",
+                Integer.class,
+                idUsuario,
+                idSucursalPermiso
+        ) > 0;
+        if (yaExiste) {
+            throw new IllegalStateException("Ese usuario ya tiene asignada esa sucursal.");
+        }
+        tigohogarJdbcTemplate.update(
+                "INSERT INTO dbo.tbl_SupervisionSucursal " +
+                        "(id_usuario, nombreUsuario, id_sucursalUsuario, nombreSucursalUsuario, " +
+                        "id_SucursalPermiso, nombreSucursalPermiso, fechaRegistro, id_UsuarioRegistro, e_eliminado) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, GETDATE(), ?, 0)",
+                idUsuario,
+                trimToNull(nombreUsuario),
+                idSucursalUsuario,
+                trimToNull(nombreSucursalUsuario),
+                idSucursalPermiso,
+                trimToNull(nombreSucursalPermiso),
+                idUsuarioRegistro
+        );
+        List<Map<String, Object>> rows = tigohogarJdbcTemplate.queryForList(
+                "SELECT TOP 1 id, id_usuario, nombreUsuario, id_sucursalUsuario, nombreSucursalUsuario, " +
+                        "id_SucursalPermiso, nombreSucursalPermiso, fechaRegistro, id_UsuarioRegistro " +
+                        "FROM dbo.tbl_SupervisionSucursal " +
+                        "WHERE id_usuario = ? AND id_SucursalPermiso = ? AND ISNULL(e_eliminado, 0) = 0 " +
+                        "ORDER BY id DESC",
+                idUsuario,
+                idSucursalPermiso
+        );
+        return rows.isEmpty() ? new LinkedHashMap<>() : rows.get(0);
+    }
+
+    public void eliminarSupervisionSucursal(Integer id) {
+        int filas = tigohogarJdbcTemplate.update(
+                "UPDATE dbo.tbl_SupervisionSucursal SET e_eliminado = 1 WHERE id = ?",
+                id
+        );
+        if (filas == 0) {
+            throw new IllegalStateException("No se encontro la asignacion indicada.");
+        }
+    }
+
 }

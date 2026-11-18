@@ -29,16 +29,15 @@ public class EstadoDiaBoCitaService {
     }
 
     public List<Map<String, Object>> consultarCruceOrdenesAgendaMakiro(LocalDate fecha, String token) {
-        if (trimToNull(token) == null) {
-            throw new ApiException(
-                    HttpStatus.UNAUTHORIZED,
-                    "AUTH_REQUIRED",
-                    "Debes enviar un X-Session-Token valido."
-            );
-        }
-        authService.me(token);
+        authService.me(requireToken(token));
         LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
         return repository.obtenerCruceOrdenesAgendaMakiro(fechaConsulta);
+    }
+
+    public List<Map<String, Object>> consultarCruceOrdenesAgendaMakiroV2(LocalDate fecha, String token) {
+        authService.me(requireToken(token));
+        LocalDate fechaConsulta = fecha == null ? LocalDate.now() : fecha;
+        return repository.obtenerCruceOrdenesAgendaMakiroV2(fechaConsulta);
     }
 
     public int marcarVerificaBack(Integer idHistorial, CruceAgendaMakiroVerificaBackRequest request, String token) {

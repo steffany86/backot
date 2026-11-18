@@ -58,8 +58,10 @@ public class LlamadaAtencionService {
             String token) {
         AuthMeResponse me = authService.me(token);
         Integer idSucursalSesion = me != null && me.getUsuario() != null ? me.getUsuario().getIdSucursal() : null;
+        // Back Office (y roles administrativos) ven las llamadas de todas las sucursales.
+        Integer idSucursalFiltro = veTodasLasSucursales(me) ? null : idSucursalSesion;
         validarRangoFechas(fechaDesde, fechaHasta);
-        List<Map<String, Object>> rows = repository.listarLlamadasAtencion(idTecnico, fechaDesde, fechaHasta, limite, idSucursalSesion);
+        List<Map<String, Object>> rows = repository.listarLlamadasAtencion(idTecnico, fechaDesde, fechaHasta, limite, idSucursalFiltro);
         if (rows == null || rows.isEmpty()) {
             return rows;
         }
@@ -67,6 +69,39 @@ public class LlamadaAtencionService {
     }
 
     public Map<String, Object> registrar(LlamadaAtencionCrearRequest request, String token) {
+        return registrarConEstado(request, token, null);
+    }
+
+    /** Registra la llamada en estado "Pendiente" (sin firmas): el supervisor hace firmar al tecnico despues. */
+    public Map<String, Object> registrarPendiente(LlamadaAtencionCrearRequest request, String token) {
+        return registrarConEstado(request, token, "Pendiente");
+    }
+
+    /** Guarda las firmas de una llamada pendiente y la pasa a COMPLETO. */
+    public Map<String, Object> firmarPendiente(int idLlamada, String firmaTecnicoRaw, String firmaTestigoRaw, String testigo, String token) {
+        authService.me(token);
+        if (firmaTecnicoRaw == null || firmaTecnicoRaw.trim().isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR", "La firma del tecnico es obligatoria.");
+        }
+        String firmaTecnico = firmaStorageService.guardarFirmaTecnico(firmaTecnicoRaw);
+        String firmaTestigo = firmaStorageService.guardarFirmaTestigo(firmaTestigoRaw);
+        int filas = repository.completarConFirmas(idLlamada, firmaTecnico, firmaTestigo, testigo);
+        if (filas == 0) {
+            throw new ApiException(HttpStatus.CONFLICT, "LLAMADA_NO_PENDIENTE",
+                    "La llamada de atencion no existe o ya fue firmada.");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("idLlamadaAtencion", idLlamada);
+        out.put("estado", "COMPLETO");
+        return out;
+    }
+
+    public Map<String, Object> obtenerResumen(int idLlamada, String token) {
+        authService.me(token);
+        return repository.obtenerResumen(idLlamada);
+    }
+
+    private Map<String, Object> registrarConEstado(LlamadaAtencionCrearRequest request, String token, String estado) {
         AuthMeResponse me = authService.me(token);
         if (request == null) {
             throw new ApiException(
@@ -121,7 +156,8 @@ public class LlamadaAtencionService {
                 idSucursalSesion,
                 sucursalSesion,
                 nombreEmpleado,
-                tablaEmpleado
+                tablaEmpleado,
+                estado
         );
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -503,11 +539,21 @@ public class LlamadaAtencionService {
         return false;
     }
 
+    private boolean veTodasLasSucursales(AuthMeResponse me) {
+        String rol = me == null || me.getUsuario() == null || me.getUsuario().getRol() == null
+                ? ""
+                : me.getUsuario().getRol().trim().toLowerCase().replace(" ", "").replace("_", "");
+        return "backoffice".equals(rol) || "backofficev".equals(rol) || "sistemas".equals(rol)
+                || "admin".equals(rol) || "administrador".equals(rol);
+    }
+
     private List<Map<String, Object>> enriquecerListadoNombres(List<Map<String, Object>> rows, String token) {
-        String sucursal = resolveSucursalNombre(null, token);
-        JdbcTemplate template = resolveSucursalTemplate(sucursal);
-        Map<Integer, String> supervisorCache = new HashMap<>();
-        Map<Integer, String> tecnicoCache = new HashMap<>();
+        String sucursalSesion = resolveSucursalNombre(null, token);
+        // Cada fila se resuelve contra la BD de su propia sucursal: los ids de usuario no son
+        // comparables entre BDs distintas.
+        Map<String, JdbcTemplate> templateCache = new HashMap<>();
+        Map<String, String> supervisorCache = new HashMap<>();
+        Map<String, String> tecnicoCache = new HashMap<>();
 
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : rows) {
@@ -516,12 +562,18 @@ public class LlamadaAtencionService {
                 mapped.putAll(row);
             }
 
+            String sucursalFila = isBlank(String.valueOf(mapped.get("sucursal") == null ? "" : mapped.get("sucursal")))
+                    ? sucursalSesion
+                    : resolveSucursalNombre(String.valueOf(mapped.get("sucursal")), token);
+            String cacheKey = sucursalFila == null ? "" : sucursalFila;
+            JdbcTemplate template = templateCache.computeIfAbsent(cacheKey, k -> resolveSucursalTemplate(sucursalFila));
+
             Integer idSupervisor = toInteger(findValue(
                     mapped,
                     "idUsuarioSupervisor", "id_usuariosupervisor", "idsupervisor",
                     "id_supervisor", "idUsuario", "id_usuario"));
             if (idSupervisor != null && idSupervisor > 0) {
-                String nombre = supervisorCache.computeIfAbsent(idSupervisor, id -> obtenerNombreUsuarioPorId(template, id));
+                String nombre = supervisorCache.computeIfAbsent(cacheKey + "|" + idSupervisor, k -> obtenerNombreUsuarioPorId(template, idSupervisor));
                 if (!isBlank(nombre)) {
                     mapped.put("supervisorNombre", nombre.trim());
                 }
@@ -531,7 +583,7 @@ public class LlamadaAtencionService {
                     mapped,
                     "idTecnico", "id_tecnico", "idtecnico", "idUsuarioTecnico", "id_usuariotecnico"));
             if (idUsuarioTecnico != null && idUsuarioTecnico > 0) {
-                String tecnicoNombre = tecnicoCache.computeIfAbsent(idUsuarioTecnico, id -> obtenerNombreTecnicoPorUsuarioTecnico(template, id));
+                String tecnicoNombre = tecnicoCache.computeIfAbsent(cacheKey + "|" + idUsuarioTecnico, k -> obtenerNombreTecnicoPorUsuarioTecnico(template, idUsuarioTecnico));
                 if (!isBlank(tecnicoNombre)) {
                     mapped.put("tecnico", tecnicoNombre.trim());
                     mapped.put("tecnicoNombre", tecnicoNombre.trim());

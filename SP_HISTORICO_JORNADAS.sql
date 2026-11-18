@@ -55,51 +55,30 @@ BEGIN
     SET NOCOUNT ON;
 
     DECLARE @SucursalNorm NVARCHAR(200) = NULLIF(LTRIM(RTRIM(@Sucursal)), '');
-    DECLARE @AuxColumn SYSNAME;
-    DECLARE @Sql NVARCHAR(MAX);
 
-    -- La tabla historicamente tuvo la columna en camelCase o snake_case segun el entorno;
-    -- se detecta una sola vez en vez del reintento try/catch que hacia el repositorio Java.
-    IF COL_LENGTH('dbo.tbl_ConformacionCuadrillaDiario', 'id_tecnicoAuxiliar') IS NOT NULL
-        SET @AuxColumn = N'id_tecnicoAuxiliar';
-    ELSE
-        SET @AuxColumn = N'id_tecnico_auxiliar';
-
-    SET @Sql = N'
-    WITH tecnicos AS (
+    -- Solo el titular (columna tecnico/id_tecnico) cuenta como "esperado" para marcar
+    -- su propia jornada. El auxiliar de una cuadrilla no tiene obligacion independiente
+    -- de inicio/cierre, asi que no se incluye (antes se agregaba via UNION ALL y aparecia
+    -- en el historico como "confirmado en cuadrilla pero no inicio" sin corresponder).
+    ;WITH ranked AS (
         SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo,
-               CAST(c.id_tecnico AS INT) AS idTecnico, c.tecnico AS tecnico, c.fecha, c.fechaRegistro, c.id
+               CAST(c.id_tecnico AS INT) AS idTecnico, c.tecnico AS tecnico,
+               ROW_NUMBER() OVER (
+                   PARTITION BY c.id_tecnico
+                   ORDER BY ISNULL(c.fecha, '19000101') DESC, ISNULL(c.fechaRegistro, '19000101') DESC, c.id DESC
+               ) AS rn
         FROM dbo.tbl_ConformacionCuadrillaDiario c
         WHERE ISNULL(c.e_eliminado, 0) = 0
-          AND (@SucursalNorm IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''''))), ''_'', ''''), ''-'', ''''), '' '', ''''))
-                                      = LOWER(REPLACE(REPLACE(REPLACE(@SucursalNorm, ''_'', ''''), ''-'', ''''), '' '', '''')))
+          AND (@SucursalNorm IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''))), '_', ''), '-', ''), ' ', ''))
+                                      = LOWER(REPLACE(REPLACE(REPLACE(@SucursalNorm, '_', ''), '-', ''), ' ', '')))
           AND (@IdSupervisor IS NULL OR CAST(c.idUsuarioSupervisor AS INT) = @IdSupervisor)
           AND c.id_tecnico IS NOT NULL AND c.id_tecnico > 0
-        UNION ALL
-        SELECT c.sucursal, c.grupo, c.idUsuarioSupervisor, c.supervisorACargo,
-               CAST(c.' + @AuxColumn + N' AS INT) AS idTecnico, c.auxiliar AS tecnico, c.fecha, c.fechaRegistro, c.id
-        FROM dbo.tbl_ConformacionCuadrillaDiario c
-        WHERE ISNULL(c.e_eliminado, 0) = 0
-          AND (@SucursalNorm IS NULL OR LOWER(REPLACE(REPLACE(REPLACE(LTRIM(RTRIM(ISNULL(c.sucursal, ''''))), ''_'', ''''), ''-'', ''''), '' '', ''''))
-                                      = LOWER(REPLACE(REPLACE(REPLACE(@SucursalNorm, ''_'', ''''), ''-'', ''''), '' '', '''')))
-          AND (@IdSupervisor IS NULL OR CAST(c.idUsuarioSupervisor AS INT) = @IdSupervisor)
-          AND c.' + @AuxColumn + N' IS NOT NULL AND c.' + @AuxColumn + N' > 0
-    ), ranked AS (
-        SELECT *, ROW_NUMBER() OVER (
-            PARTITION BY idTecnico
-            ORDER BY ISNULL(fecha, ''19000101'') DESC, ISNULL(fechaRegistro, ''19000101'') DESC, id DESC
-        ) AS rn
-        FROM tecnicos
     )
     SELECT CAST(idTecnico AS INT) AS idTecnico, CAST(idTecnico AS INT) AS id_tecnico,
            tecnico AS tecnicoNombre, tecnico, sucursal, grupo,
            CAST(idUsuarioSupervisor AS INT) AS idSupervisor, supervisorACargo AS supervisorNombre
     FROM ranked WHERE rn = 1
-    ORDER BY sucursal, grupo, tecnico;';
-
-    EXEC sp_executesql @Sql,
-        N'@SucursalNorm NVARCHAR(200), @IdSupervisor INT',
-        @SucursalNorm = @SucursalNorm, @IdSupervisor = @IdSupervisor;
+    ORDER BY sucursal, grupo, tecnico;
 END
 GO
 

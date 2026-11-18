@@ -22,6 +22,8 @@ public class EstadoDiaBoCitaRepository {
             "EXEC dbo.spy_Ultimo_Estado_Dia_BO_CITA_MAKIRO ?, ?";
     private static final String SP_CRUCE_ORDENES_AGENDA_VS_MAKIRO =
             "EXEC dbo.spy_CruceOrdenes_Agenda_vs_Makiro ?";
+    private static final String SP_CRUCE_ORDENES_AGENDA_VS_MAKIRO_V2 =
+            "EXEC dbo.spy_CruceOrdenes_Agenda_vs_Makiro_v2 ?";
 
     private final JdbcTemplate centralJdbcTemplate;
 
@@ -38,8 +40,16 @@ public class EstadoDiaBoCitaRepository {
     }
 
     public List<Map<String, Object>> obtenerCruceOrdenesAgendaMakiro(LocalDate fecha) {
+        return ejecutarCruceOrdenes(SP_CRUCE_ORDENES_AGENDA_VS_MAKIRO, fecha);
+    }
+
+    public List<Map<String, Object>> obtenerCruceOrdenesAgendaMakiroV2(LocalDate fecha) {
+        return ejecutarCruceOrdenes(SP_CRUCE_ORDENES_AGENDA_VS_MAKIRO_V2, fecha);
+    }
+
+    private List<Map<String, Object>> ejecutarCruceOrdenes(String sql, LocalDate fecha) {
         return centralJdbcTemplate.query(connection -> {
-            PreparedStatement statement = connection.prepareStatement(SP_CRUCE_ORDENES_AGENDA_VS_MAKIRO);
+            PreparedStatement statement = connection.prepareStatement(sql);
             statement.setDate(1, Date.valueOf(fecha));
             return statement;
         }, resultSet -> {

@@ -40,3 +40,6 @@ META-INF/
 /_*.ps1
 /identificar_faltantes.py
 /ejecutar_consulta_nps_daniel.ps1
+
+### Logs del backend ###
+/logs/

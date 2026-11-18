@@ -1,0 +1,42 @@
+-- 1) Servidor vinculado hacia el SQL 2012
+EXEC sp_addlinkedserver @server = N'SRV2012', @srvproduct = N'',
+     @provider = N'SQLNCLI', @datasrc = N'IP_SERVIDOR_2012';
+EXEC sp_addlinkedsrvlogin @rmtsrvname = N'SRV2012', @useself = N'False',
+     @rmtuser = N'usuario', @rmtpassword = N'clave';
+
+-- 2) Prueba de conexión
+SELECT COUNT(*) FROM SRV2012.bd_tigohogar.dbo.tbl_Supervision;
+
+-- 3) Crear la tabla de respaldo con la misma estructura (sin datos)
+USE TuBaseDeRespaldo;   -- <- la base del 172.16.0.13
+SELECT * INTO dbo.tbl_Supervision_bak
+FROM SRV2012.bd_tigohogar.dbo.tbl_Supervision WHERE 1 = 0;
+
+-- 4) Copia fila por fila (evita transferencias de GB en una sola sentencia)
+SET NOCOUNT ON;
+DECLARE @c NVARCHAR(100), @n INT = 0;
+
+DECLARE cur CURSOR FAST_FORWARD FOR
+    SELECT Codigo FROM SRV2012.bd_tigohogar.dbo.tbl_Supervision ORDER BY Codigo;
+OPEN cur; FETCH NEXT FROM cur INTO @c;
+
+WHILE @@FETCH_STATUS = 0
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM dbo.tbl_Supervision_bak WHERE Codigo = @c)
+        INSERT INTO dbo.tbl_Supervision_bak
+        SELECT * FROM SRV2012.bd_tigohogar.dbo.tbl_Supervision WHERE Codigo = @c;
+
+    SET @n += 1;
+    IF @n % 50 = 0 RAISERROR('Copiadas %d filas', 0, 1, @n) WITH NOWAIT;
+    FETCH NEXT FROM cur INTO @c;
+END
+CLOSE cur; DEALLOCATE cur;
+
+-- 5) Verificación (deben coincidir)
+SELECT (SELECT COUNT(*) FROM dbo.tbl_Supervision_bak) AS en_respaldo,
+       (SELECT COUNT(*) FROM SRV2012.bd_tigohogar.dbo.tbl_Supervision) AS en_origen;
+
+SELECT SUM(DATALENGTH(FotoBoletaSupervision)) AS bytes_bak
+FROM dbo.tbl_Supervision_bak;
+SELECT SUM(DATALENGTH(FotoBoletaSupervision)) AS bytes_origen
+FROM SRV2012.bd_tigohogar.dbo.tbl_Supervision;

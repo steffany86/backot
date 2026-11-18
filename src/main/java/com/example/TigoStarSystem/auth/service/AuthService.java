@@ -224,7 +224,7 @@ public class AuthService {
         List<SucursalResponse> result = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             SucursalInfo info = mapToSucursal(row);
-            result.add(new SucursalResponse(info.idSucursal, info.sucursal, info.host, info.baseDeDatos));
+            result.add(new SucursalResponse(info.idSucursal, info.sucursal, info.host, info.baseDeDatos, info.tecnologia));
         }
         return result;
     }
@@ -453,7 +453,11 @@ public class AuthService {
                     details
             );
         }
-        return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos), trimToNull(hostAlterno));
+        String tecnologia = trimToNull(toString(findValue(row, "tecnologia")));
+        if (tecnologia != null) {
+            tecnologia = tecnologia.toUpperCase(Locale.ROOT);
+        }
+        return new SucursalInfo(idSucursal, sucursal, trimToNull(host), trimToNull(baseDeDatos), trimToNull(hostAlterno), tecnologia);
     }
 
     /**
@@ -798,11 +802,17 @@ public class AuthService {
         private final String host;
         private final String baseDeDatos;
         private final String hostAlterno;
+        private final String tecnologia;
+
+        private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos, String hostAlterno) {
+            this(idSucursal, sucursal, host, baseDeDatos, hostAlterno, null);
+        }
 
         /**
          * Estructura interna para transportar datos de sucursal ya resueltos.
          */
-        private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos, String hostAlterno) {
+        private SucursalInfo(Integer idSucursal, String sucursal, String host, String baseDeDatos, String hostAlterno, String tecnologia) {
+            this.tecnologia = tecnologia;
             this.idSucursal = idSucursal;
             this.sucursal = sucursal;
             this.host = host;
